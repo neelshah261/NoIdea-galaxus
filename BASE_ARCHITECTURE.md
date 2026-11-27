@@ -48,7 +48,7 @@ src/galaxus/types.py                                 design: ImageItem, Predicti
 src/galaxus/data/                                    data lane
     paths.py        the $GALAXUS_DATA layout (section 3)
     load.py         train / dev / final csv → ImageItem (context may be None)
-    images.py       transparency onto white, resize to a target area with sides a multiple of 32, JPEG, cache
+    images.py       transparency onto white, resize to a target area with sides a multiple of the patch size (32 for Qwen in the reference; Apertus' is measured in B6, Q-0002), JPEG, cache
     split.py        the official holdout + folds grouped by product_id
     scoring.py      scored-cell mask, wrapper around metric.py loaded from $GALAXUS_DATA at runtime
     submission.py   writer in sample_submission order + validator
@@ -83,13 +83,13 @@ $GALAXUS_DATA/
 Each step is one issue in one lane, so each becomes one PR. **B0 comes first; after it the three lanes run in
 parallel.** A step is done only when its "done when" holds.
 
-### Who does which PR (proposed; the AGENTS.md roles table stays `TODO(owner)` until Neel confirms)
+### Who does which PR (confirmed by the owner 2026-11-27; lane owners are in the AGENTS.md lane table, PR #8)
 
 | Person | GitHub | Lane | PRs | Also |
 | --- | --- | --- | --- | --- |
 | Neel | neelshah261 | design (owner) | B0 (rest of it; PR #8 has the skeleton) | Kaggle team + download + SHA check, the B5 upload, Discord questions, GPU access |
 | Vernika | vernikas-ctrl | data (set in PR #8) | B1 = #4, B2 = #5 + #6 | label-error finder #7 |
-| Parth | deshmukhparth921-commits | model | B3, B6 | heads / LoRA in the main phase |
+| Parth | deshmukhparth921-commits, parthdeshmukh488-ops (both his) | model | B3, B6 | heads / LoRA in the main phase |
 | Swarup | swarupgaikwad1801-ux | serve | B4, B5 (file + command), B7 | benchmark numbers, diagram, deck and demo video |
 
 Merges into `main` wait for the owner while the merge freeze (#9) is open.
@@ -129,7 +129,7 @@ flowchart TB
   image size and JPEG quality come from one config so training and prediction always see the same pixels.
 - `split.py`: the fixed holdout from challenge_description.md "Scoring locally" (AGENTS.md product rule 1), plus
   folds grouped by product_id for cross-validation on the rest of train.
-- **Done when:** tests on a synthetic transparent image give a white background and sides that are multiples of 32;
+- **Done when:** tests on a synthetic transparent image give a white background and sides that are multiples of the patch size;
   the split is identical on every run; `just prep` fills the image cache.
 
 ### B2 · Scoring and submission (data, issues #5 and #6)
@@ -201,4 +201,4 @@ Each is a new predictor or wrapper in the model lane, scored by the same `eval.p
 
 | ID | Question | How |
 | --- | --- | --- |
-| Q-0007 | Do small classification heads on Apertus v1.5 hidden states count as "Apertus classifying"? The Hack Apertus resources page lists "Apertus Probe" (linear probes on Apertus activations) as a resource. | Discord (owner) |
+| Q-0007 | Do small classification heads on Apertus v1.5 hidden states count as "Apertus classifying"? TODO(owner): check whether the Hack Apertus resources page lists "Apertus Probe" (linear probes on Apertus activations); not verified yet. | Discord (owner) |
