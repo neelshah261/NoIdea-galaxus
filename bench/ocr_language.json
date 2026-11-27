@@ -1,0 +1,11 @@
+{
+  "_about": [
+    "Roles for bench/ocr_language.py (#101 item 9): OCR + language identification for the language dimension.",
+    "The only place in that experiment where a dimension or class is named; every name is checked against galaxus.data.classes when it loads.",
+    "A language the detector finds that is not a class of the dimension becomes other_class; too little text becomes no_text_class."
+  ],
+  "language_dimension": "text_language",
+  "no_text_class": "none",
+  "other_class": "other",
+  "ocr_languages": ["en", "de", "fr", "it", "nl"]
+}
