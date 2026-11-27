@@ -163,7 +163,7 @@ def read_results(directory: Path, include_fake: bool = False) -> list[dict[str, 
 
 
 def _shown(value: Any, digits: int = 2) -> str:
-    return "–" if value is None else f"{value:.{digits}f}" if isinstance(value, float) else str(value)
+    return "-" if value is None else f"{value:.{digits}f}" if isinstance(value, float) else str(value)
 
 
 def table(rows: Iterable[dict[str, Any]]) -> str:
@@ -175,8 +175,8 @@ def table(rows: Iterable[dict[str, Any]]) -> str:
     )
     body = [
         f"| `{r['label']}` | {_shown(r.get('images_per_second'))} | {_shown(r.get('peak_memory_gb'))} | "
-        f"{_shown(r.get('cost_per_100k'))} | {_shown(r.get('hours_per_100k'))} | {r.get('device', '–')} | "
-        f"{r.get('images', '–')} |"
+        f"{_shown(r.get('cost_per_100k'))} | {_shown(r.get('hours_per_100k'))} | {r.get('device', '-')} | "
+        f"{r.get('images', '-')} |"
         for r in rows
     ]
     return "\n".join([header, *body]) if body else "No matrix results yet: run the plan's commands first."
