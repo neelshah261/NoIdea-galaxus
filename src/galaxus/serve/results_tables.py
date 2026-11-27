@@ -125,10 +125,10 @@ def ablation_table(rows: Sequence[Mapping[str, Any]]) -> str:
 
 
 def _perspective() -> str:
-    """The bonus dimension, named once by the data lane (``galaxus.data.mirror.PERSPECTIVE_DIMENSION``)."""
-    from galaxus.data.mirror import PERSPECTIVE_DIMENSION
+    """The bonus dimension: the one with left/right classes, which the data lane derives from the classes (#81)."""
+    from galaxus.data.mirror import mirrorable_dimensions
 
-    return PERSPECTIVE_DIMENSION
+    return mirrorable_dimensions()[0]
 
 
 def perspective_line(rows: Sequence[Mapping[str, Any]]) -> str:

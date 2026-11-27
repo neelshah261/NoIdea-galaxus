@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import xml.dom.minidom
 
+import pytest
+
 from galaxus.serve import results_tables as rt
 
 DIMS = ("subject", "background", "perspective", "individuals", "text_classification", "text_language")
@@ -39,6 +41,7 @@ def test_ablation_uses_the_parent_and_never_crosses_holdouts():
     assert "different holdout" in crossed
 
 
+@pytest.mark.real_contract  # the rows name real dimensions: read contracts/classes.json
 def test_perspective_line_names_the_best_run():
     line = rt.perspective_line(ROWS)
     assert "best EXP-0004" in line and "0.720" in line
@@ -52,6 +55,7 @@ def test_chart_is_valid_svg_with_one_bar_per_value():
     assert rt.chart_svg([]).startswith("<svg")
 
 
+@pytest.mark.real_contract  # the rows name real dimensions: read contracts/classes.json
 def test_cli_writes_markdown_and_chart(tmp_path):
     results = tmp_path / "metrics.json"
     results.write_text(json.dumps(ROWS), encoding="utf-8")
