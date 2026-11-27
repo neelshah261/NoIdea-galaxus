@@ -6,15 +6,24 @@ the real file is skipped when ``$GALAXUS_DATA`` has no metric.py.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
 
 import pandas as pd
 import pytest
+from conftest import DIMENSIONS, FAKE_CLASSES
 
 from galaxus.data import metric as metric_module
-from galaxus.data.metric import METRIC_MODULE_NAME, clear_metric_cache, evaluate, load_metric, score
+from galaxus.data.metric import (
+    METRIC_MODULE_NAME,
+    clear_metric_cache,
+    confusions,
+    evaluate,
+    load_metric,
+    score,
+)
 from galaxus.data.paths import GALAXUS_DATA_ENV, MissingDataDir
 
 STUB = """
@@ -318,3 +327,164 @@ def test_assigning_none_then_loading_the_same_path_re_reads_it(tmp_path, monkeyp
     first = load_metric()
     metric_module._loaded = None
     assert load_metric() is not first
+
+
+# --- #92: confusion pairs per dimension ----------------------------------------------------------------------
+#
+# A mean macro F1 says a dimension scores badly without saying which classes cause it. These cover the four
+# acceptance criteria: scored cells only, no class name typed in the code under test, a dimension with no errors,
+# and a prediction outside the allowed classes counted as it came.
+
+DIM = "subject"
+OTHER = "background"
+
+
+def _solution(rows: list[tuple[str, object]]) -> pd.DataFrame:
+    """A solution frame: ``None`` marks a cell the metric does not score."""
+    return pd.DataFrame({"image_id": [r[0] for r in rows], DIM: [r[1] for r in rows]})
+
+
+def _submission(rows: list[tuple[str, object]]) -> pd.DataFrame:
+    return pd.DataFrame({"image_id": [r[0] for r in rows], DIM: [r[1] for r in rows]})
+
+
+def test_a_wrong_answer_is_counted_as_the_pair_it_is():
+    found = confusions(_solution([("i1", "alpha")]), _submission([("i1", "beta")]), dimension_names=(DIM,))
+    assert found[DIM].pairs == (("alpha", "beta", 1),)
+    assert found[DIM].wrong == 1
+    assert found[DIM].correct == 0
+    assert found[DIM].scored == 1
+
+
+def test_a_correct_answer_is_counted_separately_and_is_not_a_pair():
+    found = confusions(_solution([("i1", "alpha")]), _submission([("i1", "alpha")]), dimension_names=(DIM,))
+    assert found[DIM].pairs == ()
+    assert found[DIM].correct == 1
+
+
+def test_an_unscored_cell_is_never_counted():
+    """solution_frame writes None into the cells metric.py skips, so they cannot reach a count here."""
+    solution = _solution([("i1", None), ("i2", "alpha")])
+    submission = _submission([("i1", "beta"), ("i2", "alpha")])
+    found = confusions(solution, submission, dimension_names=(DIM,))
+    assert found[DIM].scored == 1
+    assert found[DIM].pairs == ()
+    assert found[DIM].correct == 1
+
+
+def test_a_dimension_with_no_errors_gives_an_empty_list():
+    solution = _solution([("i1", "alpha"), ("i2", "beta")])
+    found = confusions(solution, _submission([("i1", "alpha"), ("i2", "beta")]), dimension_names=(DIM,))
+    assert found[DIM].pairs == ()
+    assert found[DIM].wrong == 0
+
+
+def test_a_class_outside_the_allowed_ones_is_counted_as_it_came():
+    """A model inventing a class name is exactly what this table is for, so it is not dropped."""
+    found = confusions(_solution([("i1", "alpha")]), _submission([("i1", "not_a_real_class")]), dimension_names=(DIM,))
+    assert found[DIM].pairs == (("alpha", "not_a_real_class", 1),)
+
+
+def test_the_pairs_come_largest_first():
+    solution = _solution([(f"i{n}", "alpha") for n in range(5)])
+    submission = _submission([("i0", "beta"), ("i1", "beta"), ("i2", "beta"), ("i3", "gamma"), ("i4", "gamma")])
+    pairs = confusions(solution, submission, dimension_names=(DIM,))[DIM].pairs
+    assert pairs == (("alpha", "beta", 3), ("alpha", "gamma", 2))
+
+
+def test_pairs_of_equal_count_are_ordered_by_name_so_the_table_is_stable():
+    solution = _solution([("i1", "alpha"), ("i2", "alpha")])
+    submission = _submission([("i1", "zeta"), ("i2", "beta")])
+    assert [p[1] for p in confusions(solution, submission, dimension_names=(DIM,))[DIM].pairs] == ["beta", "zeta"]
+
+
+def test_a_cell_with_no_answer_at_all_is_missing_rather_than_wrong():
+    solution = _solution([("i1", "alpha"), ("i2", "alpha")])
+    found = confusions(solution, _submission([("i1", None), ("i2", "")]), dimension_names=(DIM,))[DIM]
+    assert found.missing == 2
+    assert found.wrong == 0
+    assert found.pairs == ()
+
+
+def test_a_dimension_in_only_one_of_the_frames_is_skipped():
+    solution = pd.DataFrame({"image_id": ["i1"], DIM: ["alpha"], OTHER: ["white"]})
+    submission = pd.DataFrame({"image_id": ["i1"], DIM: ["beta"]})
+    found = confusions(solution, submission, dimension_names=(DIM, OTHER))
+    assert DIM in found
+    assert OTHER not in found
+
+
+def test_every_dimension_of_the_contract_is_counted_by_default(monkeypatch):
+    """With no dimension_names the contract decides, so no dimension list is typed in the wrapper."""
+    monkeypatch.setattr(metric_module, "dimensions", lambda: (DIM, OTHER))
+    solution = pd.DataFrame({"image_id": ["i1"], DIM: ["alpha"], OTHER: ["white"]})
+    submission = pd.DataFrame({"image_id": ["i1"], DIM: ["beta"], OTHER: ["color"]})
+    assert sorted(confusions(solution, submission)) == sorted([DIM, OTHER])
+
+
+# --- the command line ----------------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def exp_folder(galaxus_data):
+    """$GALAXUS_DATA with a splittable train.csv and one EXP's holdout.jsonl, all synthetic."""
+    rows = []
+    for product in range(20):
+        for shot in range(2):
+            index = product * 2 + shot
+            row = {"image_id": f"t_{index:03d}", "product_id": f"p_{product:02d}"}
+            for position, dimension in enumerate(DIMENSIONS):
+                row[dimension] = FAKE_CLASSES[dimension][(index + position) % 2]
+                row[f"{dimension}_source"] = "human"
+                row[f"{dimension}_relevant"] = "false" if (index + position) % 5 == 0 else "true"
+            rows.append(row)
+    train = pd.DataFrame(rows)
+    train.to_csv(galaxus_data / "train.csv", index=False)
+
+    # A classes source, as any real $GALAXUS_DATA has: tests/conftest.py hides contracts/classes.json, so
+    # without these the command cannot resolve the dimensions and would exit 1 before counting anything.
+    pd.DataFrame({"image_id": train["image_id"], **{d: FAKE_CLASSES[d][0] for d in DIMENSIONS}}).to_csv(
+        galaxus_data / "sample_submission.csv", index=False
+    )
+    (galaxus_data / "metric.py").write_text(
+        f"""DIMENSIONS = {tuple(DIMENSIONS)!r}
+VALID_CLASSES = {dict(FAKE_CLASSES)!r}
+""",
+        encoding="utf-8",
+    )
+
+    folder = galaxus_data / "out" / "predictions" / "EXP-0042"
+    folder.mkdir(parents=True)
+    # Always the first class of each dimension, so roughly half the scored cells are wrong.
+    (folder / "holdout.jsonl").write_text(
+        "\n".join(
+            json.dumps({"image_id": image_id, "labels": {d: FAKE_CLASSES[d][0] for d in DIMENSIONS}})
+            for image_id in train["image_id"]
+        ),
+        encoding="utf-8",
+    )
+    return folder
+
+
+def test_the_cli_prints_pairs_and_never_an_image_id(exp_folder, capsys):
+    assert metric_module.main(["--predictions", str(exp_folder)]) == 0
+    printed = capsys.readouterr().out
+    assert "scored" in printed and "->" in printed
+    assert "nothing written" in printed
+    assert "t_000" not in printed and "t_019" not in printed
+
+
+def test_the_cli_top_limits_the_rows_per_dimension(exp_folder, capsys):
+    metric_module.main(["--predictions", str(exp_folder), "--dimensions", DIMENSIONS[0], "--top", "1"])
+    printed = capsys.readouterr().out
+    assert len([line for line in printed.splitlines() if "->" in line]) == 1
+
+
+def test_the_cli_refuses_a_top_below_one(exp_folder):
+    with pytest.raises(SystemExit):
+        metric_module.main(["--predictions", str(exp_folder), "--top", "0"])
+
+
+def test_the_cli_reports_missing_predictions_without_a_traceback(exp_folder, capsys):
+    assert metric_module.main(["--predictions", str(exp_folder.parent / "EXP-9999")]) == 1
+    assert capsys.readouterr().err.startswith("cannot work out the confusions:")

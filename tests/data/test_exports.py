@@ -17,13 +17,19 @@ import galaxus.data
 
 
 def test_all_matches_the_export_table():
-    """``__all__`` is spelled out for the linters, so nothing may drift from ``_EXPORTS``."""
-    assert galaxus.data.__all__ == sorted(galaxus.data._EXPORTS)
+    """``__all__`` is spelled out for the linters, so nothing may drift from ``_EXPORTS``.
+
+    Names, not order. These two agreed under ``sorted()`` until #92 exported the first CamelCase name
+    (``DimensionConfusions``), and plain ``sorted()`` puts every capitalised name before every lowercase one,
+    which is not the order ruff's RUF022 wants. The ordering is ruff's to enforce - it is a required check and it
+    fixes the list itself - so this asserts the invariant that matters instead of repeating the sort.
+    """
+    assert sorted(galaxus.data.__all__) == sorted(galaxus.data._EXPORTS)
 
 
-def test_all_is_a_sorted_list_of_unique_names():
+def test_all_is_a_list_of_unique_names():
     assert isinstance(galaxus.data.__all__, list)
-    assert galaxus.data.__all__ == sorted(set(galaxus.data.__all__))
+    assert len(galaxus.data.__all__) == len(set(galaxus.data.__all__))
 
 
 @pytest.mark.parametrize("name", sorted(galaxus.data._EXPORTS))
@@ -33,7 +39,7 @@ def test_each_name_resolves_to_the_object_its_submodule_defines(name):
 
 
 def test_dir_lists_exactly_the_public_names():
-    assert sorted(galaxus.data.__dir__()) == galaxus.data.__all__
+    assert sorted(galaxus.data.__dir__()) == sorted(galaxus.data.__all__)
 
 
 def test_unknown_attribute_raises_attribute_error():

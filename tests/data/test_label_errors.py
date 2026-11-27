@@ -310,3 +310,50 @@ def test_the_cli_reports_a_missing_predictions_file_without_a_traceback(galaxus_
     train_table.to_csv(galaxus_data / "train.csv", index=False)
     assert main(["--predictions", str(galaxus_data / "nothing-here.jsonl")]) == 1
     assert capsys.readouterr().err.startswith("cannot find label errors:")
+
+
+# --- #92: reading the classes when no confidence exists ------------------------------------------------------
+
+
+def test_predictions_without_confidence_can_be_read_when_not_ranking(galaxus_data):
+    """A confusion table needs the class only, and the predictors it explains have no confidences yet (#75)."""
+    path = galaxus_data / "holdout.jsonl"
+    path.write_text(json.dumps({"image_id": "img_1", "labels": {"subject": "beta"}}), encoding="utf-8")
+    frame = out_of_fold_frame(path, require_confidence=False)
+    assert frame["prediction"].tolist() == ["beta"]
+    assert frame["confidence"].isna().all()
+
+
+def test_reading_without_confidence_is_opt_in_so_the_finder_still_refuses(galaxus_data):
+    path = galaxus_data / "holdout.jsonl"
+    path.write_text(json.dumps({"image_id": "img_1", "labels": {"subject": "beta"}}), encoding="utf-8")
+    with pytest.raises(ValueError, match="has no confidence"):
+        out_of_fold_frame(path)
+
+
+def test_a_dimension_without_a_confidence_is_kept_when_not_ranking(galaxus_data):
+    """Half-filled confidences: the ranked report refuses them, the class-only read keeps the row."""
+    record = {"image_id": "img_1", "labels": {"subject": "beta", "background": "white"}, "confidence": {"subject": 0.9}}
+    path = galaxus_data / "holdout.jsonl"
+    path.write_text(json.dumps(record), encoding="utf-8")
+    frame = out_of_fold_frame(path, require_confidence=False)
+    assert sorted(frame["dimension"]) == ["background", "subject"]
+    with pytest.raises(KeyError, match="carries no confidence"):
+        out_of_fold_frame(path)
+
+
+def test_write_label_errors_itself_refuses_a_path_inside_a_work_tree(tmp_path):
+    """The guard belongs to the writer, not just the command: #51 calls write_label_errors directly."""
+    repository = tmp_path / "checkout"
+    (repository / ".git").mkdir(parents=True)
+    report = pd.DataFrame(columns=list(REPORT_COLUMNS))
+    with pytest.raises(ValueError, match="never enter git"):
+        write_label_errors(report, repository / "label_errors.csv")
+    assert not (repository / "label_errors.csv").exists()
+
+
+def test_write_label_errors_still_writes_the_default_outside_the_repository(galaxus_data):
+    report = pd.DataFrame(columns=list(REPORT_COLUMNS))
+    written = write_label_errors(report)
+    assert written == galaxus_data / "out" / "label_errors.csv"
+    assert written.is_file()
