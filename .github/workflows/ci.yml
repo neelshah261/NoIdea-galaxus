@@ -46,3 +46,14 @@ jobs:
             fi
           fi
           exit $fail
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install (locked)
+        run: uv sync --locked
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Tests (synthetic data only, no network)
+        run: uv run pytest -q

@@ -10,7 +10,7 @@ Kaggle pages. Never restate its rules, numbers or class names from memory: link 
 | --- | --- | --- | --- |
 | Human owner | neelshah261 | makes owner decisions, uploads to Kaggle, spends money, posts on Discord | – |
 | Design (main agent) | Claude session of the owner | opens issues, reviews merged PRs, owns every file outside the lanes, copies "For design" notes into shared files, keeps STATE.md current | works inside a lane |
-| Worker `data` | TODO(owner): name, GitHub handle | implements `lane:data` issues in its lane, merges its own PRs on green `ci` | touches another lane or a shared file, merges another agent's PR |
+| Worker `data` | Vernika (`vernikas-ctrl`) | implements `lane:data` issues in its lane, merges its own PRs on green `ci` | touches another lane or a shared file, merges another agent's PR |
 | Worker `model` | TODO(owner): name, GitHub handle | implements `lane:model` issues in its lane | same |
 | Worker `serve` | TODO(owner): name, GitHub handle | implements `lane:serve` issues in its lane | same |
 
