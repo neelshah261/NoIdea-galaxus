@@ -69,7 +69,7 @@ def section7(team: str, exp: str | None) -> str:
     if exp:
         command += ["--exp", exp]
     try:
-        result = subprocess.run(command, cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8")
+        result = subprocess.run(command, cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8", check=False)
     finally:
         if empty:
             shutil.rmtree(empty, ignore_errors=True)
@@ -100,7 +100,7 @@ def to_html(markdown_text: str) -> str:
         import markdown
     except ImportError as missing:
         raise SystemExit("the PDF needs the 'report' extra: uv run --extra report python scripts/build_report.py") from missing
-    body = markdown.markdown(re.sub(r"<!--.*?-->", "", markdown_text, flags=re.S), extensions=["tables", "fenced_code"])
+    body = markdown.markdown(re.sub(r"<!--.*?-->", "", markdown_text, flags=re.DOTALL), extensions=["tables", "fenced_code"])
     fonts = "https://fonts.googleapis.com/css2?family=Geist:wght@400;600;700&family=Geist+Mono:wght@400&display=swap"
     return (f'<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="{fonts}">'
             f"<style>{STYLE}</style></head><body>{body}</body></html>")
