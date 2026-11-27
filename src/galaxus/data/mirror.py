@@ -76,6 +76,13 @@ def swap_mirrored_confidence(
 
     This is what makes mirror test-time augmentation comparable: predict the flipped image, bring the answer back
     here, then combine. ``dimension`` is worked out from the class names when it is not given.
+
+    **This is not ``Prediction.confidence``.** It takes a distribution over the *classes* of one dimension,
+    ``{class_name: probability}``, and swaps the left/right keys. ``contracts/prediction.md`` defines
+    ``Prediction.confidence`` as ``{dimension: float}`` - one scalar for the class already chosen - and such a
+    scalar needs no swapping, because :func:`mirror_class` has already mapped the label back. #48's MirrorTTA
+    (#98) therefore compares the two scalars directly and does not call this, which is correct. This stays for a
+    predictor that keeps the whole distribution, such as the heads of #51; passing the wrong shape raises.
     """
     resolved = dict(allowed) if allowed is not None else allowed_classes()
     name = dimension if dimension is not None else _dimension_of(confidence.keys(), resolved)
