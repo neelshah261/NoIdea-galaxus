@@ -1,0 +1,48 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Enforces the lane table and the data rules of AGENTS.md. Change both in one design/* PR.
+      - name: Lane and data-leak check
+        if: github.event_name == 'pull_request'
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          case "$HEAD_REF" in
+            design/*)     allowed='' ;;
+            data|data/*)  allowed='^(src/galaxus/data/|tests/data/)' ;;
+            model|model/*) allowed='^(src/galaxus/model/|train/|results/|tests/model/)' ;;
+            serve|serve/*) allowed='^(src/galaxus/serve/|bench/|docs/|presentation/|tests/serve/)' ;;
+            *) echo "::error::branch '$HEAD_REF' must start with design/, data/, model/ or serve/"; exit 1 ;;
+          esac
+          changed="$RUNNER_TEMP/changed.txt"
+          git diff --name-only --no-renames "origin/$BASE_REF...HEAD" > "$changed"
+          echo "changed files:"; cat "$changed"
+          fail=0
+          leaks=$(grep -Ei '(\.(csv|bin|7z|zip|parquet|jsonl|png|jpe?g|webp|gif|bmp|tiff?|safetensors|gguf|ckpt|pt)$|(^|/)(kaggle\.json|credentials\.json|\.env)$|(^|/)labeling_guideline\.)' "$changed" || true)
+          if [ -n "$leaks" ]; then
+            echo "::error::data, weights or secrets must never be committed:"; echo "$leaks"; fail=1
+          fi
+          if [ -n "$allowed" ]; then
+            outside=$(grep -Ev "$allowed" "$changed" || true)
+            if [ -n "$outside" ]; then
+              echo "::error::files outside lane '${HEAD_REF%%/*}':"; echo "$outside"; fail=1
+            fi
+          fi
+          exit $fail
