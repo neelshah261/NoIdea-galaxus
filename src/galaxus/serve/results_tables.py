@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape
 
-from galaxus.serve.report import DIMENSIONS_ORDER, read_rows
+from galaxus.serve.report import dimension_order, read_rows
 
 PAPER, WHITE, INK, MUTED, RULE, RULE2, ACCENT, ACCENT2 = (
     "#f2efe9", "#ffffff", "#141414", "#55524c", "#dcd6cc", "#c4bcae", "#c93c05", "#a86400")
@@ -71,7 +71,8 @@ def _sha(row: Mapping[str, Any]) -> str | None:
 
 def _dims(rows: Sequence[Mapping[str, Any]]) -> list[str]:
     seen = {d for row in rows for d in (row.get("macro_f1") or {})}
-    return [d for d in DIMENSIONS_ORDER if d in seen] + sorted(seen - set(DIMENSIONS_ORDER))
+    order = dimension_order(rows)
+    return [d for d in order if d in seen] + sorted(seen - set(order))
 
 
 def parent_of(row: Mapping[str, Any], rows: Sequence[Mapping[str, Any]]) -> tuple[Mapping[str, Any] | None, str]:
@@ -123,19 +124,30 @@ def ablation_table(rows: Sequence[Mapping[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _perspective() -> str:
+    """The bonus dimension, named once by the data lane (``galaxus.data.mirror.PERSPECTIVE_DIMENSION``)."""
+    from galaxus.data.mirror import PERSPECTIVE_DIMENSION
+
+    return PERSPECTIVE_DIMENSION
+
+
 def perspective_line(rows: Sequence[Mapping[str, Any]]) -> str:
-    scored = [r for r in rows if (r.get("macro_f1") or {}).get("perspective") is not None]
+    view = _perspective()
+    scored = [r for r in rows if (r.get("macro_f1") or {}).get(view) is not None]
     if not scored:
         return "Perspective: no run has a perspective score yet."
-    best = max(scored, key=lambda r: r["macro_f1"]["perspective"])
-    runs = ", ".join(f"{r.get('id')} {r['macro_f1']['perspective']:.3f}" for r in scored)
+    best = max(scored, key=lambda r: r["macro_f1"][view])
+    runs = ", ".join(f"{r.get('id')} {r['macro_f1'][view]:.3f}" for r in scored)
     return f"**Perspective** (the hosts' priority and a bonus): best {best.get('id')} at " \
-           f"**{best['macro_f1']['perspective']:.3f}**. All runs: {runs}."
+           f"**{best['macro_f1'][view]:.3f}**. All runs: {runs}."
 
 
 def chart_svg(rows: Sequence[Mapping[str, Any]], title: str = "Macro F1 per dimension, official holdout") -> str:
     """Grouped bars, one group per dimension, one bar per EXP; numbers written on the bars."""
-    dims = _dims(rows) or list(DIMENSIONS_ORDER)
+    dims = _dims(rows) or list(dimension_order(rows))
+    if not dims:  # no rows and no classes source: an honest empty chart
+        return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 200" role="img"><title>{escape(title)}'
+                '</title><text x="40" y="100">No EXP rows yet.</text></svg>\n')
     width, height, left, right, top, bottom = 1600, 700, 90, 40, 120, 110
     plot_w, plot_h = width - left - right, height - top - bottom
     group = plot_w / len(dims)

@@ -26,7 +26,21 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-DIMENSIONS_ORDER = ("subject", "background", "perspective", "individuals", "text_classification", "text_language")
+
+def dimension_order(rows: Sequence[Mapping[str, Any]] = ()) -> tuple[str, ...]:
+    """The six dimensions in submission order, from ``galaxus.data.classes`` (#82: never typed here).
+
+    Without a classes source, the order the EXP rows give them in.
+    """
+    try:
+        from galaxus.data.classes import dimensions
+
+        return tuple(dimensions())
+    except Exception:  # noqa: BLE001 - no contracts/classes.json and no $GALAXUS_DATA
+        seen: dict[str, None] = {}
+        for row in rows:
+            seen.update(dict.fromkeys(row.get("macro_f1") or {}))
+        return tuple(seen)
 COMPETITION = "hackapertus-galaxus"
 #: The hosts' baselines live in challenge_description.md "Baselines"; they are linked, never restated here.
 BASELINES_LINK = "[challenge_description.md, Baselines](../challenge_description.md#baselines)"
@@ -110,7 +124,8 @@ def section7(
         out += ["| Dimension | Macro F1 | Weighted F1 |", "| --- | --- | --- |"]
         macro = selected.get("macro_f1", {})
         weighted = selected.get("weighted_f1", {})
-        for dimension in [d for d in DIMENSIONS_ORDER if d in macro] + [d for d in macro if d not in DIMENSIONS_ORDER]:
+        order = dimension_order([selected])
+        for dimension in [d for d in order if d in macro] + [d for d in macro if d not in order]:
             out.append(f"| {dimension} | {_f(macro.get(dimension))} | {_f(weighted.get(dimension))} |")
         out.append(f"| **mean** | **{_f(selected.get('score'))}** | **{_f(selected.get('overall_weighted_f1'))}** |")
         out += ["", f"  The bar to beat is the hosts' baselines: {BASELINES_LINK}.", ""]
@@ -119,13 +134,14 @@ def section7(
 
     out += [f"- **What mattered** (every EXP row, holdout macro F1; source {source}):", ""]
     if rows:
-        out += ["| EXP | Predictor | Mean | " + " | ".join(DIMENSIONS_ORDER) + " | img/s | $ / 100k | Note |",
-                "| --- | --- | --- | " + " | ".join("---" for _ in DIMENSIONS_ORDER) + " | --- | --- | --- |"]
+        order = dimension_order(rows)
+        out += ["| EXP | Predictor | Mean | " + " | ".join(order) + " | img/s | $ / 100k | Note |",
+                "| --- | --- | --- | " + " | ".join("---" for _ in order) + " | --- | --- | --- |"]
         for row in rows:
             macro = row.get("macro_f1", {})
             out.append(
                 f"| {row.get('id')} | {row.get('predictor', '')} | {_f(row.get('score'))} | "
-                + " | ".join(_f(macro.get(d)) for d in DIMENSIONS_ORDER)
+                + " | ".join(_f(macro.get(d)) for d in order)
                 + f" | {_f(row.get('images_per_second'), 1)} | {_f(row.get('cost_per_100k_usd'), 2)} | "
                 f"{str(row.get('note', '')).replace('|', '/')} |"
             )

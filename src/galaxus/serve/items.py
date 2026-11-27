@@ -1,15 +1,12 @@
 """From a competition table to the ``ImageItem`` list a ``Predictor`` gets, and loading a predictor by name.
 
-The contract is PLAN.md "Lanes and contracts": ``ImageItem{image_id, path, context | None}``. It lives in
-``galaxus.types`` (design, issue #11). Until that module exists, :class:`PendingImageItem` stands in with the same
-fields, so the serve lane can run and be tested today.
-TODO(design): drop :class:`PendingImageItem` once ``galaxus.types`` is on main.
+The contract is ``galaxus.types.ImageItem{image_id, path, context | None}`` (design, #11 / #80; the format is in
+``contracts/prediction.md``).
 """
 
 from __future__ import annotations
 
 import importlib
-from dataclasses import dataclass
 from typing import Any
 
 import pandas as pd
@@ -21,21 +18,10 @@ NOT_CONTEXT = frozenset({"image_id", "image_path", "image_file", "product_id"})
 LABEL_METADATA_SUFFIXES = ("_source", "_relevant")
 
 
-@dataclass(frozen=True)
-class PendingImageItem:
-    """Stand-in for ``galaxus.types.ImageItem`` until B0 (#11) lands. Same fields as the contract."""
-
-    image_id: str
-    path: str
-    context: dict[str, str] | None = None
-
-
 def image_item_type() -> type:
-    """``galaxus.types.ImageItem`` when design has added it, otherwise :class:`PendingImageItem`."""
-    try:
-        from galaxus.types import ImageItem  # type: ignore[import-not-found]
-    except ImportError:
-        return PendingImageItem
+    """The shared ``galaxus.types.ImageItem`` (#82: the serve lane's stand-in is gone)."""
+    from galaxus.types import ImageItem
+
     return ImageItem
 
 

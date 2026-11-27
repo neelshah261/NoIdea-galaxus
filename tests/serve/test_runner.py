@@ -10,7 +10,6 @@ from serve_helpers import DIMENSIONS, Pred, StubPredictor
 
 from galaxus.serve import runner
 from galaxus.serve.items import (
-    PendingImageItem,
     context_columns,
     items_from_frame,
     load_predictor,
@@ -130,9 +129,11 @@ def test_items_from_frame_keeps_context_and_drops_labels():
         items_from_frame(frame.drop(columns=["image_file"]))
 
 
-def test_pending_item_matches_the_contract_fields():
-    item = PendingImageItem("a", "/x.jpg")
-    assert (item.image_id, item.path, item.context) == ("a", "/x.jpg", None)
+def test_items_are_the_shared_contract_type():
+    from galaxus.serve.items import image_item_type
+    from galaxus.types import ImageItem
+
+    assert image_item_type() is ImageItem
 
 
 def test_load_predictor_from_class_factory_or_object():

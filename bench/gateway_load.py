@@ -33,8 +33,13 @@ from typing import Any
 
 from PIL import Image as PillowImage
 
-DIMENSIONS = ("subject", "background", "perspective", "individuals", "text_classification", "text_language")
-ANSWER = {d: "none" for d in DIMENSIONS}
+
+def valid_answer() -> dict[str, str]:
+    """One allowed class per dimension, from ``galaxus.data.classes`` (#82: no dimension or class typed here)."""
+    from galaxus.data.classes import allowed_classes, dimensions
+
+    allowed = allowed_classes()
+    return {d: min(allowed[d]) for d in dimensions()}
 
 
 def tiny_jpeg() -> bytes:
@@ -59,6 +64,11 @@ class FakeGateway:
     keys_used: Counter = field(default_factory=Counter)
     _burst_left: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock)
+    _answer: str = ""
+
+    def __post_init__(self) -> None:
+        # Read the classes once: resolving them per request reads files and would hide the workers' speed-up.
+        self._answer = json.dumps(valid_answer())
 
     def __call__(self, url: str, headers: dict[str, str], body: bytes, timeout: float) -> tuple[int, bytes]:
         key = headers.get("Authorization", "").removeprefix("Bearer ")
@@ -87,7 +97,7 @@ class FakeGateway:
             time.sleep(self.latency)
         if status != 200:
             return status, json.dumps({"error": {"code": status}}).encode()
-        reply = {"choices": [{"message": {"content": json.dumps(ANSWER)}, "finish_reason": "stop"}],
+        reply = {"choices": [{"message": {"content": self._answer}, "finish_reason": "stop"}],
                  "usage": {"prompt_tokens": 1100, "completion_tokens": 40}, "model": "fake-apertus"}
         return 200, json.dumps(reply).encode()
 

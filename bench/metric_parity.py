@@ -12,40 +12,68 @@ train. Run where ``$GALAXUS_DATA`` holds the Kaggle files; it prints counts only
 
 from __future__ import annotations
 
+import json
 import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-# challenge_description.md "Which cells are scored", quoted rule by rule. Class names as written there.
-NO_CONTEXT_SUBJECTS = {"logo", "placeholder", "energy_label"}         # bg, perspective, individuals, text_cls
-INFOGRAPHIC = "infographic"                                           # bg, perspective, individuals
-NO_PERSPECTIVE_SUBJECTS = {"delivery_scope", "detail_closeup", "product_grouping"}
-SCENE = "scene_lifestyle"                                             # background -> no subject, no perspective
-TEXT_LANGUAGE_SUBJECTS = {"infographic", "packaging", "package_and_product", "full_product"}
-NO_OVERLAY = "none"
+RULES_FILE = Path(__file__).with_name("scoring_rules.json")
 
 
-def rule_mask(frame: pd.DataFrame, dimensions: tuple[str, ...]) -> dict[str, pd.Series]:
+def load_rules(path: Path = RULES_FILE, allowed: dict[str, list[str]] | None = None) -> dict:
+    """The written rules as data (bench/scoring_rules.json), every dimension and class checked when given ``allowed``.
+
+    No dimension or class is typed in this script (#82): they live in that file, quoted from the description.
+    """
+    rules = json.loads(path.read_text(encoding="utf-8"))
+    if allowed is not None:
+        problems = []
+
+        def check(dimension: str, names: list[str] = ()) -> None:
+            if dimension not in allowed:
+                problems.append(f"{dimension} is not a dimension")
+            problems.extend(f"{name} is not a class of {dimension}" for name in names
+                            if dimension in allowed and name not in allowed[dimension])
+
+        for rule in rules.get("not_scored_when", []):
+            check(rule["when"]["dimension"], rule["when"]["in"])
+            for dimension in rule["not_scored"]:
+                check(dimension)
+        for rule in rules.get("scored_only_if", []):
+            check(rule["dimension"])
+            for condition in rule["any_of"]:
+                check(condition["dimension"], condition.get("in", []) + condition.get("not_in", []))
+        if problems:
+            raise ValueError(f"{path.name}: " + "; ".join(problems))
+    return rules
+
+
+def rule_mask(frame: pd.DataFrame, dimensions: tuple[str, ...], rules: dict) -> dict[str, pd.Series]:
     """Scored cells per the written rules, triggered by human labels only."""
     human = {d: frame[f"{d}_source"].eq("human") for d in dimensions}
-    subject = frame["subject"].where(human["subject"])
-    background = frame["background"].where(human["background"])
-    text = frame["text_classification"].where(human["text_classification"])
+
+    def label(dimension: str) -> pd.Series:  # the human label, or missing where the cell is a prelabel
+        return frame[dimension].where(human[dimension])
+
     masks = {}
     for d in dimensions:
         scored = human[d].copy()
-        if d in ("background", "perspective", "individuals", "text_classification"):
-            scored &= ~subject.isin(NO_CONTEXT_SUBJECTS)
-        if d in ("background", "perspective", "individuals"):
-            scored &= subject.ne(INFOGRAPHIC)
-        if d == "perspective":
-            scored &= ~subject.isin(NO_PERSPECTIVE_SUBJECTS)
-        if d in ("subject", "perspective"):
-            scored &= background.ne(SCENE)
-        if d == "text_language":
-            overlay = text.notna() & text.ne(NO_OVERLAY)
-            scored &= overlay | subject.isin(TEXT_LANGUAGE_SUBJECTS)
+        for rule in rules.get("not_scored_when", []):
+            if d in rule["not_scored"]:
+                scored &= ~label(rule["when"]["dimension"]).isin(rule["when"]["in"])
+        for rule in rules.get("scored_only_if", []):
+            if rule["dimension"] != d:
+                continue
+            allowed_here = pd.Series(False, index=frame.index)
+            for condition in rule["any_of"]:
+                value = label(condition["dimension"])
+                if "in" in condition:
+                    allowed_here |= value.isin(condition["in"])
+                if "not_in" in condition:
+                    allowed_here |= value.notna() & ~value.isin(condition["not_in"])
+            scored &= allowed_here
         masks[d] = scored.fillna(False).astype(bool)
     return masks
 
@@ -78,12 +106,13 @@ def main() -> int:
 
     dimensions = tuple(classes.dimensions())
     allowed = {d: sorted(v) for d, v in classes.allowed_classes().items()}
+    scoring_rules = load_rules(allowed=allowed)
     train = load.read_train()
     _, holdout = split.split_holdout(train)
     ok = True
     for name, frame in (("official holdout", holdout), ("all of train", train)):
         ours = {d: split.scored_mask(frame, d) for d in dimensions}
-        rules = rule_mask(frame, dimensions)
+        rules = rule_mask(frame, dimensions, scoring_rules)
         print(f"\n== {name}: {len(frame)} images")
         print(f"{'dimension':22}{'scored (ours)':>15}{'scored (rules)':>16}{'only ours':>11}{'only rules':>12}")
         for d in dimensions:
