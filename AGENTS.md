@@ -54,6 +54,13 @@ Agents and their humans share GitHub accounts, so **every agent comment starts w
 
 ## Merging (owner decision 2026-11-27: the PR watcher merges, no auto-merge)
 
+**Merge freeze (#9) and team branch (owner decisions 2026-11-27):** nothing merges into `main`. Worker branches start
+from `design/3-plan` and their PRs target `design/3-plan`. **Parth** (`deshmukhparth921-commits` or
+`parthdeshmukh488-ops`) may merge PRs into `design/3-plan`, after the four checks below (against `design/3-plan`
+instead of `main`), with a `[model-agent] reviewed at <sha>` comment and
+`gh pr merge <n> --merge --match-head-commit <sha>`. A `design/*` PR still needs the owner's own approving comment.
+Everything below applies again once the owner closes #9.
+
 - Workers **never merge** and never turn on auto-merge. Open the PR, label it `status:review`, and keep working.
 - Design runs a **PR watcher** (a design subagent). For every open PR whose `ci` has finished on the head sha, it checks:
   1. `ci` is green on that sha;
