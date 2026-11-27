@@ -8,7 +8,7 @@ import pytest
 
 from galaxus.model import heads
 from galaxus.model.calibration import apply_bias, fit_bias, macro_f1
-from galaxus.model.contract import ImageItem
+from galaxus.types import ImageItem
 
 DIMS = ("subject", "perspective")
 

@@ -33,7 +33,7 @@ import numpy as np
 import pandas as pd
 
 from galaxus.model.calibration import apply_bias, fit_bias
-from galaxus.model.contract import ImageItem, Prediction
+from galaxus.types import ImageItem, Prediction
 
 #: Bump when the prompt text changes: features from another prompt are another feature set.
 PROMPT_VERSION = "v1"
