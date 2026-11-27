@@ -280,3 +280,49 @@ class LoraPredictor:
 
     def config(self) -> dict[str, object]:
         return {"fallbacks": self.fallbacks, "image_size": IMAGE_SIZE}
+
+
+# ---------------------------------------------------------------- EXP-0004: the eval script's "lora" predictor
+
+#: Where vLLM serves the merged LoRA weights: ``MODEL=<run>/merged bash bench/vllm_apertus.sh`` on the GPU machine.
+BASE_URL_ENV = "LORA_BASE_URL"
+SERVED_NAME_ENV = "LORA_SERVED_MODEL"
+DEFAULT_SERVED_NAME = "apertus-lora"
+#: Same as the Saturday run sheet (#58): a 429 burst longer than 2 retries stops a run.
+RETRIES = 4
+
+
+def eval_factory(environ: Mapping[str, str] | None = None, backend: Any = None) -> Callable[..., LoraPredictor]:
+    """``factory(training_rows, data, seed)`` for ``galaxus.model.eval.PREDICTORS["lora"]``.
+
+    Reads the endpoint from ``$LORA_BASE_URL`` (e.g. ``http://<gpu-host>:8000/v1``); ``backend`` replaces it in tests.
+    The fallback answer is the majority answer of the training rows, as for the zero-shot predictor.
+    """
+    import os
+
+    settings = dict(os.environ if environ is None else environ)
+
+    def factory(rows: pd.DataFrame, data: Any, seed: int) -> LoraPredictor:
+        from galaxus.model.baselines import MajorityPredictor
+
+        chosen = backend
+        if chosen is None:  # checked first, so a missing endpoint is the first and clearest error
+            base_url = settings.get(BASE_URL_ENV)
+            if not base_url:
+                raise RuntimeError(f"set ${BASE_URL_ENV} to the vLLM endpoint serving the merged LoRA weights")
+            from galaxus.model.apertus.vllm import VllmBackend
+
+            chosen = VllmBackend(base_url, settings.get(SERVED_NAME_ENV, DEFAULT_SERVED_NAME), retries=RETRIES)
+        dimensions = list(data.dimensions())
+        allowed = data.allowed_classes()
+        fallback = MajorityPredictor.fit(rows, dimensions, data.scored_mask).answer
+        return LoraPredictor(chosen, {d: sorted(allowed[d]) for d in dimensions}, fallback, _cached_image,
+                             model=getattr(chosen, "model", None))
+
+    return factory
+
+
+def _cached_image(item: Any) -> bytes:
+    from galaxus.data.images import cached_jpeg
+
+    return cached_jpeg(item.image_id, item.path, image_size=IMAGE_SIZE)
