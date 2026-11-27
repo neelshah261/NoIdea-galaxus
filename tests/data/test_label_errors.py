@@ -357,3 +357,45 @@ def test_write_label_errors_still_writes_the_default_outside_the_repository(gala
     written = write_label_errors(report)
     assert written == galaxus_data / "out" / "label_errors.csv"
     assert written.is_file()
+
+
+# --- the format this lane consumes, pinned against the lane that produces it --------------------------------
+
+
+def test_the_model_lanes_writer_produces_what_this_lane_reads(galaxus_data, train_table):
+    """#7 end to end across the lane boundary: `eval.write_predictions` into `find_label_errors`.
+
+    Every other test here builds the jsonl by hand, so all of them would still pass if the model lane changed
+    the record it writes. This one imports the real writer, so a divergence fails in CI instead of at 14:30 on
+    the day the csv is due. Importing another lane's code is allowed (AGENTS.md "Lanes"); nothing of it is
+    changed here, and the shape it pins is `contracts/prediction.md`.
+    """
+    from galaxus.model.eval import write_predictions
+    from galaxus.types import Prediction
+
+    predictions = [
+        Prediction(image_id="img_1", labels={"subject": "beta"}, confidence={"subject": 0.97}),
+        Prediction(image_id="img_2", labels={"subject": "alpha"}, confidence={"subject": 0.10}),
+    ]
+    path = write_predictions(galaxus_data / "out" / "predictions" / "EXP-0011", predictions)
+
+    report = find_label_errors(path, train_table, dimension_names=("subject",))
+    # img_1's human label is alpha and the model says beta at 0.97: a suspected error.
+    # img_2 agrees with its label anyway, and at 0.10 would be under the threshold regardless.
+    assert report.to_dict(orient="records") == [
+        {"image_id": "img_1", "dimension": "subject", "label": "alpha", "suggested_label": "beta"}
+    ]
+
+
+def test_a_writer_that_dropped_confidence_would_be_caught_here(galaxus_data, train_table):
+    """The other half of the pin: if the producer ever wrote `confidence: null`, the ranked finder must refuse."""
+    from galaxus.model.eval import write_predictions
+    from galaxus.types import Prediction
+
+    path = write_predictions(
+        galaxus_data / "out" / "predictions" / "EXP-0012",
+        [Prediction(image_id="img_1", labels={"subject": "beta"}, confidence=None)],
+    )
+    assert '"confidence": null' in path.read_text(encoding="utf-8")
+    with pytest.raises(ValueError, match="has no confidence"):
+        find_label_errors(path, train_table, dimension_names=("subject",))
