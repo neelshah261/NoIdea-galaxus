@@ -1,6 +1,6 @@
 """Use one API key at a time and switch to the next when its credits run out.
 
-Keys: LLM_API_KEY first, then LLM_API_KEY_2, LLM_API_KEY_3, ... (see .env.example). Run with
+Keys: LLM_API_KEY first, then LLM_API_KEY_2, LLM_API_KEY_3, ..., set in .env (git ignores it). Run with
 `uv run --env-file .env ...` so they are in the environment.
 
     ring = KeyRing()
