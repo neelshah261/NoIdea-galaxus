@@ -244,30 +244,38 @@ def tokens_per_example(image_size: int = IMAGE_SIZE, prompt_tokens: int = 450, a
 class LoraPredictor:
     """The contract over an OpenAI-compatible endpoint serving the merged LoRA model (vLLM).
 
-    One request per image with the training prompt; the JSON answer is parsed and checked against the allowed classes.
-    An invalid answer falls back, per dimension, to ``fallback`` (the majority answer), so a cell is never empty; the
-    count of fallbacks is kept for the report.
+    One request per image with the training prompt. The request carries a JSON schema with one enum of allowed classes
+    per dimension (#100), so vLLM can only decode valid answers. The answer is still parsed and checked: an invalid one
+    (a backend that ignores the schema, a cut-off answer) falls back to ``fallback`` (the majority answer), so a cell
+    is never empty, and the count of fallbacks is kept for the report.
     """
 
     name = "lora"
 
     def __init__(self, backend: Any, classes: Mapping[str, Sequence[str]], fallback: Mapping[str, str],
                  image_bytes: Callable[[Any], bytes], model: str | None = None) -> None:
+        from galaxus.model.zero_shot import answer_schema
+
         self.backend = backend
         self.classes = {d: list(v) for d, v in classes.items()}
         self.fallback = dict(fallback)
         self.image_bytes = image_bytes
         self.model = model
         self.system = system_prompt(self.classes)
+        self.schema = answer_schema(list(self.classes), {d: frozenset(v) for d, v in self.classes.items()})
         self.fallbacks = 0
 
-    def predict(self, batch: Sequence[Any]) -> list[dict[str, Any]]:
+    def predict(self, batch: Sequence[Any]) -> list[Any]:
+        """One ``galaxus.types.Prediction`` per item, in order (the contract ``eval``, ``runner`` and ``submit`` read)."""
+        from galaxus.types import Prediction
+
         answers = []
         for item in batch:
             generation = self.backend.generate(
                 [{"role": "system", "content": self.system},
                  {"role": "user", "content": user_prompt(getattr(item, "context", None))}],
                 [self.image_bytes(item)],
+                json_schema=self.schema,
                 max_tokens=160,
                 temperature=0.0,
             )
@@ -275,11 +283,11 @@ class LoraPredictor:
             if labels is None:
                 self.fallbacks += 1
                 labels = dict(self.fallback)
-            answers.append({"image_id": item.image_id, "labels": labels, "confidence": None})
+            answers.append(Prediction(image_id=item.image_id, labels=labels, confidence=None))
         return answers
 
     def config(self) -> dict[str, object]:
-        return {"fallbacks": self.fallbacks, "image_size": IMAGE_SIZE}
+        return {"fallbacks": self.fallbacks, "image_size": IMAGE_SIZE, "json_schema": "enum per dimension"}
 
 
 # ---------------------------------------------------------------- EXP-0004: the eval script's "lora" predictor
@@ -305,14 +313,7 @@ def eval_factory(environ: Mapping[str, str] | None = None, backend: Any = None) 
     def factory(rows: pd.DataFrame, data: Any, seed: int) -> LoraPredictor:
         from galaxus.model.baselines import MajorityPredictor
 
-        chosen = backend
-        if chosen is None:  # checked first, so a missing endpoint is the first and clearest error
-            base_url = settings.get(BASE_URL_ENV)
-            if not base_url:
-                raise RuntimeError(f"set ${BASE_URL_ENV} to the vLLM endpoint serving the merged LoRA weights")
-            from galaxus.model.apertus.vllm import VllmBackend
-
-            chosen = VllmBackend(base_url, settings.get(SERVED_NAME_ENV, DEFAULT_SERVED_NAME), retries=RETRIES)
+        chosen = backend if backend is not None else _vllm_backend(settings)
         dimensions = list(data.dimensions())
         allowed = data.allowed_classes()
         fallback = MajorityPredictor.fit(rows, dimensions, data.scored_mask).answer
@@ -320,6 +321,44 @@ def eval_factory(environ: Mapping[str, str] | None = None, backend: Any = None) 
                              model=getattr(chosen, "model", None))
 
     return factory
+
+
+def _vllm_backend(settings: Mapping[str, str]) -> Any:
+    """The vLLM endpoint from ``$LORA_BASE_URL``. Checked first, so a missing endpoint is the first, clearest error."""
+    base_url = settings.get(BASE_URL_ENV)
+    if not base_url:
+        raise RuntimeError(
+            f"set ${BASE_URL_ENV} to the vLLM endpoint serving the merged LoRA weights, e.g. http://<gpu-host>:8000/v1 "
+            f"(started with MODEL=<run>/merged bash bench/vllm_apertus.sh)"
+        )
+    from galaxus.model.apertus.vllm import VllmBackend
+
+    return VllmBackend(base_url, settings.get(SERVED_NAME_ENV, DEFAULT_SERVED_NAME), retries=RETRIES)
+
+
+def from_env(environ: Mapping[str, str] | None = None, backend: Any = None) -> LoraPredictor:
+    """The LoRA predictor with no arguments, for ``submit --run`` and ``final_run --predictor`` (#100).
+
+        python -m galaxus.serve.submit --exp EXP-0004 --part dev --run galaxus.model.lora:from_env
+        python -m galaxus.serve.final_run --drill --predictor galaxus.model.lora:from_env --exp EXP-0004
+
+    The endpoint comes from ``$LORA_BASE_URL`` and ``$LORA_SERVED_MODEL`` (checked before anything else is read), the
+    classes from the contract (``galaxus.data.classes``), the fallback from ``MajorityPredictor()`` (train minus the
+    official holdout), and the images from the same 512 px cache as ``eval_factory``. So EXP-0004's holdout score,
+    the dev file and Saturday's final file come from identical prompts and identical pixels.
+    """
+    import os
+
+    from galaxus.data.classes import allowed_classes, dimensions
+    from galaxus.model.baselines import MajorityPredictor
+
+    settings = dict(os.environ if environ is None else environ)
+    chosen = backend if backend is not None else _vllm_backend(settings)
+    names = list(dimensions())
+    allowed = allowed_classes()
+    fallback = MajorityPredictor().answer
+    return LoraPredictor(chosen, {d: sorted(allowed[d]) for d in names}, fallback, _cached_image,
+                         model=getattr(chosen, "model", None))
 
 
 def _cached_image(item: Any) -> bytes:
