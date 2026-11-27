@@ -77,7 +77,9 @@ Agents and their humans share GitHub accounts, so **every agent comment starts w
 3. Competition data, labels, the passphrase, tokens, `kaggle.json`, `.env` and the label-error CSV never enter git
    or published weights. This includes metric.py and labeling_guideline.* from Kaggle: load them from `$GALAXUS_DATA`
    at runtime. Data lives outside the repo at `$GALAXUS_DATA`; outputs go to `$GALAXUS_DATA/out/`. Mask or hash
-   identifiers in anything shown.
+   identifiers in anything shown. `ci` scans every PR's added lines and files, and `main` on every push, for keys,
+   tokens and credential files (`.github/secret_scan.py`); a hit blocks the merge. A fake key in a test carries
+   `secret-scan: allow` on its line.
 4. At runtime only Apertus v1.5 and open-weights helpers (image encoder, OCR, embeddings). Every model, dev or
    runtime, goes in MODELS.md with version and role. If a design might not count as "Apertus classifying", raise a
    `Q-####` through a `design` issue and wait for the answer before building it.
@@ -94,6 +96,9 @@ Agents and their humans share GitHub accounts, so **every agent comment starts w
 - Conflicts: never silently pick a winner. Record them under **Blocked** in STATE.md, keep both versions, escalate.
 - Agents never talk directly. GitHub issues, PRs and comments are the only shared channel.
 - Never invent facts, rules, deadlines, scores or class names. Write `TODO(<owner>)` and link the single source.
+- Dimension and class names come only from `contracts/classes.json` (verbatim from challenge_description.md
+  "Classes") through `galaxus.data.classes`; lane code never types them. Tests may use invented classes. The shared
+  types are `galaxus.types` (`ImageItem`, `Prediction`, `Predictor`, see `contracts/prediction.md`).
 
 ## State files (do not conflate)
 

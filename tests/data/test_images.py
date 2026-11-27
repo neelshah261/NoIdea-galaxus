@@ -9,6 +9,7 @@ from PIL import Image as PillowImage
 from galaxus.data.images import (
     IMAGE_SIZE,
     MAX_SIDE_FACTOR,
+    MIRROR_SUFFIX,
     PATCH_SIZE,
     cached_jpeg,
     fill_image_cache,
@@ -145,7 +146,7 @@ def an_image(tmp_path, name: str = "one.png"):
 
 
 def test_the_cache_directory_is_under_galaxus_data_and_named_by_size(galaxus_data):
-    assert image_cache_dir(512) == galaxus_data / "cache" / "images" / "512"
+    assert image_cache_dir(512) == galaxus_data / "cache" / "images" / f"512-p{PATCH_SIZE}"
     assert image_cache_dir(512).is_dir()
 
 
@@ -186,7 +187,7 @@ def test_the_mirror_is_cached_under_its_own_name(tmp_path, galaxus_data):
     mirrored = cached_jpeg("lopsided", path, mirrored=True, image_size=64)
     assert plain != mirrored
     assert (image_cache_dir(64) / "lopsided.jpg").read_bytes() == plain
-    assert (image_cache_dir(64) / "lopsided.mirrored.jpg").read_bytes() == mirrored
+    assert (image_cache_dir(64) / f"lopsided{MIRROR_SUFFIX}.jpg").read_bytes() == mirrored
 
 
 def test_refresh_rewrites_a_stale_entry(tmp_path, galaxus_data):

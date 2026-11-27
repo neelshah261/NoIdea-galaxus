@@ -19,8 +19,9 @@ import platform
 import sys
 import time
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -92,10 +93,14 @@ def bench(
     batch_size: int = 16,
     warmup_batches: int = 1,
     dollars_per_hour: float | None = None,
+    workers: int = 1,
 ) -> BenchResult:
-    """Time ``predictor`` over ``items`` after ``warmup_batches`` untimed batches."""
-    if batch_size < 1 or warmup_batches < 0:
-        raise ValueError("batch_size must be at least 1 and warmup_batches at least 0")
+    """Time ``predictor`` over ``items`` after ``warmup_batches`` untimed batches.
+
+    ``workers`` above 1 keeps that many batches in flight, as ``runner.run(workers=...)`` does (#36).
+    """
+    if batch_size < 1 or warmup_batches < 0 or workers < 1:
+        raise ValueError("batch_size and workers must be at least 1, warmup_batches at least 0")
     warmup = list(items[: warmup_batches * batch_size])
     timed = list(items[warmup_batches * batch_size :])
     if not timed:
@@ -103,9 +108,14 @@ def bench(
     for start in range(0, len(warmup), batch_size):
         predictor.predict(warmup[start : start + batch_size])
     _reset_peak_memory()
+    batches = [timed[start : start + batch_size] for start in range(0, len(timed), batch_size)]
     started = time.perf_counter()
-    for start in range(0, len(timed), batch_size):
-        predictor.predict(timed[start : start + batch_size])
+    if workers == 1:
+        for batch in batches:
+            predictor.predict(batch)
+    else:
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="bench") as pool:
+            list(pool.map(predictor.predict, batches))
     seconds = time.perf_counter() - started
     speed = len(timed) / seconds if seconds > 0 else float("inf")
     device, peak, note = device_and_peak_memory()
@@ -121,7 +131,7 @@ def bench(
         dollars_per_hour=dollars_per_hour,
         cost_per_100k=round(cost_per_100k(dollars_per_hour, speed), 4) if dollars_per_hour is not None else None,
         hours_per_100k=round(hours_per_100k(speed), 4),
-        finished_at=datetime.now(UTC).isoformat(timespec="seconds"),
+        finished_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
     )
 
 
@@ -153,11 +163,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--warmup", type=int, default=1, help="untimed batches first")
     parser.add_argument("--dollars-per-hour", type=float, default=None, help="GPU price, for the cost per 100k")
     parser.add_argument("--label", default=None, help="name of the result file (default: the predictor name)")
+    parser.add_argument("--workers", type=int, default=1, help="batches in flight (thread-safe predictors only)")
     arguments = parser.parse_args(argv)
 
     predictor = load_predictor(arguments.predictor)
     items = items_for_part(arguments.part, arguments.limit)
-    result = bench(predictor, items, arguments.batch_size, arguments.warmup, arguments.dollars_per_hour)
+    result = bench(
+        predictor, items, arguments.batch_size, arguments.warmup, arguments.dollars_per_hour, arguments.workers
+    )
     label = arguments.label or arguments.predictor.rsplit(":", 1)[-1]
     path = save(result, label)
     print(json.dumps(asdict(result), indent=2))

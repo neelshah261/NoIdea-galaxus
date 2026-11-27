@@ -1,0 +1,38 @@
+{
+  "_about": [
+    "Hero-shot rules for the gallery simulator (issue #31). This file is data, not code: it is the only place in",
+    "the lane where a class name is written down, and every name here is checked against galaxus.data.classes when",
+    "it loads. Each entry carries a status: 'known' means the hosts said it, with the source; 'assumption' means we",
+    "chose it and it must be confirmed. Nothing marked 'assumption' may be presented to anyone as a fact."
+  ],
+  "match_context_keys": ["product_type", "type", "category", "product_title", "title", "name"],
+  "no_text_class": "none",
+  "shop_languages": {
+    "classes": ["German"],
+    "status": "assumption",
+    "todo": "TODO(owner): ask the hosts which text_language values Galaxus shows and which it hides. The deep dive (#17 point 11) says text_language exists to hide images with foreign text, and named Chinese and Polish as examples, but not the kept set."
+  },
+  "subject_preference": {
+    "classes": ["full_product"],
+    "status": "assumption",
+    "todo": "TODO(owner): confirm that the hero shot shows the product itself rather than an infographic."
+  },
+  "background_preference": {
+    "classes": ["white"],
+    "status": "known",
+    "source": "deep-dive talk, issue #17 point 11: 'A color background is not used as the hero shot.'"
+  },
+  "default": {
+    "perspective_order": ["front_head_on", "front_angle_left", "front_angle_right", "top_down"],
+    "status": "assumption",
+    "todo": "TODO(owner): ask the hosts for the default hero perspective. Only the mice rule is known, so this order is ours and is shown as an assumption on the page."
+  },
+  "product_rules": [
+    {
+      "match": ["mice", "mouse"],
+      "perspective_order": ["top_down"],
+      "status": "known",
+      "source": "deep-dive talk, issue #17 point 1: 'Each product type has a hero-shot rule (mice: top_down).'"
+    }
+  ]
+}

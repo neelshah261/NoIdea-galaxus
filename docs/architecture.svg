@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" width="1600" height="900" role="img" aria-labelledby="title desc">
+<title id="title">Team NoIdea: Apertus pipeline for Galaxus product images</title>
+<desc id="desc">Kaggle files are prepared at 512 px, a runner sends batches to any predictor, the predictors use Apertus v1.5 8B, the answers are scored on the holdout and written to results/metrics.json, and dev and final answers are combined per dimension, validated and uploaded by a person.</desc>
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#55524c"/></marker>
+<style>
+text{font-family:Geist,"Segoe UI",system-ui,sans-serif;fill:#141414}
+.h{font-size:40px;font-weight:700;letter-spacing:-0.02em}
+.lead{font-size:19px;fill:#2e2b27}
+.eb{font-family:"Geist Mono",Consolas,monospace;font-size:14px;fill:#55524c;letter-spacing:0.08em}
+.t{font-size:19px;font-weight:650}
+.t.acc{fill:#c93c05}
+.b{font-size:15px;fill:#2e2b27}
+.tag{font-family:"Geist Mono",Consolas,monospace;font-size:12px;fill:#55524c}
+.lab{font-family:"Geist Mono",Consolas,monospace;font-size:13px;fill:#55524c}
+.foot{font-size:15px;fill:#2e2b27}
+</style></defs>
+<rect width="1600" height="900" fill="#f2efe9"/>
+<text x="60" y="58" class="eb">HACK APERTUS ZURICH · DIGITEC GALAXUS</text>
+<text x="1540" y="58" class="eb" text-anchor="end">ARCHITECTURE</text>
+<line x1="60" y1="70" x2="1540" y2="70" stroke="#141414" stroke-width="1"/>
+<text x="60" y="122" class="h">One runner, one contract, Apertus at the core</text>
+<text x="60" y="154" class="lead">Every image is read at 512 px. Holdout, dev and final go through the same code; only the predictor changes.</text>
+<rect x="60" y="200" width="230" height="150" rx="6" fill="#ffffff" stroke="#c4bcae" stroke-width="1.5"/>
+<text x="76" y="230" class="t">Kaggle files</text>
+<text x="76" y="256" class="b">train, dev, final</text>
+<text x="76" y="278" class="b">in $GALAXUS_DATA,</text>
+<text x="76" y="300" class="b">never in git</text>
+<text x="276" y="338" class="tag" text-anchor="end">outside the repo</text>
+<rect x="340" y="200" width="260" height="150" rx="6" fill="#ffffff" stroke="#c4bcae" stroke-width="1.5"/>
+<text x="356" y="230" class="t">Prepare</text>
+<text x="356" y="256" class="b">transparency on white</text>
+<text x="356" y="278" class="b">resize to 512 px, cached</text>
+<text x="356" y="300" class="b">official holdout + folds</text>
+<text x="586" y="338" class="tag" text-anchor="end">data</text>
+<rect x="650" y="200" width="260" height="150" rx="6" fill="#ffffff" stroke="#c4bcae" stroke-width="1.5"/>
+<text x="666" y="230" class="t">Runner</text>
+<text x="666" y="256" class="b">batches, --workers N</text>
+<text x="666" y="278" class="b">resume after a crash</text>
+<text x="666" y="300" class="b">timing per run</text>
+<text x="896" y="338" class="tag" text-anchor="end">serve</text>
+<rect x="960" y="200" width="260" height="150" rx="6" fill="#ffffff" stroke="#c4bcae" stroke-width="1.5"/>
+<text x="976" y="230" class="t">Predictor</text>
+<text x="976" y="256" class="b">one contract, any method:</text>
+<text x="976" y="278" class="b">heads · LoRA · zero-shot</text>
+<text x="976" y="300" class="b">majority baseline</text>
+<text x="1206" y="338" class="tag" text-anchor="end">model</text>
+<rect x="1270" y="200" width="270" height="150" rx="6" fill="#ffffff" stroke="#c93c05" stroke-width="2"/>
+<text x="1286" y="230" class="t acc">Apertus v1.5 8B</text>
+<text x="1286" y="256" class="b">image + product context</text>
+<text x="1286" y="278" class="b">one pass at 512 px</text>
+<text x="1286" y="300" class="b">vLLM · local · gateway</text>
+<text x="1526" y="338" class="tag" text-anchor="end">runtime</text>
+<line x1="290" y1="275.0" x2="340" y2="275.0" stroke="#55524c" stroke-width="1.6" marker-end="url(#a)"/>
+<line x1="600" y1="275.0" x2="650" y2="275.0" stroke="#55524c" stroke-width="1.6" marker-end="url(#a)"/>
+<line x1="910" y1="275.0" x2="960" y2="275.0" stroke="#55524c" stroke-width="1.6" marker-end="url(#a)"/>
+<line x1="1220" y1="275.0" x2="1270" y2="275.0" stroke="#55524c" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="650" y="470" width="260" height="140" rx="6" fill="#ffffff" stroke="#c4bcae" stroke-width="1.5"/>
+<text x="666" y="500" class="t">Answers</text>
+<text x="666" y="526" class="b">one JSON line per image</text>
+<text x="666" y="548" class="b">labels + confidence</text>
+<text x="666" y="570" class="b">in $GALAXUS_DATA/out</text>
+<text x="896" y="598" class="tag" text-anchor="end">serve</text>
+<path d="M1090,350 L1090,430 L780,430 L780,470" fill="none" stroke="#55524c" stroke-width="1.6" marker-end="url(#a)"/>
+<text x="935" y="422" class="lab" text-anchor="middle">per image</text>
+<rect x="60" y="470" width="260" height="140" rx="6" fill="#ffffff" stroke="#c4bcae" stroke-width="1.5"/>
+<text x="76" y="500" class="t">Eval on the holdout</text>
+<text x="76" y="526" class="b">metric.py, human labels</text>
+<text x="76" y="548" class="b">2,444 held-out images</text>
+<text x="76" y="570" class="b">6 dimensions, macro F1</text>
+<text x="306" y="598" class="tag" text-anchor="end">model</text>
+<rect x="340" y="640" width="260" height="110" rx="6" fill="#f8f6f1" stroke="#c4bcae" stroke-width="1.5"/>
+<text x="356" y="670" class="t">results/metrics.json</text>
+<text x="356" y="696" class="b">every number judges see:</text>
+<text x="356" y="718" class="b">report §7, tables, deck</text>
+<text x="586" y="738" class="tag" text-anchor="end">generated only</text>
+<line x1="650" y1="540.0" x2="320" y2="540.0" stroke="#55524c" stroke-width="1.6" marker-end="url(#a)"/>
+<text x="485" y="530.0" class="lab" text-anchor="middle">holdout</text>
+<path d="M190,610 L190,695 L340,695" fill="none" stroke="#55524c" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="1010" y="470" width="240" height="140" rx="6" fill="#ffffff" stroke="#c93c05" stroke-width="2"/>
+<text x="1026" y="500" class="t acc">Combine per dimension</text>
+<text x="1026" y="526" class="b">best method or a vote,</text>
+<text x="1026" y="548" class="b">chosen on the holdout,</text>
+<text x="1026" y="570" class="b">calibrated for macro F1</text>
+<text x="1236" y="598" class="tag" text-anchor="end">model</text>
+<line x1="910" y1="540.0" x2="1010" y2="540.0" stroke="#55524c" stroke-width="1.6" marker-end="url(#a)"/>
+<text x="960" y="530.0" class="lab" text-anchor="middle">dev, final</text>
+<rect x="1300" y="470" width="240" height="140" rx="6" fill="#ffffff" stroke="#c4bcae" stroke-width="1.5"/>
+<text x="1316" y="500" class="t">Validate and upload</text>
+<text x="1316" y="526" class="b">sample_submission order</text>
+<text x="1316" y="548" class="b">every cell a valid class</text>
+<text x="1316" y="570" class="b">a person uploads + selects</text>
+<text x="1526" y="598" class="tag" text-anchor="end">data · human</text>
+<line x1="1250" y1="540.0" x2="1300" y2="540.0" stroke="#55524c" stroke-width="1.6" marker-end="url(#a)"/>
+<line x1="60" y1="830" x2="1540" y2="830" stroke="#dcd6cc" stroke-width="1"/>
+<text x="60" y="862" class="foot">At runtime: Apertus v1.5 and open-weights helpers only, no external call. Deployable on-premises or air-gapped.</text>
+<text x="1540" y="862" class="tag" text-anchor="end">orange = Apertus and our method</text>
+</svg>
