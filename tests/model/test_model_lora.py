@@ -102,7 +102,7 @@ def test_predictor_parses_answers_and_falls_back_on_garbage():
 
     predictor = lora.LoraPredictor(Backend(), CLASSES, {d: "none" for d in DIMS}, lambda item: b"jpeg")
     first, second = predictor.predict([Item("a"), Item("b")])
-    assert first["labels"]["subject"] == "beta" and second["labels"]["subject"] == "none"
+    assert first.labels["subject"] == "beta" and second.labels["subject"] == "none"
     assert predictor.fallbacks == 1 and predictor.config()["fallbacks"] == 1
 
 
@@ -140,7 +140,7 @@ def test_the_eval_script_knows_the_lora_predictor_and_it_scores_through_a_fake_e
         path: str = ""
         context: dict | None = None
 
-    assert predictor.predict([Item("x")])[0]["labels"] == {d: "alpha" for d in DIMS}
+    assert predictor.predict([Item("x")])[0].labels == {d: "alpha" for d in DIMS}
 
 
 def test_without_an_endpoint_the_lora_predictor_says_what_to_set():
@@ -219,7 +219,7 @@ def test_the_class_schema_reaches_generate_and_the_prompt_is_the_training_one(fa
     schema = fake_endpoint.built[-1].schemas[-1]
     assert schema["required"] == list(predictor.classes) and schema["additionalProperties"] is False
     assert all(schema["properties"][d]["enum"] == sorted(predictor.classes[d]) for d in predictor.classes)
-    assert answer["labels"] == {d: min(predictor.classes[d]) for d in predictor.classes}
+    assert answer.labels == {d: min(predictor.classes[d]) for d in predictor.classes}
     assert predictor.fallbacks == 0 and predictor.system == lora.system_prompt(predictor.classes)
 
 
@@ -229,7 +229,7 @@ def test_an_answer_with_an_unknown_class_is_counted_as_a_fallback():
             return Generation(json.dumps({**{d: "alpha" for d in DIMS}, "subject": "not_a_class"}))
 
     predictor = lora.LoraPredictor(Backend(), CLASSES, {d: "none" for d in DIMS}, lambda item: b"jpeg")
-    assert predictor.predict([_Item("a")])[0]["labels"] == {d: "none" for d in DIMS}
+    assert predictor.predict([_Item("a")])[0].labels == {d: "none" for d in DIMS}
     assert predictor.fallbacks == 1
 
 
@@ -241,3 +241,36 @@ def test_submit_and_final_run_load_it_by_name(fake_endpoint, monkeypatch):
     monkeypatch.setenv("LORA_BASE_URL", "http://gpu:8000/v1")
     predictor = load_predictor("galaxus.model.lora:from_env")
     assert isinstance(predictor, lora.LoraPredictor) and fake_endpoint.built
+
+
+def test_predictions_are_the_contract_type_so_eval_and_the_runner_can_read_them():
+    """#76 step 4: ``eval lora`` reads ``prediction.image_id``; plain dicts crashed it."""
+    from galaxus.types import Prediction
+
+    class Backend:
+        def generate(self, messages, images, json_schema=None, *, max_tokens, temperature):
+            return Generation(json.dumps({d: "alpha" for d in DIMS}))
+
+    predictor = lora.LoraPredictor(Backend(), CLASSES, {d: "none" for d in DIMS}, lambda item: b"jpeg")
+    answer = predictor.predict([_Item("a")])[0]
+    assert isinstance(answer, Prediction) and answer.image_id == "a"
+
+
+def test_eval_lora_scores_end_to_end_through_a_fake_endpoint(tmp_path, monkeypatch):
+    """``python -m galaxus.model.eval lora`` (#76 step 4) on synthetic data: one EXP row, no crash."""
+    from model_synthetic import fake_data_lane, train_table
+
+    from galaxus.model import eval as model_eval
+
+    class Backend:
+        model = "apertus-lora"
+
+        def generate(self, messages, images, json_schema=None, *, max_tokens, temperature):
+            return Generation(json.dumps({d: json_schema["properties"][d]["enum"][0] for d in json_schema["required"]}))
+
+    monkeypatch.setitem(model_eval.PREDICTORS, "lora", lora.eval_factory(backend=Backend()))
+    monkeypatch.setattr(lora, "_cached_image", lambda item: b"jpeg")
+    row = model_eval.run_eval("lora", fake_data_lane(train_table(), tmp_path / "out"),
+                              results_path=tmp_path / "metrics.json", exp_id="EXP-0004", allow_dirty=True)
+    assert row["predictor"] == "lora" and row["model"] == "apertus-lora" and row["config"]["fallbacks"] == 0
+    assert (tmp_path / "out" / "predictions" / "EXP-0004" / "holdout.jsonl").is_file()

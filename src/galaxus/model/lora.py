@@ -265,7 +265,10 @@ class LoraPredictor:
         self.schema = answer_schema(list(self.classes), {d: frozenset(v) for d, v in self.classes.items()})
         self.fallbacks = 0
 
-    def predict(self, batch: Sequence[Any]) -> list[dict[str, Any]]:
+    def predict(self, batch: Sequence[Any]) -> list[Any]:
+        """One ``galaxus.types.Prediction`` per item, in order (the contract ``eval``, ``runner`` and ``submit`` read)."""
+        from galaxus.types import Prediction
+
         answers = []
         for item in batch:
             generation = self.backend.generate(
@@ -280,7 +283,7 @@ class LoraPredictor:
             if labels is None:
                 self.fallbacks += 1
                 labels = dict(self.fallback)
-            answers.append({"image_id": item.image_id, "labels": labels, "confidence": None})
+            answers.append(Prediction(image_id=item.image_id, labels=labels, confidence=None))
         return answers
 
     def config(self) -> dict[str, object]:
