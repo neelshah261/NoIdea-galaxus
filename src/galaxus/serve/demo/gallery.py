@@ -146,8 +146,9 @@ def _mirror_panel(rules: Rules, mirror: dict[str, dict[str, Any]], predictions: 
     agreed = 0
     for image_id, record in sorted(mirror.items()):
         original = (predictions.get(image_id) or {}).get("labels") or {}
-        swapped = mirrored_labels(dict(record.get("labels") or {}), valid)
-        before, after = original.get("perspective"), swapped.get("perspective")
+        view = rules.dimension("view")
+        swapped = mirrored_labels(dict(record.get("labels") or {}), valid, view)
+        before, after = original.get(view), swapped.get(view)
         if before is None and after is None:
             continue
         same = before == after

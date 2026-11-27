@@ -8,6 +8,7 @@ import pytest
 from galaxus.data.mirror import (
     MIRRORED_COLUMN,
     mirror_class,
+    mirrorable_dimension,
     mirrorable_dimensions,
     mirrored_rows,
     swap_mirrored_confidence,
@@ -117,6 +118,41 @@ def test_mirrorable_dimensions_names_only_the_dimension_that_can_change():
 
 def test_a_classes_source_with_no_left_or_right_mirrors_nothing():
     assert mirrorable_dimensions({"perspective": ["head_on", "top_down"]}) == ()
+
+
+# --- mirrorable_dimension: the singular accessor (#85) -------------------------------------------------------
+#
+# #81 removed PERSPECTIVE_DIMENSION and left only the plural accessor, so a caller wanting the one name had to
+# index [0] blindly or repeat the none/two checks. galaxus.serve.results_tables was such a caller.
+
+
+def test_the_one_mirrorable_dimension_is_the_dimension_with_left_right_classes():
+    assert mirrorable_dimension(ALLOWED) == "perspective"
+
+
+def test_the_singular_accessor_agrees_with_the_plural_one():
+    """The no-argument path needs the contract, so it is the real_contract test below that covers it."""
+    assert mirrorable_dimension(ALLOWED) == mirrorable_dimensions(ALLOWED)[0]
+
+
+def test_a_source_with_nothing_mirrorable_says_so_and_names_what_it_has():
+    with pytest.raises(ValueError, match="nothing to mirror"):
+        mirrorable_dimension({"subject": ["alpha", "beta"]})
+
+
+def test_two_mirrorable_dimensions_have_to_be_chosen_between():
+    with pytest.raises(ValueError, match="more than one"):
+        mirrorable_dimension({"a": ["x_left", "x_right"], "b": ["y_left", "y_right"]})
+
+
+@pytest.mark.real_contract
+def test_the_real_contract_has_exactly_one_mirrorable_dimension():
+    """If the contract ever had two, every caller of the singular accessor would start raising rather than guess."""
+    from galaxus.data.classes import dimensions
+
+    name = mirrorable_dimension()
+    assert name in dimensions()
+    assert mirrorable_dimensions() == (name,)
 
 
 # --- mirrored_rows ------------------------------------------------------------------------------------------

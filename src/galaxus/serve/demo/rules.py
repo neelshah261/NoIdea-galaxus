@@ -50,6 +50,14 @@ class Rules:
         value = self.raw.get(name)
         return dict(value) if isinstance(value, dict) else {}
 
+    def dimension(self, role: str) -> str:
+        """The dimension that plays ``role`` (view, backdrop, content, language, overlay), from the rules
+        file's ``dimensions`` section: the code never types a dimension name (#82)."""
+        mapping = self.raw.get("dimensions") or {}
+        if role not in mapping:
+            raise KeyError(f"the rules file maps no dimension to the role {role!r}")
+        return str(mapping[role])
+
     def classes_of(self, name: str) -> tuple[str, ...]:
         return tuple(str(item) for item in self.section(name).get("classes", ()))
 
@@ -109,9 +117,23 @@ def load_rules(path: str | Path | None = None, strict: bool = False) -> Rules:
             for name in _every_named_class(raw)
             if name not in valid
         )
+    problems.extend(_dimension_problems(raw))
     if problems and strict:
         raise ValueError("; ".join(problems))
     return Rules(raw=raw, problems=tuple(problems))
+
+
+def _dimension_problems(raw: dict[str, Any]) -> list[str]:
+    """Each role must map to a real dimension of the classes source (skipped when there is none yet)."""
+    try:
+        from galaxus.data.classes import dimensions
+
+        known = set(dimensions())
+    except Exception:  # noqa: BLE001 - no classes source: checked where one exists
+        return []
+    mapping = {k: v for k, v in (raw.get("dimensions") or {}).items() if not k.startswith("_")}
+    return [f"role {role} maps to {name}, which is not a dimension" for role, name in mapping.items()
+            if name not in known]
 
 
 def _valid_classes() -> set[str] | None:
@@ -163,12 +185,12 @@ def hero_sort_key(
     order is stable rather than arbitrary when the rules tie.
     """
     order = [str(name) for name in rule.get("perspective_order", ())]
-    perspective = labels.get("perspective")
+    perspective = labels.get(rules.dimension("view"))
     rank = order.index(perspective) if perspective in order else len(order)
     return (
         rank,
-        0 if labels.get("background") in rules.classes_of("background_preference") else 1,
-        0 if labels.get("subject") in rules.classes_of("subject_preference") else 1,
+        0 if labels.get(rules.dimension("backdrop")) in rules.classes_of("background_preference") else 1,
+        0 if labels.get(rules.dimension("content")) in rules.classes_of("subject_preference") else 1,
         -mean_confidence(confidence),
     )
 
@@ -180,7 +202,7 @@ def hidden_reason(rules: Rules, labels: dict[str, str]) -> str | None:
     Chinese and Polish as examples. Which languages are kept is an assumption in the config, so this demonstrates
     the rule; it is not a statement about what Galaxus does.
     """
-    language = labels.get("text_language")
+    language = labels.get(rules.dimension("language"))
     if language is None:
         return None
     if rules.no_text_class is not None and language == rules.no_text_class:
@@ -193,7 +215,7 @@ def hidden_reason(rules: Rules, labels: dict[str, str]) -> str | None:
 
 def text_overlay(rules: Rules, labels: dict[str, str]) -> str | None:
     """The ``text_classification`` value when the image carries text, otherwise ``None``."""
-    value = labels.get("text_classification")
+    value = labels.get(rules.dimension("overlay"))
     if value is None or (rules.no_text_class is not None and value == rules.no_text_class):
         return None
     return value
@@ -213,7 +235,7 @@ def mirror_class(name: str, valid: set[str] | None) -> str:
     return swapped if valid is None or swapped in valid else name
 
 
-def mirrored_labels(labels: dict[str, str], valid: set[str] | None, dimension: str = "perspective") -> dict[str, str]:
+def mirrored_labels(labels: dict[str, str], valid: set[str] | None, dimension: str) -> dict[str, str]:
     """The labels of a mirrored image, read back in the original orientation."""
     if dimension not in labels:
         return dict(labels)

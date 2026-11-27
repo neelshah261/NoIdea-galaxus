@@ -1,0 +1,39 @@
+{
+  "_about": [
+    "The scored-cell rules of challenge_description.md, section 'Which cells are scored', as data for bench/metric_parity.py (#68, #82).",
+    "This file is the only place in that check where a dimension or class is named; every name is validated against galaxus.data.classes when it loads.",
+    "Rules are triggered by human labels only: a model prelabel never triggers a rule (challenge_description.md)."
+  ],
+  "not_scored_when": [
+    {
+      "quote": "subject logo, placeholder or energy_label: background, perspective, individuals and text_classification are not scored",
+      "when": {"dimension": "subject", "in": ["logo", "placeholder", "energy_label"]},
+      "not_scored": ["background", "perspective", "individuals", "text_classification"]
+    },
+    {
+      "quote": "subject infographic: background, perspective and individuals are not scored",
+      "when": {"dimension": "subject", "in": ["infographic"]},
+      "not_scored": ["background", "perspective", "individuals"]
+    },
+    {
+      "quote": "subject delivery_scope, detail_closeup or product_grouping: perspective is not scored",
+      "when": {"dimension": "subject", "in": ["delivery_scope", "detail_closeup", "product_grouping"]},
+      "not_scored": ["perspective"]
+    },
+    {
+      "quote": "background scene_lifestyle: subject and perspective are not scored",
+      "when": {"dimension": "background", "in": ["scene_lifestyle"]},
+      "not_scored": ["subject", "perspective"]
+    }
+  ],
+  "scored_only_if": [
+    {
+      "quote": "text_language is scored only when a text overlay is present, or subject is infographic, packaging, package_and_product or full_product",
+      "dimension": "text_language",
+      "any_of": [
+        {"dimension": "text_classification", "not_in": ["none"]},
+        {"dimension": "subject", "in": ["infographic", "packaging", "package_and_product", "full_product"]}
+      ]
+    }
+  ]
+}
