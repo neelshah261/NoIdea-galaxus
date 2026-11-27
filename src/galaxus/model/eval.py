@@ -113,8 +113,20 @@ def _zero_shot(use_context: bool) -> PredictorFactory:
     return factory
 
 
+def _ensemble(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """BUILD_PLAN.md phase 2 step 3 (#87): the members in $ENSEMBLE_MEMBERS, routed per dimension, cross-fitted."""
+    from galaxus.model import ensemble
+
+    holdout = data.split_holdout(data.read_train())[1]
+    return ensemble.from_saved(
+        ensemble.members_from_env(), holdout, data.dimensions(), data.solution_frame, data.evaluate,
+        data.out_dir(), read_rows(RESULTS_FILE), seed,
+    )
+
+
 #: The predictors this script runs, by name. A new method registers its factory here and changes nothing else.
 PREDICTORS: dict[str, PredictorFactory] = {
+    "ensemble": _ensemble,
     "majority": _majority,
     "zero-shot": _zero_shot(use_context=True),
     "zero-shot-no-context": _zero_shot(use_context=False),
@@ -321,6 +333,9 @@ def run_eval(
     evaluation = data.evaluate(solution, submission)
 
     images_per_second = len(items) / seconds if seconds > 0 else None
+    # A predictor that only reads other methods' saved answers (the ensemble) reports their speed, not its own.
+    if hasattr(predictor, "images_per_second"):
+        images_per_second = predictor.images_per_second
     cost = None
     if usd_per_hour is not None and images_per_second:
         cost = usd_per_hour / (images_per_second * 3600) * 100_000  # PLAN.md "Speed"
