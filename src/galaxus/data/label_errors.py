@@ -63,8 +63,15 @@ def _records_from_jsonl(path: str | os.PathLike[str]) -> list[object]:
         return [json.loads(line) for line in handle if line.strip()]
 
 
-def _rows_from_records(records: Iterable[object]) -> list[tuple[str, str, str, object]]:
-    """Rows from ``Prediction`` records, mappings or objects alike."""
+def _rows_from_records(
+    records: Iterable[object], require_confidence: bool = True
+) -> list[tuple[str, str, str, object]]:
+    """Rows from ``Prediction`` records, mappings or objects alike.
+
+    ``require_confidence=False`` keeps records that carry none, with ``None`` in the confidence column. The
+    label-error finder cannot rank those (#7), but a confusion table (#92) only needs the predicted class,
+    and the predictors whose scores it explains are exactly the ones with no confidences yet (#75).
+    """
     rows: list[tuple[str, str, str, object]] = []
     for record in records:
         if isinstance(record, Mapping):
@@ -73,29 +80,41 @@ def _rows_from_records(records: Iterable[object]) -> list[tuple[str, str, str, o
             image_id, labels = record.image_id, record.labels
             confidence = getattr(record, "confidence", None)
         if confidence is None:
-            raise ValueError(
-                f"the prediction for {image_id!r} has no confidence, so it cannot be ranked: the finder reports "
-                "high-confidence disagreements only (issue #7). Fill Prediction.confidence in the eval run."
-            )
+            if require_confidence:
+                raise ValueError(
+                    f"the prediction for {image_id!r} has no confidence, so it cannot be ranked: the finder "
+                    "reports high-confidence disagreements only (issue #7). Fill Prediction.confidence in the "
+                    "eval run."
+                )
+            confidence = {}
         for dimension, prediction in (labels or {}).items():
             if dimension not in confidence:
-                raise KeyError(f"{image_id!r} predicts {dimension!r} but carries no confidence for that dimension")
+                if require_confidence:
+                    raise KeyError(f"{image_id!r} predicts {dimension!r} but carries no confidence for that dimension")
+                rows.append((str(image_id), str(dimension), str(prediction), None))
+                continue
             rows.append((str(image_id), str(dimension), str(prediction), confidence[dimension]))
     return rows
 
 
-def out_of_fold_frame(predictions: OutOfFold) -> pd.DataFrame:
+def out_of_fold_frame(predictions: OutOfFold, require_confidence: bool = True) -> pd.DataFrame:
     """Out-of-fold predictions as a long table with the columns in :data:`PREDICTION_COLUMNS`.
 
     Accepts any of the four forms listed in the module docstring.
+
+    Args:
+        predictions: any of those four forms.
+        require_confidence: refuse a prediction that carries no confidence, which :func:`find_label_errors`
+            needs because it ranks by it. Pass ``False`` to read the classes alone (#92).
     """
     if isinstance(predictions, (str, os.PathLike)):
         predictions = _records_from_jsonl(predictions)
     if isinstance(predictions, pd.DataFrame):
-        missing = [column for column in PREDICTION_COLUMNS if column not in predictions.columns]
+        wanted = PREDICTION_COLUMNS if require_confidence else tuple(c for c in PREDICTION_COLUMNS if c != "confidence")
+        missing = [column for column in wanted if column not in predictions.columns]
         if missing:
             raise KeyError(f"the out-of-fold table is missing {missing}; expected columns {list(PREDICTION_COLUMNS)}")
-        frame = predictions[list(PREDICTION_COLUMNS)].copy()
+        frame = predictions.reindex(columns=list(PREDICTION_COLUMNS)).copy()
     elif isinstance(predictions, Mapping):
         rows = []
         for image_id, per_dimension in predictions.items():
@@ -107,13 +126,14 @@ def out_of_fold_frame(predictions: OutOfFold) -> pd.DataFrame:
                 rows.append((str(image_id), str(dimension), str(prediction), confidence))
         frame = pd.DataFrame(rows, columns=list(PREDICTION_COLUMNS))
     else:
-        frame = pd.DataFrame(_rows_from_records(predictions), columns=list(PREDICTION_COLUMNS))
+        frame = pd.DataFrame(_rows_from_records(predictions, require_confidence), columns=list(PREDICTION_COLUMNS))
     frame[ID_COLUMN] = frame[ID_COLUMN].astype(str)
     frame["dimension"] = frame["dimension"].astype(str)
     frame["prediction"] = frame["prediction"].astype(str)
     frame["confidence"] = pd.to_numeric(frame["confidence"], errors="coerce")
     unusable = frame["confidence"].isna()
-    if unusable.any():
+    if require_confidence and unusable.any():
+        # Only a ranked report needs every confidence to be a number; a confusion table ignores the column.
         raise ValueError(f"{int(unusable.sum())} out-of-fold row(s) have a confidence that is not a number")
     return frame
 
