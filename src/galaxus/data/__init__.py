@@ -55,7 +55,38 @@ _EXPORTS = {
     "write_submission": "submission",
 }
 
-__all__ = sorted(_EXPORTS)
+# Spelled out rather than ``sorted(_EXPORTS)`` so linters can see the re-exports in the
+# ``TYPE_CHECKING`` block above are public. ``test_exports.py`` keeps the two in step.
+__all__ = [
+    "GALAXUS_DATA_ENV",
+    "ID_COLUMN",
+    "MissingDataDir",
+    "SubmissionInvalid",
+    "allowed_classes",
+    "data_dir",
+    "data_file",
+    "dimensions",
+    "evaluate",
+    "find_label_errors",
+    "load_metric",
+    "opaque_rgb_on_white",
+    "out_dir",
+    "prepare_image",
+    "prepared_jpeg",
+    "read_dev",
+    "read_final",
+    "read_part",
+    "read_sample_submission",
+    "read_train",
+    "score",
+    "scored_mask",
+    "solution_frame",
+    "split_holdout",
+    "validate_submission",
+    "vision_tokens",
+    "write_label_errors",
+    "write_submission",
+]
 
 
 def __getattr__(name: str) -> object:

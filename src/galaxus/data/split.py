@@ -29,6 +29,7 @@ def _as_bool(column: pd.Series) -> pd.Series:
     """A ``{dimension}_relevant`` column as booleans, whether the CSV was read as strings or as ``bool``."""
     if column.dtype == bool:
         return column
+
     def one(value: object) -> bool:
         if isinstance(value, bool):
             return value
@@ -38,12 +39,11 @@ def _as_bool(column: pd.Series) -> pd.Series:
         if text in _FALSE:
             return False
         raise ValueError(f"{column.name} holds {value!r}, which is neither true nor false")
+
     return column.map(one).astype(bool)
 
 
-def holdout_product_ids(
-    train: pd.DataFrame, frac: float = HOLDOUT_FRAC, random_state: int = HOLDOUT_SEED
-) -> pd.Series:
+def holdout_product_ids(train: pd.DataFrame, frac: float = HOLDOUT_FRAC, random_state: int = HOLDOUT_SEED) -> pd.Series:
     """The products held out, exactly as in challenge_description.md "Scoring locally"."""
     return train[PRODUCT_COLUMN].drop_duplicates().sample(frac=frac, random_state=random_state)
 

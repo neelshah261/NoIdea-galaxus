@@ -112,8 +112,8 @@ def find_label_errors(
                 }
             )
         )
-    human_labels = pd.concat(labels, ignore_index=True) if labels else pd.DataFrame(
-        columns=[ID_COLUMN, "dimension", "label"]
+    human_labels = (
+        pd.concat(labels, ignore_index=True) if labels else pd.DataFrame(columns=[ID_COLUMN, "dimension", "label"])
     )
 
     merged = frame.merge(human_labels, on=[ID_COLUMN, "dimension"], how="inner")

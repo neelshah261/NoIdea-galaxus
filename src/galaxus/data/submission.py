@@ -43,10 +43,7 @@ def _as_mapping(predictions: Predictions, dimension_names: list[str]) -> dict[st
         records = predictions.to_dict(orient="records")
         rows = {str(record[ID_COLUMN]): record for record in records}
     else:
-        rows = {
-            str(image_id): ({} if answer is None else dict(answer))
-            for image_id, answer in predictions.items()
-        }
+        rows = {str(image_id): ({} if answer is None else dict(answer)) for image_id, answer in predictions.items()}
     mapping: dict[str, dict[str, str]] = {}
     for image_id, answer in rows.items():
         cells = {

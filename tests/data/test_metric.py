@@ -17,7 +17,7 @@ from galaxus.data import metric as metric_module
 from galaxus.data.metric import METRIC_MODULE_NAME, evaluate, load_metric, score
 from galaxus.data.paths import GALAXUS_DATA_ENV, MissingDataDir
 
-STUB = '''
+STUB = """
 DIMENSIONS = ("subject", "background")
 VALID_CLASSES = {"subject": ["alpha", "beta"], "background": ["white", "color"]}
 
@@ -28,7 +28,7 @@ def score(solution, submission, id_column):
 
 def evaluate(solution, submission, id_column):
     return {"overall": {"f1_macro": 0.5}}
-'''
+"""
 
 
 @pytest.fixture(autouse=True)

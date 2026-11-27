@@ -76,7 +76,9 @@ def _id_problems(frame: pd.DataFrame, sample: pd.DataFrame) -> list[str]:
     expected = sample[ID_COLUMN].astype(str).tolist()
     missing = [image_id for image_id in expected if image_id not in set(ids)]
     if missing:
-        problems.append(f"{len(missing)} {ID_COLUMN}(s) of sample_submission.csv are missing, first: {missing[:EXAMPLES]}")
+        problems.append(
+            f"{len(missing)} {ID_COLUMN}(s) of sample_submission.csv are missing, first: {missing[:EXAMPLES]}"
+        )
     unknown = sorted(set(ids) - set(expected))
     if unknown:
         problems.append(f"{len(unknown)} {ID_COLUMN}(s) are not in sample_submission.csv, first: {unknown[:EXAMPLES]}")

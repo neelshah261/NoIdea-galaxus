@@ -89,7 +89,9 @@ def test_an_image_that_is_not_in_train_is_ignored(train_table):
 
 
 def test_a_nested_mapping_of_predictions_is_accepted():
-    frame = out_of_fold_frame({"img_1": {"subject": ("beta", 0.9)}, "img_2": {"subject": {"prediction": "alpha", "confidence": 0.8}}})
+    frame = out_of_fold_frame(
+        {"img_1": {"subject": ("beta", 0.9)}, "img_2": {"subject": {"prediction": "alpha", "confidence": 0.8}}}
+    )
     assert frame["prediction"].tolist() == ["beta", "alpha"]
     assert frame["confidence"].tolist() == [0.9, 0.8]
 
