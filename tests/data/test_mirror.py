@@ -21,6 +21,23 @@ ALLOWED = {
     "text_classification": ["seal", "none"],
 }
 NO_TEXT = "none"
+#: The key ALLOWED above uses for the overlay dimension. Invented here like the classes: production code reads it
+#: from contracts/classes.json, which tests/conftest.py hides so that no lane code can rely on it being present.
+TEXT_DIM = "text_classification"
+
+
+@pytest.fixture(autouse=True)
+def _invented_roles(request, monkeypatch):
+    """Give ``mirror`` the invented overlay dimension and no-overlay class instead of the hidden contract's.
+
+    ``mirror`` imports the two accessors by name, so they are patched where it looks them up, not on
+    :mod:`galaxus.data.classes`. The contract path itself is covered by the ``real_contract`` tests below and in
+    ``test_classes.py``.
+    """
+    if request.node.get_closest_marker("real_contract"):
+        return
+    monkeypatch.setattr("galaxus.data.mirror.overlay_dimension", lambda: TEXT_DIM)
+    monkeypatch.setattr("galaxus.data.mirror.no_overlay_class", lambda: NO_TEXT)
 
 
 def row(
@@ -237,3 +254,44 @@ def test_a_swap_that_would_drop_a_probability_is_refused():
     one_sided = {"perspective": ["angle_left"]}
     with pytest.raises(ValueError, match="drop a probability"):
         swap_mirrored_confidence({"angle_left": 0.4, "angle_right": 0.6}, "perspective", one_sided)
+
+
+# --- #81: the names come from the contract, not from this module ---------------------------------------------
+
+
+def test_the_dimension_to_mirror_is_worked_out_from_the_classes(frame):
+    """Nothing names the perspective dimension any more: it is the one with left/right classes."""
+    assert set(mirrored_rows(frame, ALLOWED, NO_TEXT)["image_id"]) == {"img_1", "img_2"}
+    assert mirrored_rows(frame, ALLOWED, NO_TEXT, dimension="perspective").equals(
+        mirrored_rows(frame, ALLOWED, NO_TEXT)
+    )
+
+
+def test_a_classes_source_with_nothing_to_mirror_says_so(frame):
+    nothing_to_flip = {"perspective": ["head_on", "top_down"], TEXT_DIM: ["seal", NO_TEXT]}
+    with pytest.raises(ValueError, match="nothing to mirror"):
+        mirrored_rows(frame, nothing_to_flip, NO_TEXT)
+
+
+def test_two_mirrorable_dimensions_have_to_be_named(frame):
+    """Two candidates must not be guessed between."""
+    ambiguous = {
+        "perspective": ["angle_left", "angle_right"],
+        "handedness": ["left_hand", "right_hand"],
+        TEXT_DIM: ["seal", NO_TEXT],
+    }
+    with pytest.raises(ValueError, match="more than one dimension"):
+        mirrored_rows(frame, ambiguous, NO_TEXT)
+
+
+@pytest.mark.real_contract
+def test_without_an_overlay_class_the_error_names_the_contract(frame):
+    """With the real contract the roles resolve; the invented classes here then disagree with them, and the
+    message has to point at the contract rather than at this module."""
+    from galaxus.data.classes import no_overlay_class, overlay_dimension
+
+    assert overlay_dimension()
+    assert no_overlay_class()
+    # ALLOWED has no column named by the real contract, so the dimension check is what fires.
+    with pytest.raises((KeyError, ValueError)):
+        mirrored_rows(frame, {"perspective": ["angle_left", "angle_right"]})
