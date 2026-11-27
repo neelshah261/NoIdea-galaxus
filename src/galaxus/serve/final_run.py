@@ -1,4 +1,4 @@
-"""B7: the Saturday run. Passphrase → decrypt → runner → merge into the best dev file → validate → the command.
+"""B7: the Saturday run. Passphrase -> decrypt -> runner -> merge into the best dev file -> validate -> the command.
 
 When and how the final images are released, and what the final file must hold, is in
 [challenge_description.md, "Timeline" and "Submission file"](../../../challenge_description.md#submission-file).
@@ -564,4 +564,7 @@ def main(argv: list[str] | None = None, passphrase_prompt: Any = getpass.getpass
 
 
 if __name__ == "__main__":
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
     sys.exit(main())
