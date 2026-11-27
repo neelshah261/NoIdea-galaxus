@@ -51,11 +51,14 @@ The second command writes a validated file to `$GALAXUS_DATA/out/submissions/` a
 ## 3. Any predictor over dev or the holdout
 
 ```bash
-uv run python -m galaxus.serve.runner --predictor <package.module:name> --exp <EXP> --part dev --workers 8
+uv run python -m galaxus.serve.runner --predictor <package.module:name> --exp <EXP> --part dev --workers 2
 uv run python -m galaxus.serve.submit --exp <EXP>                    # validated file + the submit command
 ```
 
-`--workers N` keeps N batches in flight; use it for HTTP backends only. A run that stops resumes where it left off.
+`--workers N` keeps N batches in flight; use it for HTTP backends only. It multiplies the predictor's own concurrency
+(the zero-shot predictor sends 8 requests per batch, so `--workers 2` is 16 in flight): `2` is the value measured on
+the gateway (#59, 4.95 img/s); see [the Saturday run sheet](saturday_run_sheet.md). A run that stops resumes where it
+left off.
 
 ## 4. Evidence for the judges
 
