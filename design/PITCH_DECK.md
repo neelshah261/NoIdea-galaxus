@@ -12,7 +12,7 @@ each judge finds their criterion on one slide.
 ---
 
 ## 1 · Title
-- Word mark: **NoIdea** with the key word in `accent`. Lead: "Apertus reads every Galaxus product image: six
+- Word mark: **NoIdead** with the key word in `accent`. Lead: "Apertus reads every Galaxus product image: six
   answers per image, on hardware Galaxus can own."
 - Key-figure row: mean macro F1 on dev `{EXP-best.mean}` · perspective macro F1 `{EXP-best.perspective}` ·
   images per second `{EXP-best.img_s}`.
