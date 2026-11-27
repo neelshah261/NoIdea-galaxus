@@ -124,7 +124,7 @@ def print_pdf(html: str, pdf: Path) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--team", default="NoIdea", help="team name, also the PDF's file name")
+    parser.add_argument("--team", default="NoIdead", help="team name, also the PDF's file name")
     parser.add_argument("--exp", default=None, help="the EXP of the final submission (default: best holdout score)")
     parser.add_argument("--no-pdf", action="store_true", help="only regenerate section 7")
     args = parser.parse_args(argv)
