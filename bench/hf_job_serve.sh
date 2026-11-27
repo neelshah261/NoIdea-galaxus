@@ -16,6 +16,12 @@
 #      AutoProcessor's defaults on the same 512 px prepared images, so serving sees the same pixels (no min/max_pixels
 #      override, unlike bench/vllm_apertus.sh, which is for zero-shot on our own machine).
 # The merged weights stay on this job's disk and are deleted with it (only the adapter is stored, Neel, #76).
+#
+# SERVE_MODE=lora (optional, untested): skip the merge and serve the BASE model with several adapters at once
+# (vLLM --enable-lora), named in ADAPTERS="name=path,name=path" (e.g.
+# "final=exp0004-e1/adapter,ck500=exp0004-e1/checkpoint-500"). Each name is a model the client picks with
+# LORA_SERVED_MODEL=<name>, so several checkpoints are compared in one session with no merge. It only works if the
+# Swiss AI vLLM build supports LoRA for Apertus 1.5 (not known): if vLLM refuses to start, use the default (merge).
 set -euo pipefail
 
 : "${HF_TOKEN:?the HF_TOKEN secret is missing}"
@@ -24,6 +30,8 @@ RUN="${RUN:-exp0004-e1}"
 export ADAPTER_PATH="${ADAPTER_PATH:-$RUN/adapter}"   # which save to serve: the final adapter or a checkpoint-N
 MODEL="${MODEL:-swiss-ai/Apertus-v1.5-8B}"
 SERVED="${SERVED:-apertus-lora}"
+SERVE_MODE="${SERVE_MODE:-merge}"   # merge (default, safer) | lora (multi-adapter, no merge)
+export ADAPTERS="${ADAPTERS:-}"
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-64}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-8192}"
 WORK=/tmp/serve
@@ -36,15 +44,35 @@ log "run=$RUN adapter=$ADAPTER_PATH model=$MODEL served as $SERVED, from $CKPT_R
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || true
 python3 -c "import vllm; print('vllm', vllm.__version__)" || true
 
-log "1/3 download the adapter"
+log "1/3 download the adapter(s)"
 python3 - <<'PY'
 import os
 from huggingface_hub import snapshot_download
-path = os.environ["ADAPTER_PATH"]
+pairs = [p.split("=", 1) for p in os.environ.get("ADAPTERS", "").split(",") if "=" in p]
+paths = [path for _, path in pairs] if os.environ.get("SERVE_MODE") == "lora" and pairs else [os.environ["ADAPTER_PATH"]]
 # A checkpoint-N folder also holds the optimizer and RNG state (hundreds of MB): only the adapter files are needed.
+patterns = [f"{p}/{name}" for p in paths for name in ("adapter_config.json", "adapter_model.safetensors", "adapter_model.bin")]
 snapshot_download(os.environ["CKPT_REPO"], repo_type="model", token=os.environ["HF_TOKEN"], local_dir="/tmp/serve/pulled",
-                  allow_patterns=[f"{path}/adapter_config.json", f"{path}/adapter_model.safetensors", f"{path}/adapter_model.bin"])
+                  allow_patterns=patterns)
 PY
+
+if [[ "$SERVE_MODE" == "lora" ]]; then
+  [[ -n "$ADAPTERS" ]] || ADAPTERS="$SERVED=$ADAPTER_PATH"
+  MODULES=()
+  IFS=',' read -ra PAIRS <<< "$ADAPTERS"
+  for pair in "${PAIRS[@]}"; do
+    name="${pair%%=*}"; path="${pair#*=}"
+    ls "$WORK/pulled/$path/adapter_config.json" >/dev/null
+    MODULES+=("$name=$WORK/pulled/$path")
+    log "adapter $name: $path ($(du -sh "$WORK/pulled/$path" | cut -f1))"
+  done
+  log "2/3 no merge (SERVE_MODE=lora); 3/3 vllm serve the base model with ${#MODULES[@]} adapter(s) on :8000"
+  exec vllm serve "$MODEL" --host 0.0.0.0 --port 8000 \
+    --chat-template-content-format string --max-model-len "$MAX_MODEL_LEN" --gpu-memory-utilization 0.90 \
+    --enable-prefix-caching --max-num-seqs "$MAX_NUM_SEQS" --limit-mm-per-prompt '{"image": 1}' \
+    --enable-lora --max-lora-rank 32 --max-loras "${#MODULES[@]}" --lora-modules "${MODULES[@]}"
+fi
+
 ls "$ADAPTER/adapter_config.json" >/dev/null
 log "adapter: $(du -sh "$ADAPTER" | cut -f1)"
 
