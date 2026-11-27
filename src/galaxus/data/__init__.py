@@ -28,6 +28,13 @@ if TYPE_CHECKING:  # pragma: no cover - for type checkers and editors only
     from galaxus.data.label_errors import find_label_errors, write_label_errors
     from galaxus.data.load import read_dev, read_final, read_part, read_sample_submission, read_train
     from galaxus.data.metric import evaluate, load_metric, score
+    from galaxus.data.mirror import (
+        mirror_class,
+        mirrorable_dimensions,
+        mirrored_rows,
+        swap_mirrored_confidence,
+        with_mirrored_rows,
+    )
     from galaxus.data.paths import (
         GALAXUS_DATA_ENV,
         MissingDataDir,
@@ -82,6 +89,11 @@ _EXPORTS = {
     "vision_tokens": "images",
     "write_label_errors": "label_errors",
     "write_submission": "submission",
+    "mirror_class": "mirror",
+    "mirrorable_dimensions": "mirror",
+    "mirrored_rows": "mirror",
+    "swap_mirrored_confidence": "mirror",
+    "with_mirrored_rows": "mirror",
 }
 
 # Spelled out rather than ``sorted(_EXPORTS)`` so linters can see the re-exports in the
@@ -107,6 +119,9 @@ __all__ = [
     "kaggle_dir",
     "load_metric",
     "locate_final_csv",
+    "mirror_class",
+    "mirrorable_dimensions",
+    "mirrored_rows",
     "opaque_rgb_on_white",
     "out_dir",
     "prepare_image",
@@ -121,8 +136,10 @@ __all__ = [
     "scored_mask",
     "solution_frame",
     "split_holdout",
+    "swap_mirrored_confidence",
     "validate_submission",
     "vision_tokens",
+    "with_mirrored_rows",
     "write_label_errors",
     "write_submission",
 ]
