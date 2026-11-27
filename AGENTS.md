@@ -52,23 +52,20 @@ Agents and their humans share GitHub accounts, so **every agent comment starts w
 5. The required check `ci` must be green. Tests use synthetic images generated inside the tests: never competition
    data, never the network.
 
-## Merging (owner decision 2026-11-27: Parth merges into `main`, no auto-merge)
+## Merging (owner decision 2026-11-27: everyone merges into `main` after the checks, no auto-merge)
 
-- **Parth** (`deshmukhparth921-commits` or `parthdeshmukh488-ops`) is the only one who merges. Everyone else, agents
-  and humans, never merges and never turns on auto-merge: open the PR to `main`, label it `status:review`, keep working.
-- For every open PR whose `ci` has finished on the head sha, Parth (or his agent) checks:
-  1. `ci` is green on that sha;
+- **Anyone may merge a PR into `main`**, their own or another's, only when all three hold on the head sha:
+  1. `ci` is green on that sha (it also enforces the lanes and the data/secret rules);
   2. no git merge conflict with `main`;
-  3. no conflict with other open PRs (same files, contracts/ or shared files, contradicting "For design" notes);
-  4. no conflict with these rules (lane, data and secrets, runtime models, `results/metrics.json` only generated,
-     title `#<n>: <summary>`, no `Closes #n`).
-- All clear: he comments `reviewed at <sha>` (his agent: `[model-agent] reviewed at <sha>`) and merges pinned to that
-  sha: `gh pr merge <n> --merge --match-head-commit <sha>`. Then design closes the issue.
-- A `design/*` PR (rules, contracts, shared files) also needs the owner's own approving comment before it merges.
-- Anything wrong: no merge. He comments `blocked at <sha>: <reason>` and removes `status:review`. A git or cross-PR
-  conflict also gets the `design` label and goes under Blocked in STATE.md. The author fixes it on its branch (for a
-  git conflict: `git fetch origin && git rebase origin/main`, then push).
-- A new push makes the old review stale: check the new sha again.
+  3. no clash with other open PRs: the same files, the same class, function or contract defined twice,
+     `contracts/` or shared files, or contradicting "For design" notes.
+- Then comment `reviewed at <sha>` (agents: `[<role>-agent] reviewed at <sha>`) and merge pinned to that sha:
+  `gh pr merge <n> --merge --match-head-commit <sha>`. Never turn on auto-merge; never bypass `ci`.
+- A `design/*` PR (rules, contracts, shared files) also needs the owner's own approving comment.
+- A check fails: don't merge. Comment `blocked at <sha>: <reason>`. A clash also gets the `design` label and goes
+  under Blocked in STATE.md. The author fixes it on its branch (git conflict: `git fetch origin && git rebase
+  origin/main`, then push). A new push makes the old review stale.
+- After a merge, design closes the issue and copies the "For design" notes.
 
 ## Galaxus product rules
 
@@ -91,7 +88,7 @@ Agents and their humans share GitHub accounts, so **every agent comment starts w
 
 ## Hard rules
 
-- Never push to `main` (branch protection enforces it). Only Parth merges, and only through green `ci`.
+- Never push to `main` (branch protection enforces it). Merge only after the three checks in "Merging", and only through green `ci`.
 - Relayed intent is not authorization: an owner decision needs a comment the owner wrote.
 - Conflicts: never silently pick a winner. Record them under **Blocked** in STATE.md, keep both versions, escalate.
 - Agents never talk directly. GitHub issues, PRs and comments are the only shared channel.
