@@ -267,3 +267,61 @@ def test_the_factory_builds_each_http_backend_and_refuses_unknown_names(monkeypa
     assert set(BACKENDS) == {"api", "vllm", "local"}
     with pytest.raises(ValueError, match="unknown backend"):
         backend("closed-model")
+
+
+# Issue #38: the gateway client goes through galaxus.keys.KeyRing.
+
+
+def ring_env(**extra):
+    return {"LLM_NAME": "apertus-test", "LLM_BASE_URL": "https://g.example/v1", "LLM_API_KEY": "key-one", **extra}
+
+
+def ring_gateway(transport, tmp_path, **extra) -> GatewayBackend:
+    return GatewayBackend.from_env(ring_env(**extra), tmp_path / "missing.env", transport=transport, backoff=0)
+
+
+def keys_sent(transport) -> list[str]:
+    return [request["headers"]["Authorization"].removeprefix("Bearer ") for request in transport.requests]
+
+
+def test_a_402_on_key_1_moves_the_call_to_key_2(tmp_path):
+    transport = FakeTransport((402, b'{"error": "out of credits"}'), (200, completion("ok")))
+    gateway = ring_gateway(transport, tmp_path, LLM_API_KEY_2="key-two")
+    assert gateway.generate(HI).text == "ok"
+    assert keys_sent(transport) == ["key-one", "key-two"]
+    gateway.generate(HI)
+    assert keys_sent(transport)[-1] == "key-two", "later calls stay on the key that works"
+
+
+def test_a_401_also_moves_to_the_next_key(tmp_path):
+    transport = FakeTransport((401, b'{"error": "invalid key"}'), (200, completion("ok")))
+    assert ring_gateway(transport, tmp_path, LLM_API_KEY_2="key-two").generate(HI).text == "ok"
+    assert keys_sent(transport) == ["key-one", "key-two"]
+
+
+def test_when_every_key_is_spent_no_key_is_shown(tmp_path, capsys):
+    transport = FakeTransport((402, b'{"error": "out of credits"}'))
+    with pytest.raises(RuntimeError, match="all 2 API keys") as caught:
+        ring_gateway(transport, tmp_path, LLM_API_KEY_2="key-two").generate(HI)
+    shown = str(caught.value) + str(caught.value.__cause__) + capsys.readouterr().err
+    assert "key-one" not in shown and "key-two" not in shown
+    assert "key 1" in shown, "the switch is logged by position"
+
+
+def test_a_busy_server_is_retried_on_the_same_key(tmp_path):
+    transport = FakeTransport((503, b"busy"), (200, completion("ok")))
+    assert ring_gateway(transport, tmp_path, LLM_API_KEY_2="key-two").generate(HI).text == "ok"
+    assert keys_sent(transport) == ["key-one", "key-one"]
+
+
+def test_keys_come_from_the_env_file_and_the_environment_wins(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("LLM_API_KEY_2=file-two\nLLM_API_KEY_3=file-three\n")
+    gateway = GatewayBackend.from_env(ring_env(LLM_API_KEY_3="env-three", LLM_API_KEY_4=" "), env_file)
+    assert gateway.keys.keys == ["key-one", "file-two", "env-three"]
+
+
+def test_the_repr_counts_the_keys_and_shows_none(tmp_path):
+    gateway = ring_gateway(FakeTransport(), tmp_path, LLM_API_KEY_2="key-two")
+    assert "keys=2" in repr(gateway)
+    assert "key-one" not in repr(gateway) and "key-two" not in repr(gateway)
