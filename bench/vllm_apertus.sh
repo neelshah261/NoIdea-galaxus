@@ -32,6 +32,7 @@ MAX_PIXELS="${MAX_PIXELS:-262144}"        # 512 * 512: Swarup's condition, every
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-64}"        # images decoded together; raise while memory allows
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-8192}"    # Apertus docs' recommended start; one 512 px image is ~1k tokens
 GPU_UTIL="${GPU_UTIL:-0.90}"
+PREFIX_CACHING="${PREFIX_CACHING:-on}"   # on | off (speed matrix #33)
 
 if [[ -z "${HF_TOKEN:-}" ]]; then
   echo "HF_TOKEN is not set: the Apertus v1.5 models are gated on Hugging Face (FAQ.md, 'Do we need a Hugging Face account?')." >&2
@@ -39,6 +40,8 @@ if [[ -z "${HF_TOKEN:-}" ]]; then
 fi
 
 quant_args=()
+cache_args=(--enable-prefix-caching)
+[[ "$PREFIX_CACHING" == "off" ]] && cache_args=(--no-enable-prefix-caching)
 case "$QUANT" in
   none) ;;
   # vLLM's online FP8 quantises the language model's linear layers. The vision tokenizer must stay full precision
@@ -47,7 +50,7 @@ case "$QUANT" in
   *) echo "QUANT must be none or fp8, got $QUANT" >&2; exit 1 ;;
 esac
 
-echo "serving $MODEL on port $PORT (quant=$QUANT, max_pixels=$MAX_PIXELS, max_num_seqs=$MAX_NUM_SEQS)"
+echo "serving $MODEL on port $PORT (quant=$QUANT, max_pixels=$MAX_PIXELS, max_num_seqs=$MAX_NUM_SEQS, prefix_caching=$PREFIX_CACHING)"
 exec docker run --rm --gpus all --ipc=host -p "$PORT:8000" \
   -e HF_TOKEN \
   -v "${HF_HOME:-$HOME/.cache/huggingface}:/root/.cache/huggingface" \
