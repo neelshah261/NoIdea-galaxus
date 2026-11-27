@@ -125,6 +125,17 @@ def _ensemble(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
     )
 
 
+def _mirror_tta(inner: str) -> PredictorFactory:
+    """EXP-0006 (#48): the predictor registered as ``inner``, with mirror TTA for perspective."""
+
+    def factory(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+        from galaxus.model.mirror_tta import MirrorTTA
+
+        return MirrorTTA(PREDICTORS[inner](rows, data, seed), data.allowed_classes())
+
+    return factory
+
+
 #: The predictors this script runs, by name. A new method registers its factory here and changes nothing else.
 PREDICTORS: dict[str, PredictorFactory] = {
     "ensemble": _ensemble,
@@ -132,6 +143,7 @@ PREDICTORS: dict[str, PredictorFactory] = {
     "zero-shot": _zero_shot(use_context=True),
     "zero-shot-no-context": _zero_shot(use_context=False),
     "lora": _lora(),  # EXP-0004 (#49): the merged LoRA served by vLLM at $LORA_BASE_URL
+    "mirror-tta:zero-shot": _mirror_tta("zero-shot"),  # EXP-0006 (#48)
 }
 
 
