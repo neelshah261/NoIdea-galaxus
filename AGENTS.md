@@ -9,7 +9,7 @@ Kaggle pages. Never restate its rules, numbers or class names from memory: link 
 | Role | Who | Does | Never |
 | --- | --- | --- | --- |
 | Human owner | neelshah261 | makes owner decisions, uploads to Kaggle, spends money, posts on Discord | – |
-| Design (main agent) | Claude session of the owner | opens issues, runs the PR watcher (checks and merges PRs), owns every file outside the lanes, copies "For design" notes into shared files, keeps STATE.md current | works inside a lane |
+| Design (main agent) | Claude session of the owner | opens issues, reviews PRs, owns every file outside the lanes, copies "For design" notes into shared files, keeps STATE.md current | works inside a lane |
 | Worker `data` | TODO(owner): name, GitHub handle | implements `lane:data` issues in its lane | touches another lane or a shared file, merges |
 | Worker `model` | TODO(owner): name, GitHub handle | implements `lane:model` issues in its lane | same |
 | Worker `serve` | TODO(owner): name, GitHub handle | implements `lane:serve` issues in its lane | same |
@@ -52,28 +52,23 @@ Agents and their humans share GitHub accounts, so **every agent comment starts w
 5. The required check `ci` must be green. Tests use synthetic images generated inside the tests: never competition
    data, never the network.
 
-## Merging (owner decision 2026-11-27: the PR watcher merges, no auto-merge)
+## Merging (owner decision 2026-11-27: Parth merges into `main`, no auto-merge)
 
-**Merge freeze (#9) and team branch (owner decisions 2026-11-27):** nothing merges into `main`. Worker branches start
-from `design/3-plan` and their PRs target `design/3-plan`. **Parth** (`deshmukhparth921-commits` or
-`parthdeshmukh488-ops`) may merge PRs into `design/3-plan`, after the four checks below (against `design/3-plan`
-instead of `main`), with a `[model-agent] reviewed at <sha>` comment and
-`gh pr merge <n> --merge --match-head-commit <sha>`. A `design/*` PR still needs the owner's own approving comment.
-Everything below applies again once the owner closes #9.
-
-- Workers **never merge** and never turn on auto-merge. Open the PR, label it `status:review`, and keep working.
-- Design runs a **PR watcher** (a design subagent). For every open PR whose `ci` has finished on the head sha, it checks:
+- **Parth** (`deshmukhparth921-commits` or `parthdeshmukh488-ops`) is the only one who merges. Everyone else, agents
+  and humans, never merges and never turns on auto-merge: open the PR to `main`, label it `status:review`, keep working.
+- For every open PR whose `ci` has finished on the head sha, Parth (or his agent) checks:
   1. `ci` is green on that sha;
   2. no git merge conflict with `main`;
   3. no conflict with other open PRs (same files, contracts/ or shared files, contradicting "For design" notes);
   4. no conflict with these rules (lane, data and secrets, runtime models, `results/metrics.json` only generated,
      title `#<n>: <summary>`, no `Closes #n`).
-- All clear: it comments `[design-agent] reviewed at <sha>` and merges pinned to that sha:
-  `gh pr merge <n> --merge --match-head-commit <sha>`. Then it closes the issue.
-- Anything wrong: it does not merge. It comments `[design-agent] blocked at <sha>: <reason>` and removes
-  `status:review`. A git or cross-PR conflict also gets the `design` label and goes under Blocked in STATE.md.
-  The worker fixes it on its branch (for a git conflict: `git fetch origin && git rebase origin/main`, then push).
-- A new push makes the old review stale. The watcher checks the new sha again.
+- All clear: he comments `reviewed at <sha>` (his agent: `[model-agent] reviewed at <sha>`) and merges pinned to that
+  sha: `gh pr merge <n> --merge --match-head-commit <sha>`. Then design closes the issue.
+- A `design/*` PR (rules, contracts, shared files) also needs the owner's own approving comment before it merges.
+- Anything wrong: no merge. He comments `blocked at <sha>: <reason>` and removes `status:review`. A git or cross-PR
+  conflict also gets the `design` label and goes under Blocked in STATE.md. The author fixes it on its branch (for a
+  git conflict: `git fetch origin && git rebase origin/main`, then push).
+- A new push makes the old review stale: check the new sha again.
 
 ## Galaxus product rules
 
@@ -96,7 +91,7 @@ Everything below applies again once the owner closes #9.
 
 ## Hard rules
 
-- Never push to `main` (branch protection enforces it). Only the design PR watcher merges, and only through green `ci`.
+- Never push to `main` (branch protection enforces it). Only Parth merges, and only through green `ci`.
 - Relayed intent is not authorization: an owner decision needs a comment the owner wrote.
 - Conflicts: never silently pick a winner. Record them under **Blocked** in STATE.md, keep both versions, escalate.
 - Agents never talk directly. GitHub issues, PRs and comments are the only shared channel.
@@ -117,6 +112,6 @@ IDs (`ADR-`, `Q-`, `EXP-`) are never reused or renumbered; `grep -rn '<ID>'` mus
 
 ## Design wake loop
 
-Read STATE.md → read the PR watcher's results since the last wake → copy "For design" notes of merged PRs into the
+Read STATE.md → read the PRs merged since the last wake → copy "For design" notes of merged PRs into the
 shared files → answer `design` issues →
 open new issues → overwrite STATE.md → append to worklog.md.
