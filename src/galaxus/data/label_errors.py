@@ -65,14 +65,22 @@ def _records_from_jsonl(path: str | os.PathLike[str]) -> list[object]:
 
 def _rows_from_records(
     records: Iterable[object], require_confidence: bool = True
-) -> list[tuple[str, str, str, object]]:
-    """Rows from ``Prediction`` records, mappings or objects alike.
+) -> tuple[list[tuple[str, str, str, object]], int]:
+    """Rows from ``Prediction`` records, mappings or objects alike, and how many cells could not be ranked.
 
     ``require_confidence=False`` keeps records that carry none, with ``None`` in the confidence column. The
     label-error finder cannot rank those (#7), but a confusion table (#92) only needs the predicted class,
     and the predictors whose scores it explains are exactly the ones with no confidences yet (#75).
+
+    With ``require_confidence=True`` a cell that carries no confidence is **skipped, not fatal**. A real run
+    has such cells by design: a predictor that falls back to the sample's answer writes ``confidence: null``
+    (the LoRA counts them as ``fallbacks``, #75/#122), and one that parses only some dimensions writes a
+    partial mapping (``no_confidence_cells``). Refusing the whole file for one of those would throw away every
+    good candidate in it, and this file is due at 14:30 on the Saturday. A file where **nothing** is rankable
+    is a different thing - a writer that dropped the field - and still raises.
     """
     rows: list[tuple[str, str, str, object]] = []
+    unrankable = 0
     for record in records:
         if isinstance(record, Mapping):
             image_id, labels, confidence = record["image_id"], record["labels"], record.get("confidence")
@@ -81,20 +89,25 @@ def _rows_from_records(
             confidence = getattr(record, "confidence", None)
         if confidence is None:
             if require_confidence:
-                raise ValueError(
-                    f"the prediction for {image_id!r} has no confidence, so it cannot be ranked: the finder "
-                    "reports high-confidence disagreements only (issue #7). Fill Prediction.confidence in the "
-                    "eval run."
-                )
+                unrankable += len(labels or {})
+                continue
             confidence = {}
         for dimension, prediction in (labels or {}).items():
             if dimension not in confidence:
                 if require_confidence:
-                    raise KeyError(f"{image_id!r} predicts {dimension!r} but carries no confidence for that dimension")
+                    unrankable += 1
+                    continue
                 rows.append((str(image_id), str(dimension), str(prediction), None))
                 continue
             rows.append((str(image_id), str(dimension), str(prediction), confidence[dimension]))
-    return rows
+
+    if require_confidence and unrankable and not rows:
+        raise ValueError(
+            f"none of these predictions has a confidence ({unrankable} cell(s) without one), so nothing can be "
+            "ranked: the finder reports high-confidence disagreements only (issue #7). Fill "
+            "Prediction.confidence in the eval run."
+        )
+    return rows, unrankable
 
 
 def out_of_fold_frame(predictions: OutOfFold, require_confidence: bool = True) -> pd.DataFrame:
@@ -126,7 +139,11 @@ def out_of_fold_frame(predictions: OutOfFold, require_confidence: bool = True) -
                 rows.append((str(image_id), str(dimension), str(prediction), confidence))
         frame = pd.DataFrame(rows, columns=list(PREDICTION_COLUMNS))
     else:
-        frame = pd.DataFrame(_rows_from_records(predictions, require_confidence), columns=list(PREDICTION_COLUMNS))
+        parsed, unrankable = _rows_from_records(predictions, require_confidence)
+        frame = pd.DataFrame(parsed, columns=list(PREDICTION_COLUMNS))
+        # Recorded rather than printed or dropped quietly: a caller that skipped cells should be able to say so,
+        # and the command does. pandas keeps ``attrs`` across the operations this frame goes through.
+        frame.attrs["unrankable_cells"] = unrankable
     frame[ID_COLUMN] = frame[ID_COLUMN].astype(str)
     frame["dimension"] = frame["dimension"].astype(str)
     frame["prediction"] = frame["prediction"].astype(str)
