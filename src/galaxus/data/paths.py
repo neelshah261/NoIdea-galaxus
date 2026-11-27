@@ -55,3 +55,14 @@ def out_dir() -> Path:
     path = data_dir() / "out"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def cache_dir(*parts: str) -> Path:
+    """``$GALAXUS_DATA/cache/<parts>/``, created if needed.
+
+    The layout is BASE_ARCHITECTURE.md "Data layout (outside git)": ``cache/images/<size>/`` for prepared JPEGs,
+    ``cache/features/<exp>/`` for hidden states. Derived files only, so deleting the cache costs time, never data.
+    """
+    path = data_dir().joinpath("cache", *parts)
+    path.mkdir(parents=True, exist_ok=True)
+    return path

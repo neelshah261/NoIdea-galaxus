@@ -15,11 +15,19 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - for type checkers and editors only
     from galaxus.data.classes import ID_COLUMN, allowed_classes, dimensions
-    from galaxus.data.images import opaque_rgb_on_white, prepare_image, prepared_jpeg, vision_tokens
+    from galaxus.data.images import (
+        cached_jpeg,
+        fill_image_cache,
+        image_cache_dir,
+        opaque_rgb_on_white,
+        prepare_image,
+        prepared_jpeg,
+        vision_tokens,
+    )
     from galaxus.data.label_errors import find_label_errors, write_label_errors
     from galaxus.data.load import read_dev, read_final, read_part, read_sample_submission, read_train
     from galaxus.data.metric import evaluate, load_metric, score
-    from galaxus.data.paths import GALAXUS_DATA_ENV, MissingDataDir, data_dir, data_file, out_dir
+    from galaxus.data.paths import GALAXUS_DATA_ENV, MissingDataDir, cache_dir, data_dir, data_file, out_dir
     from galaxus.data.split import iter_product_folds, product_folds, scored_mask, solution_frame, split_holdout
     from galaxus.data.submission import write_submission
     from galaxus.data.validate import SubmissionInvalid, validate_submission
@@ -30,12 +38,16 @@ _EXPORTS = {
     "MissingDataDir": "paths",
     "SubmissionInvalid": "validate",
     "allowed_classes": "classes",
+    "cache_dir": "paths",
+    "cached_jpeg": "images",
     "data_dir": "paths",
     "data_file": "paths",
     "dimensions": "classes",
     "evaluate": "metric",
+    "fill_image_cache": "images",
     "find_label_errors": "label_errors",
     "iter_product_folds": "split",
+    "image_cache_dir": "images",
     "load_metric": "metric",
     "opaque_rgb_on_white": "images",
     "out_dir": "paths",
@@ -65,11 +77,15 @@ __all__ = [
     "MissingDataDir",
     "SubmissionInvalid",
     "allowed_classes",
+    "cache_dir",
+    "cached_jpeg",
     "data_dir",
     "data_file",
     "dimensions",
     "evaluate",
+    "fill_image_cache",
     "find_label_errors",
+    "image_cache_dir",
     "iter_product_folds",
     "load_metric",
     "opaque_rgb_on_white",
