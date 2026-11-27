@@ -41,6 +41,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from galaxus.model.lora import (
+    CONTEXT_DROPOUT,
     IMAGE_SIZE,
     MAX_REPEATS,
     RARE_CLASS_TARGET,
@@ -67,18 +68,19 @@ TARGET_MODULES = r".*(?<!vision_tokenizer)\.(q_proj|k_proj|v_proj|o_proj|up_proj
 REFERENCE_TOKENS_PER_SECOND_L40S = 14_000 * 700 * 3 / (73 * 60) / 2.5
 
 
-def training_set():
-    """Train minus the official holdout, with the data lane's mirrored rows (#29)."""
+def training_set(context_dropout: float = CONTEXT_DROPOUT):
+    """Train minus the official holdout, with the data lane's mirrored rows (#29) and context dropout (#101 item 2)."""
     from galaxus.data import classes, load, mirror, split
 
     dimensions = tuple(classes.dimensions())
     rows, _holdout = split.split_holdout(load.read_train())
     mirrored = mirror.mirrored_rows(rows)
-    return dimensions, build_training_set(rows, dimensions, mirrored), classes.allowed_classes()
+    return (dimensions, build_training_set(rows, dimensions, mirrored, context_dropout=context_dropout),
+            classes.allowed_classes())
 
 
 def plan(arguments) -> int:
-    _, data, _ = training_set()
+    _, data, _ = training_set(arguments.context_dropout)
     p = Plan(data.stats["examples_per_epoch"], arguments.epochs, BATCH, ACCUMULATION, tokens_per_example(),
              REFERENCE_TOKENS_PER_SECOND_L40S, arguments.dollars_per_hour or 1.8)
     print(json.dumps(data.stats, indent=2))
@@ -87,7 +89,8 @@ def plan(arguments) -> int:
     print(f"ESTIMATE on one L40S: {p.hours:.1f} h, ${p.dollars:.2f} at ${p.dollars_per_hour}/h "
           "(from the hosts' Qwen timing scaled by tokens; the run prints the measured rate after 50 steps)")
     print(f"recipe: LoRA r{RANK}/a{ALPHA}, lr {LEARNING_RATE}, cosine, warmup {WARMUP}, rare classes towards "
-          f"{RARE_CLASS_TARGET} (max {MAX_REPEATS}x), mirrored rows, human labels only, holdout left out")
+          f"{RARE_CLASS_TARGET} (max {MAX_REPEATS}x), mirrored rows, human labels only, holdout left out, "
+          f"context dropout {arguments.context_dropout:.0%} ({data.stats['context_dropped']} examples)")
     return 0
 
 
@@ -217,7 +220,7 @@ def train(arguments) -> int:
     import transformers
     from transformers import Trainer, TrainingArguments
 
-    _dimensions, data, classes = training_set()
+    _dimensions, data, classes = training_set(arguments.context_dropout)
     out = Path(arguments.output or _out_dir() / f"lora-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}")
     print(f"[lora] {data.stats['examples_per_epoch']} examples per epoch; output {out}; transformers "
           f"{transformers.__version__}, torch {torch.__version__}, cuda {torch.cuda.is_available()}", flush=True)
@@ -366,6 +369,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--merge", action="store_true", help="also write merged bf16 weights for vLLM")
     parser.add_argument("--gradient-checkpointing", action="store_true")
+    parser.add_argument("--context-dropout", type=float, default=CONTEXT_DROPOUT,
+                        help=f"share of examples without product context (default {CONTEXT_DROPOUT}; 0 turns it off)")
     parser.add_argument("--save-steps", type=int, default=SAVE_STEPS,
                         help=f"optimizer steps between checkpoints (default {SAVE_STEPS}; #76: a crash loses one interval)")
     parser.add_argument("--dollars-per-hour", type=float, default=None)

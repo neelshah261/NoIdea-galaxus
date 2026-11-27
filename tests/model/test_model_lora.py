@@ -274,3 +274,46 @@ def test_eval_lora_scores_end_to_end_through_a_fake_endpoint(tmp_path, monkeypat
                               results_path=tmp_path / "metrics.json", exp_id="EXP-0004", allow_dirty=True)
     assert row["predictor"] == "lora" and row["model"] == "apertus-lora" and row["config"]["fallbacks"] == 0
     assert (tmp_path / "out" / "predictions" / "EXP-0004" / "holdout.jsonl").is_file()
+
+
+# ---------------------------------------------------------------- #101 item 2: context dropout
+
+
+def _rows_with_context(n=200):
+    frame = pd.DataFrame({"image_id": [f"i{k}" for k in range(n)], "image_file": [f"/x/{k}.jpg" for k in range(n)],
+                          "product_title": [f"Product {k}" for k in range(n)]})
+    for d in DIMS:
+        frame[d] = "alpha"
+        frame[f"{d}_source"] = "human"
+    return frame
+
+
+def test_no_dropout_keeps_every_context():
+    data = lora.build_training_set(_rows_with_context(), DIMS)
+    assert all(e.context for e in data.examples) and data.stats["context_dropped"] == 0
+
+
+def test_dropout_removes_about_the_share_and_keeps_labels_and_count():
+    rows = _rows_with_context(1000)
+    plain = lora.build_training_set(rows, DIMS)
+    dropped = lora.build_training_set(rows, DIMS, context_dropout=0.3)
+    assert len(dropped.examples) == len(plain.examples)
+    assert [e.target for e in dropped.examples] == [e.target for e in plain.examples]
+    share = sum(e.context is None for e in dropped.examples) / len(dropped.examples)
+    assert 0.25 < share < 0.35 and dropped.stats["context_dropped"] == sum(e.context is None for e in dropped.examples)
+
+
+def test_dropout_is_seeded_and_the_prompt_is_the_inference_one():
+    rows = _rows_with_context()
+    first = lora.build_training_set(rows, DIMS, context_dropout=0.3, seed=1)
+    again = lora.build_training_set(rows, DIMS, context_dropout=0.3, seed=1)
+    other = lora.build_training_set(rows, DIMS, context_dropout=0.3, seed=2)
+    picked = [e.context is None for e in first.examples]
+    assert picked == [e.context is None for e in again.examples] != [e.context is None for e in other.examples]
+    dropped = next(e for e in first.examples if e.context is None)
+    assert lora.user_prompt(dropped.context) == lora.user_prompt(None)
+
+
+def test_dropout_outside_0_and_1_is_refused():
+    with pytest.raises(ValueError, match="context_dropout"):
+        lora.build_training_set(_rows_with_context(), DIMS, context_dropout=1.5)

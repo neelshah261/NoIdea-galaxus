@@ -19,9 +19,10 @@ from __future__ import annotations
 
 import json
 import math
+import random
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import pandas as pd
@@ -29,6 +30,9 @@ import pandas as pd
 #: Recipe values from the reference notebook (and slide 18 of the deep dive, #17).
 RARE_CLASS_TARGET = 200
 MAX_REPEATS = 3
+#: #101 item 2: share of training examples shown without product context, and the seed that picks them.
+CONTEXT_DROPOUT = 0.3
+CONTEXT_DROPOUT_SEED = 3407
 IMAGE_SIZE = 512
 #: Apertus' vision tokenizer turns 16 x 16 pixels into one token (Q-0002 measures it; this is the plan's number).
 PIXELS_PER_TOKEN_SIDE = 16
@@ -163,11 +167,18 @@ def build_training_set(
     mirrored: pd.DataFrame | None = None,
     rare_target: int = RARE_CLASS_TARGET,
     max_repeats: int = MAX_REPEATS,
+    context_dropout: float = 0.0,
+    seed: int = CONTEXT_DROPOUT_SEED,
 ) -> TrainingSet:
     """Examples for one epoch: every row once, rows of rare human classes repeated, plus the mirrored rows.
 
     ``rows`` is train minus the official holdout; ``mirrored`` is the data lane's ``mirrored_rows(rows)``.
+    ``context_dropout`` (#101 item 2): that share of the examples, drawn with ``seed``, loses its product context, so
+    its prompt is exactly ``user_prompt(None)``, the one inference uses when the catalog has none. Labels and the
+    number of examples do not change; each repeated or mirrored copy is drawn on its own.
     """
+    if not 0.0 <= context_dropout <= 1.0:
+        raise ValueError(f"context_dropout must be between 0 and 1, got {context_dropout}")
     records = rows.to_dict(orient="records")
     human = [tuple(d for d in dimensions if r.get(f"{d}_source") == "human") for r in records]
     counts = Counter((d, r[d]) for r, dims in zip(records, human) for d in dims)
@@ -196,11 +207,21 @@ def build_training_set(
                         {d: str(record[d]) for d in dimensions}, dims)
             )
             added_mirrors += 1
+    dropped = 0
+    if context_dropout > 0:
+        draw = random.Random(seed)
+        for index, example in enumerate(examples):
+            if draw.random() < context_dropout:
+                if example.context:
+                    dropped += 1
+                examples[index] = replace(example, context=None)
     stats = {
         "images": len(records),
         "repeats_added": len(examples) - len(records) - added_mirrors,
         "mirrored_added": added_mirrors,
         "examples_per_epoch": len(examples),
+        "context_dropout": context_dropout,
+        "context_dropped": dropped,
         "human_labels_in_loss": {d: sum(d in dims for dims in human) for d in dimensions},
         "prelabels_masked": {d: sum(d not in dims for dims in human) for d in dimensions},
     }
