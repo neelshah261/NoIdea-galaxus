@@ -39,7 +39,7 @@ RUN="${RUN:-exp0004-e$EPOCHS}"
 case "$MODE" in
   setup) FLAVOR=cpu-upgrade; TIMEOUT=1h;    ENV=(-e STAGE=setup) ;;
   check) FLAVOR=l40sx1;      TIMEOUT=45m;   ENV=(-e STAGE=train -e MAX_STEPS=5); RUN="$RUN-check" ;;
-  train) FLAVOR=l40sx1;      TIMEOUT="${TIMEOUT:-5h30m}"; ENV=(-e STAGE=train) ;;   # 5.5 h x $1.80 = $9.90 < $10
+  train) FLAVOR=l40sx1;      TIMEOUT="${TIMEOUT:-330m}"; ENV=(-e STAGE=train) ;;   # 330 min = 5.5 h x $1.80 = $9.90 < $10 (one unit only: "5h30m" is rejected)
   *) echo "mode must be setup, check or train" >&2; exit 1 ;;
 esac
 
