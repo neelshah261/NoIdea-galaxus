@@ -213,3 +213,26 @@ def test_one_batch_cannot_be_killed_halfway_and_says_so(galaxus_data):
     step = step_of(report, "kill")
     assert step["status"] == "skipped" and "single batch" in step["detail"]
     assert report.ok and not report.ready and report.resumed == len(DEV_IDS)
+
+
+def test_a_sub_millisecond_prediction_is_reported_as_more_than_zero(galaxus_data, monkeypatch, capsys):
+    """#74: a stub predicts in microseconds; round(..., 3) made that 0.0 and the wall/prediction check flaky.
+
+    A fake clock advancing 1 microsecond per reading makes every run hit the case, whatever the runner's speed.
+    """
+    import types
+
+    ticks = iter(range(10**9))
+    clock = types.SimpleNamespace(perf_counter=lambda: next(ticks) * 1e-6)
+    monkeypatch.setattr(final_run, "time", clock)
+    monkeypatch.setattr(runner, "time", clock)  # the runner times its share of the prediction with the same clock
+    report = final_run.drill(STUB, "EXP-0074", drill_part="d74", batch_size=1, floor=0.0, log=print)
+    assert 0 < report.prediction_seconds < 0.001
+    assert report.wall_seconds >= report.prediction_seconds > 0
+    assert report.images_per_second and report.images_per_second > 0
+    out = capsys.readouterr().out
+    assert " <1 ms predicting" in out and "0.0 s predicting" not in out
+
+
+def test_durations_print_readably():
+    assert [final_run._duration(s) for s in (42.4, 1.44, 0.0031, 0.00002)] == ["42 s", "1.4 s", "3 ms", "<1 ms"]

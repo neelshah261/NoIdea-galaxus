@@ -142,3 +142,13 @@ def test_load_predictor_from_class_factory_or_object():
         load_predictor("no_colon")
     with pytest.raises(TypeError):
         load_predictor("serve_helpers:DIMENSIONS")
+
+
+def test_command_descriptions_print_on_a_windows_console():
+    """#68: `final_run --help` crashed on cp1252 consoles because its description held a non-ASCII arrow."""
+    import importlib
+
+    for name in ("runner", "submit", "bench", "final_run", "preflight", "report", "results_tables"):
+        module = importlib.import_module(f"galaxus.serve.{name}")
+        first_line = (module.__doc__ or "").split("\n")[0]
+        first_line.encode("cp1252")  # raises UnicodeEncodeError if it would crash `--help` there
