@@ -1,7 +1,7 @@
 # BUILD_PLAN.md: base, main method, one innovation
 
 Team NoIdea. **Decided by Parth, 2026-11-27:** build the base first, then the main method, then one innovation.
-How the work moves is in [Workflow](#workflow). The rules, numbers and class names live in
+How the work moves is in [Workflow](#workflow); who builds which PR next, one at a time, is in [#50](https://github.com/neelshah261/NoIdea-galaxus/issues/50). The rules, numbers and class names live in
 [challenge_description.md](challenge_description.md), [FAQ.md](FAQ.md) and [AGENTS.md](AGENTS.md); this file only
 plans. The methods are PLAN.md's ([PLAN.md](PLAN.md)); the base steps are BASE_ARCHITECTURE.md's
 ([BASE_ARCHITECTURE.md](BASE_ARCHITECTURE.md)).
@@ -63,7 +63,7 @@ Kaggle upload.
 | B3 | majority baseline + eval script | model, Parth | [#12](https://github.com/neelshah261/NoIdea-galaxus/issues/12) | [#22](https://github.com/neelshah261/NoIdea-galaxus/pull/22) | merged |
 | B4 | batched runner with resume and timing | serve, Swarup | [#14](https://github.com/neelshah261/NoIdea-galaxus/issues/14) | [#19](https://github.com/neelshah261/NoIdea-galaxus/pull/19) | merged |
 | B5 | first Kaggle file + the submit command | serve, Swarup; Neel uploads | [#15](https://github.com/neelshah261/NoIdea-galaxus/issues/15) | [#19](https://github.com/neelshah261/NoIdea-galaxus/pull/19) | merged |
-| B6 | Apertus layer (api, vllm, local) + smoke test | model, Parth | [#13](https://github.com/neelshah261/NoIdea-galaxus/issues/13), [#38](https://github.com/neelshah261/NoIdea-galaxus/issues/38) | [#22](https://github.com/neelshah261/NoIdea-galaxus/pull/22), [#44](https://github.com/neelshah261/NoIdea-galaxus/pull/44) | merged; key rotation in review |
+| B6 | Apertus layer (api, vllm, local) + smoke test | model, Parth | [#13](https://github.com/neelshah261/NoIdea-galaxus/issues/13), [#38](https://github.com/neelshah261/NoIdea-galaxus/issues/38) | [#22](https://github.com/neelshah261/NoIdea-galaxus/pull/22), [#44](https://github.com/neelshah261/NoIdea-galaxus/pull/44) | merged |
 | B7 | benchmark + final-run dry run | serve, Swarup | [#16](https://github.com/neelshah261/NoIdea-galaxus/issues/16) | [#19](https://github.com/neelshah261/NoIdea-galaxus/pull/19) | merged |
 | Bonus | label-error finder | data, Vernika | [#7](https://github.com/neelshah261/NoIdea-galaxus/issues/7) | [#20](https://github.com/neelshah261/NoIdea-galaxus/pull/20), [#24](https://github.com/neelshah261/NoIdea-galaxus/pull/24) | merged |
 
@@ -72,7 +72,7 @@ The phase ends at the base gate of BASE_ARCHITECTURE.md:
 - [x] The three lanes merged into `main`
 - [ ] EXP-0001 in `results/metrics.json`: `uv run python -m galaxus.model.eval majority --exp-id EXP-0001` (needs the Kaggle files)
 - [ ] A valid file with a public score on Kaggle (B5; a person uploads)
-- [ ] The smoke test run on the gateway: `uv run --env-file .env python -m galaxus.model.apertus.smoke --backend api` (needs `LLM_NAME`, `LLM_BASE_URL` and a key)
+- [ ] The smoke test run on the gateway: `uv run --env-file .env python -m galaxus.model.apertus.smoke --backend api` (Neel runs it where the keys are: [#46](https://github.com/neelshah261/NoIdea-galaxus/issues/46))
 - [ ] The final-run dry run green on dev (B7)
 
 ## Phase 2: the main method
@@ -80,10 +80,10 @@ The phase ends at the base gate of BASE_ARCHITECTURE.md:
 Zero-shot Apertus 8B shows how far prompting gets; a LoRA on Apertus 8B is the likely way into the top group. The
 bar on dev: finetuned Qwen 3.5 9B 0.917, Gemini 3.8 Flash 0.806 ([Baselines](challenge_description.md#baselines)).
 
-1. **EXP-0002, zero-shot Apertus v1.5 8B** through the B6 layer: labeling guideline in the system prompt, one call
+1. **EXP-0002, zero-shot Apertus v1.5 8B** ([#47](https://github.com/neelshah261/NoIdea-galaxus/issues/47)) through the B6 layer: labeling guideline in the system prompt, one call
    per image, a JSON answer held to the class lists, thinking off, greedy, image about 512×512 on white. Run once
    with product context and once without.
-2. **EXP-0004, LoRA on Apertus 8B**, adapted from the reference notebook: loss on human labels only, rare-class
+2. **EXP-0004, LoRA on Apertus 8B** ([#49](https://github.com/neelshah261/NoIdea-galaxus/issues/49)), adapted from the reference notebook: loss on human labels only, rare-class
    repeats, mirrored copies, bf16 LoRA, merged and served with vLLM. Trained without the holdout. PLAN.md estimates
    2.5–4 h on one L40S, about $5–7, so it starts only with Neel's OK.
 3. **Pick the main method:** the best holdout score that still runs at 2 images per second or faster; on a near
@@ -108,7 +108,7 @@ Candidates placed by expected gain and by cost and risk (a proposal, by zone onl
 | Later: low gain, high cost | Closed-model pseudo-labels on dev | the hosts' unclear remark (#17) |
 
 The one innovation comes from the "Do first" zone, since those need no rules answer. The proposal is **mirror TTA
-for perspective**: classify the mirrored image too and swap left and right in that answer, aimed at the left/right
+for perspective** ([#48](https://github.com/neelshah261/NoIdea-galaxus/issues/48)): classify the mirrored image too and swap left and right in that answer, aimed at the left/right
 mix-ups the hosts showed. It runs as its own EXP row on the same holdout, which also fills the ablation table for
 the 15% insights part. A quantized Apertus is measured as a speed row either way (the 20% speed part). The two bets
 wait for the hosts' answers to Q-0007 and Q-0003.
@@ -152,7 +152,7 @@ so every number in the report has a commit and a review behind it.
 - [ ] Main method: this plan or #40 (Neel, with the hosts' answer to Q-0007)
 - [ ] GPU budget for the LoRA run (Neel; PLAN.md: about $5–7 on one L40S)
 - [ ] Discord questions (Neel): Q-0003 (label hints from similar train images), Q-0007 (heads on Apertus features), and the unclear remark on dev pseudo-labels from the deep dive
-- [ ] Gateway settings for the smoke test: `LLM_NAME`, `LLM_BASE_URL` and the keys in `.env` (Parth)
+- [ ] The smoke test on the gateway, run where the keys are (Neel, [#46](https://github.com/neelshah261/NoIdea-galaxus/issues/46))
 
 ## Sources
 
