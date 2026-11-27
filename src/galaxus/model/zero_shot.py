@@ -2,6 +2,7 @@
 
     uv run --env-file .env python -m galaxus.model.eval zero-shot --exp-id EXP-0002
     uv run --env-file .env python -m galaxus.model.eval zero-shot-no-context
+    uv run --env-file .env python -m galaxus.model.eval zero-shot-image-first --exp-id EXP-0014
 
 - The image is the data lane's prepared JPEG (white compositing, about 512 x 512, through the image cache).
 - The system prompt is ``labeling_guideline.md`` read from ``$GALAXUS_DATA`` at runtime, never committed (AGENTS.md
@@ -46,6 +47,14 @@ INSTRUCTION = (
     "Answer only with a JSON object that has one key per dimension and one of its allowed class names as the value."
 )
 NO_CONTEXT = "Classify this product image. No product context is available, so judge from the image alone."
+#: EXP-0014 (#106): the product context as a hint, the image as the judge. On the holdout, the context costs subject
+#: 0.112 macro F1 (EXP-0009 0.168 against EXP-0002 0.056) and adds 0.180 to text_language. This line asks the model
+#: to look first, and leaves the context in the user message, so the dimensions it helps keep it.
+IMAGE_FIRST = (
+    "The user message may carry product context from the catalog. It is a hint, not the answer: decide every "
+    "dimension from what you see in the image, use the context only where the image alone cannot decide, and when "
+    "the image and the context disagree, trust the image."
+)
 
 
 def read_guideline() -> str:
@@ -65,8 +74,15 @@ def answer_schema(dimensions: Sequence[str], allowed: Mapping[str, frozenset[str
     }
 
 
-def system_prompt(guideline: str, dimensions: Sequence[str]) -> str:
-    return INSTRUCTION.format(dimensions=", ".join(dimensions)) + "\n\n" + guideline.strip()
+def system_prompt(guideline: str, dimensions: Sequence[str], image_first: bool = False) -> str:
+    """The instruction, the image-first line when asked for (EXP-0014), then the guideline.
+
+    Without ``image_first`` the text is exactly what EXP-0002 and EXP-0009 sent, so their prompt hashes still hold.
+    """
+    instruction = INSTRUCTION.format(dimensions=", ".join(dimensions))
+    if image_first:
+        instruction += "\n" + IMAGE_FIRST
+    return instruction + "\n\n" + guideline.strip()
 
 
 def user_prompt(context: Mapping[str, str] | None) -> str:
@@ -138,6 +154,7 @@ class ZeroShotPredictor:
         backend: Any = None,
         *,
         use_context: bool = True,
+        image_first: bool = False,
         defaults: Mapping[str, str] | None = None,
         dimensions: Sequence[str] | None = None,
         allowed: Mapping[str, frozenset[str]] | None = None,
@@ -162,6 +179,7 @@ class ZeroShotPredictor:
         self.backend = backend
         self.model = backend.model
         self.use_context = use_context
+        self.image_first = image_first
         self.dimensions = tuple(dimensions)
         self.allowed = dict(allowed)
         self.defaults = dict(defaults)
@@ -171,7 +189,9 @@ class ZeroShotPredictor:
         self.image_size = image_size
         self.workers = workers
         self.schema = answer_schema(self.dimensions, self.allowed)
-        self.system = system_prompt(guideline if guideline is not None else read_guideline(), self.dimensions)
+        self.system = system_prompt(
+            guideline if guideline is not None else read_guideline(), self.dimensions, image_first=image_first
+        )
         self._lock = threading.Lock()
         self.stats = {
             "images": 0,
@@ -238,6 +258,7 @@ class ZeroShotPredictor:
             "backend": getattr(self.backend, "name", None),
             "image_size": self.image_size,
             "context": self.use_context,
+            "image_first": self.image_first,
             "temperature": 0.0,
             "max_tokens": MAX_TOKENS,
             "workers": self.workers,
@@ -249,3 +270,8 @@ class ZeroShotPredictor:
 def no_context() -> ZeroShotPredictor:
     """For the serve runner: ``--predictor galaxus.model.zero_shot:no_context``."""
     return ZeroShotPredictor(use_context=False)
+
+
+def image_first() -> ZeroShotPredictor:
+    """For the serve runner: ``--predictor galaxus.model.zero_shot:image_first`` (EXP-0014, #106)."""
+    return ZeroShotPredictor(image_first=True)

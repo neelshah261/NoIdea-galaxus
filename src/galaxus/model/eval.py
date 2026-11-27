@@ -101,11 +101,12 @@ def _majority(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
     return MajorityPredictor.fit(rows, data.dimensions(), data.scored_mask)
 
 
-def _zero_shot(use_context: bool) -> PredictorFactory:
+def _zero_shot(use_context: bool, image_first: bool = False) -> PredictorFactory:
     def factory(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
         # shortcut: always the gateway (api); add a --backend flag when a vLLM run needs this script.
         return ZeroShotPredictor(
             use_context=use_context,
+            image_first=image_first,
             defaults=MajorityPredictor.fit(rows, data.dimensions(), data.scored_mask).answer,
             dimensions=data.dimensions(),
             allowed=data.allowed_classes(),
@@ -142,6 +143,7 @@ PREDICTORS: dict[str, PredictorFactory] = {
     "majority": _majority,
     "zero-shot": _zero_shot(use_context=True),
     "zero-shot-no-context": _zero_shot(use_context=False),
+    "zero-shot-image-first": _zero_shot(use_context=True, image_first=True),  # EXP-0014 (#106)
     "lora": _lora(),  # EXP-0004 (#49): the merged LoRA served by vLLM at $LORA_BASE_URL
     "mirror-tta:zero-shot": _mirror_tta("zero-shot"),  # EXP-0006 (#48)
 }

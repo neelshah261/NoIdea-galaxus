@@ -13,9 +13,19 @@ from PIL import Image
 from galaxus.data.label_errors import out_of_fold_frame
 from galaxus.model import apertus
 from galaxus.model import eval as model_eval
+from galaxus.model import zero_shot as zero_shot_module
 from galaxus.model.apertus.backend import BackendError, Generation
 from galaxus.model.contract import ImageItem
-from galaxus.model.zero_shot import NO_CONTEXT, ZeroShotPredictor, answer_schema, parse_answer, value_confidence
+from galaxus.model.zero_shot import (
+    IMAGE_FIRST,
+    INSTRUCTION,
+    NO_CONTEXT,
+    ZeroShotPredictor,
+    answer_schema,
+    parse_answer,
+    system_prompt,
+    value_confidence,
+)
 
 ALLOWED = {dimension: frozenset(names) for dimension, names in FAKE_CLASSES.items()}
 DEFAULTS = {dimension: names[0] for dimension, names in FAKE_CLASSES.items()}
@@ -120,6 +130,36 @@ def test_without_context_the_context_is_not_sent(data_dir):
     assert backend.calls[0]["messages"][1]["content"] == NO_CONTEXT
 
 
+def test_the_default_system_prompt_is_unchanged_so_the_earlier_rows_keep_their_prompt_hash():
+    """EXP-0002 and EXP-0009 recorded the hash of this exact text; the image-first option must not move it."""
+    expected = INSTRUCTION.format(dimensions=", ".join(DIMENSIONS)) + "\n\nRule one."
+    assert system_prompt("Rule one.\n", DIMENSIONS) == expected
+    assert IMAGE_FIRST not in expected
+
+
+def test_image_first_tells_the_model_to_trust_the_image_and_still_sends_the_context(data_dir):
+    """#106, EXP-0014: one more line in the system prompt; the context stays in the user message."""
+    backend = FakeBackend(json.dumps(GOOD))
+    image_first = predictor(backend, image_first=True)
+    [prediction] = image_first.predict([item(data_dir, context={"product_title": "Mouse"})])
+    assert prediction.labels == GOOD
+    system, user = backend.calls[0]["messages"]
+    assert IMAGE_FIRST in system["content"] and "Rule one." in system["content"]
+    assert system["content"].index(IMAGE_FIRST) < system["content"].index("Rule one.")
+    assert "product_title: Mouse" in user["content"]
+    plain = predictor(FakeBackend(json.dumps(GOOD)))
+    assert image_first.prompt_sha256() != plain.prompt_sha256()
+    assert image_first.config()["image_first"] is True
+    assert plain.config()["image_first"] is False
+
+
+def test_the_runner_can_build_the_image_first_predictor_without_arguments(monkeypatch):
+    built = {}
+    monkeypatch.setattr(zero_shot_module, "ZeroShotPredictor", lambda **options: built.update(options) or "built")
+    assert zero_shot_module.image_first() == "built"
+    assert built == {"image_first": True}
+
+
 def test_a_bad_answer_is_asked_once_more(data_dir):
     backend = FakeBackend("garbage", json.dumps(GOOD))
     zero_shot = predictor(backend)
@@ -162,8 +202,13 @@ def test_defaults_must_be_allowed_classes():
         )
 
 
-@pytest.mark.parametrize(("name", "context"), [("zero-shot", True), ("zero-shot-no-context", False)])
-def test_the_eval_script_writes_an_exp_row_for_both_predictors(tmp_path, data_dir, monkeypatch, name, context):
+@pytest.mark.parametrize(
+    ("name", "context", "image_first"),
+    [("zero-shot", True, False), ("zero-shot-no-context", False, False), ("zero-shot-image-first", True, True)],
+)
+def test_the_eval_script_writes_an_exp_row_for_each_zero_shot_predictor(
+    tmp_path, data_dir, monkeypatch, name, context, image_first
+):
     monkeypatch.setattr(model_eval, "git_state", lambda: ("0" * 40, False))
     backend = FakeBackend(json.dumps(GOOD))
     monkeypatch.setattr(apertus, "backend", lambda *args, **kwargs: backend)
@@ -173,6 +218,7 @@ def test_the_eval_script_writes_an_exp_row_for_both_predictors(tmp_path, data_di
     row = model_eval.run_eval(name, data, results_path=tmp_path / "results" / "metrics.json", exp_id="EXP-0002")
     assert row["model"] == "apertus-test"
     assert row["config"]["context"] is context
+    assert row["config"]["image_first"] is image_first
     assert row["config"]["backend"] == "fake"
     assert row["config"]["image_size"] == 512
     assert len(row["config"]["prompt_sha256"]) == 16
