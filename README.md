@@ -5,7 +5,7 @@
 ### Hack Apertus x Galaxus: product image classification
 https://www.kaggle.com/competitions/hackapertus-galaxus
 
-`Add your team name`
+`NoIdea`
 
 Template repository for [Hack Apertus](https://hackapertus.ch/) submissions.
 Every project keeps the same layout, so organizers and judges find the same
