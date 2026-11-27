@@ -9,6 +9,26 @@ dependencies = [
     "pillow",
 ]
 
+[project.optional-dependencies]
+# Kept out of the default install so ci stays light (#11). `uv sync --extra <name>`, or `uv run --extra <name> ...`.
+# local: Apertus in this process (transformers backend, hidden states, the LoRA script train/lora_apertus.py, #49).
+# transformers 5.24+ (the version the vLLM guide and #71 name for Apertus 1.5) needs Python 3.11+, so this extra does too;
+# the rest of the project keeps Python 3.10, the floor metric.py needs.
+local = [
+    "torch; python_version >= '3.11'",
+    "transformers>=5.24; python_version >= '3.11'",
+    "peft; python_version >= '3.11'",
+    "accelerate; python_version >= '3.11'",
+]
+# figures: the slide 8 perspective figure (bench/perspective_report.py, #34) and report charts.
+figures = ["matplotlib"]
+# report: technical_report.md rendered to HTML before a headless browser prints NoIdea_Report.pdf (scripts/build_report.py, #54).
+report = ["markdown"]
+# api: the Hack Apertus (Keera) gateway client is standard-library HTTP (galaxus.model.apertus.api): nothing to install.
+api = []
+# gpu: vLLM runs from Swiss AI's release image (bench/vllm_apertus.sh), never from this lock file: nothing to install.
+gpu = []
+
 [dependency-groups]
 dev = ["pytest", "ruff"]
 
