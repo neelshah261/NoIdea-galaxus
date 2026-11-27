@@ -45,8 +45,9 @@ from galaxus.model.results import (
 ID_COLUMN = "image_id"
 IMAGE_FILE_COLUMN = "image_file"
 PRODUCT_COLUMN = "product_id"
-#: The product context of an image: the columns the reference notebook's ``user_prompt`` reads.
-CONTEXT_COLUMNS = ("product_title", "brand", "product_type", "category", "subcategory")
+#: Never product context: identifiers and paths. Label columns are found by their ``_source`` sibling.
+NOT_CONTEXT = frozenset({"image_id", "image_path", "image_file", "product_id"})
+LABEL_METADATA_SUFFIXES = ("_source", "_relevant")
 DEFAULT_BATCH_SIZE = 256
 
 
@@ -103,24 +104,35 @@ PREDICTORS: dict[str, PredictorFactory] = {"majority": _majority}
 
 
 def items_from_rows(rows: pd.DataFrame) -> list[ImageItem]:
-    """Rows of a competition CSV as ``ImageItem``s, with the product context where the row has any.
+    """Rows of a competition CSV as ``ImageItem``s, exactly as dev and final images become items.
 
-    TODO(model): take these from the data lane's loader once it returns ``ImageItem`` (BASE_ARCHITECTURE B1, after
-    #11).
+    With the serve lane installed, its ``items_from_frame`` (#14) builds them, so a predictor sees the holdout the
+    way the runner shows it dev and final. Until then the same rule applies here: the product context is every
+    column that is not an id, a path, a label or label metadata, and an empty cell is left out.
+    TODO(model): drop the copy of the rule once #14 is on the team branch.
     """
-    context_columns = [column for column in CONTEXT_COLUMNS if column in rows.columns]
+    if IMAGE_FILE_COLUMN in rows.columns:
+        try:
+            from galaxus.serve.items import items_from_frame
+        except ImportError:
+            pass
+        else:
+            return list(items_from_frame(rows))
+    columns = [str(column) for column in rows.columns]
+    labels = {column for column in columns if f"{column}_source" in columns}
+    context_columns = [
+        column
+        for column in columns
+        if column not in NOT_CONTEXT and column not in labels and not column.endswith(LABEL_METADATA_SUFFIXES)
+    ]
     items = []
     for record in rows.to_dict(orient="records"):
-        context = {
-            column: record[column]
-            for column in context_columns
-            if isinstance(record[column], str) and record[column].strip()
-        }
+        context = {column: str(record[column]) for column in context_columns if str(record[column]).strip()}
         path = record.get(IMAGE_FILE_COLUMN)
         items.append(
             ImageItem(
                 image_id=str(record[ID_COLUMN]),
-                path=path if isinstance(path, str) else "",
+                path=str(path) if path is not None else "",
                 context=context or None,
             )
         )

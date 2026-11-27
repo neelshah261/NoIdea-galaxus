@@ -157,6 +157,18 @@ def test_a_row_without_context_or_file_gives_none_and_an_empty_path():
     assert (item.image_id, item.path, item.context) == ("img_00000", "", None)
 
 
+def test_labels_and_label_metadata_are_never_context():
+    (item,) = items_from_rows(train_table().head(1))
+    assert set(item.context) == {"product_title", "brand", "product_type", "category", "subcategory"}
+
+
+def test_the_holdout_items_are_the_ones_the_serve_runner_builds():
+    serve = pytest.importorskip("galaxus.serve.items", reason="the serve lane (#14) is not on this branch yet")
+    rows = train_table().head(5)
+    ours = [(item.image_id, item.path, item.context) for item in items_from_rows(rows)]
+    assert ours == [(item.image_id, item.path, item.context) for item in serve.items_from_frame(rows)]
+
+
 def test_the_command_line_runs_the_named_predictor(tmp_path, results, monkeypatch, capsys):
     data = fake_data_lane(train_table(), tmp_path / "out")
     monkeypatch.setattr(DataLane, "real", classmethod(lambda cls: data))

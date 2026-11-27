@@ -26,10 +26,16 @@ class MajorityPredictor:
 
     name = "majority"
 
-    def __init__(self, answer: Mapping[str, str]) -> None:
-        if not answer:
+    def __init__(self, answer: Mapping[str, str] | None = None) -> None:
+        """``answer`` is the constant answer per dimension.
+
+        Without it, the predictor fits itself on train minus the official holdout from ``$GALAXUS_DATA``, so
+        ``MajorityPredictor()`` also works where a predictor is built by name, as the serve lane's runner does
+        (``--predictor galaxus.model.baselines:MajorityPredictor``, #14, #15).
+        """
+        self.answer = dict(answer) if answer is not None else fit_from_data_lane()
+        if not self.answer:
             raise ValueError("a majority answer needs at least one dimension")
-        self.answer = dict(answer)
 
     @classmethod
     def fit(cls, rows: pd.DataFrame, dimensions: Sequence[str], scored_mask: ScoredMask) -> MajorityPredictor:
@@ -52,3 +58,13 @@ class MajorityPredictor:
     def config(self) -> dict[str, object]:
         """What the EXP row records as this predictor's config."""
         return {"answer": dict(self.answer)}
+
+
+def fit_from_data_lane() -> dict[str, str]:
+    """The majority answer of train minus the official holdout, read from ``$GALAXUS_DATA`` by the data lane (#5)."""
+    from galaxus.data.classes import dimensions
+    from galaxus.data.load import read_train
+    from galaxus.data.split import scored_mask, split_holdout
+
+    training_rows, _ = split_holdout(read_train())
+    return MajorityPredictor.fit(training_rows, dimensions(), scored_mask).answer
