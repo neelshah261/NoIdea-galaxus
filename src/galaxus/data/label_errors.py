@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 
@@ -186,3 +187,116 @@ def write_label_errors(
     target.parent.mkdir(parents=True, exist_ok=True)
     report.to_csv(target, index=False)
     return target
+
+
+def _repository_holding(path: Path) -> Path | None:
+    """The git work tree ``path`` sits in, or None. Found by looking for ``.git``, so it holds wherever the
+    package is installed and whatever the checkout is called."""
+    for folder in (path, *path.parents):
+        if (folder / ".git").exists():
+            return folder
+    return None
+
+
+def _checked_target(path: str | os.PathLike[str] | None, name: str = DEFAULT_NAME) -> Path:
+    """Where to write, refusing anywhere inside a git work tree.
+
+    The report holds train labels, which never enter git (AGENTS.md "Galaxus product rules" 3). A mistyped
+    ``--out`` is the one way this file could be committed by accident, so it is refused rather than written.
+    """
+    target = (Path(path) if path is not None else out_dir() / name).expanduser()
+    target = (Path.cwd() / target).resolve() if not target.is_absolute() else target.resolve()
+    repository = _repository_holding(target)
+    if repository is not None:
+        raise ValueError(
+            f"{target} is inside the git work tree at {repository}, and this report holds train labels, which "
+            "never enter git (AGENTS.md product rule 3). Write it under $GALAXUS_DATA/out/ instead, which is "
+            "where it goes by default"
+        )
+    return target
+
+
+def _summarise(report: pd.DataFrame) -> str:
+    """Counts only. The rows name images and labels, so nothing from the file itself is printed (rule 3)."""
+    if report.empty:
+        return "no disagreement above the threshold"
+    per_dimension = report["dimension"].value_counts().sort_index()
+    return ", ".join(f"{dimension} {count}" for dimension, count in per_dimension.items())
+
+
+def main(argv: list[str] | None = None) -> int:
+    """``python -m galaxus.data.label_errors --predictions <holdout.jsonl>``: write the bonus csv.
+
+    Prints counts only, never an image id or a label, and refuses to write inside a git work tree. A human sends
+    the file on Discord; agents do not (product rule 7).
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="python -m galaxus.data.label_errors",
+        description="Suspected label errors in train.csv, from out-of-fold predictions with confidences.",
+    )
+    parser.add_argument(
+        "--predictions",
+        required=True,
+        help="holdout.jsonl of out-of-fold predictions, or the directory holding it "
+        "($GALAXUS_DATA/out/predictions/<EXP id>/)",
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=DEFAULT_THRESHOLD,
+        help=f"report a disagreement only at this confidence or above (default {DEFAULT_THRESHOLD})",
+    )
+    parser.add_argument("--dimensions", help="comma-separated subset of dimensions (default: all)")
+    parser.add_argument(
+        "--scored-only",
+        action="store_true",
+        help="only cells the metric scores; off by default, because an unscored cell can still be a wrong label",
+    )
+    parser.add_argument("--out", help=f"where to write (default $GALAXUS_DATA/out/{DEFAULT_NAME})")
+    parser.add_argument("--top", type=int, help="keep only the N most confident disagreements")
+    parser.add_argument("--dry-run", action="store_true", help="count them and write nothing")
+    arguments = parser.parse_args(argv)
+
+    if not 0.0 <= arguments.threshold <= 1.0:
+        parser.error("--threshold is a confidence, so it must be between 0 and 1")
+    if arguments.top is not None and arguments.top < 1:
+        parser.error("--top must be at least 1")
+
+    names = tuple(name.strip() for name in arguments.dimensions.split(",")) if arguments.dimensions else None
+
+    from galaxus.data.load import read_train
+
+    try:
+        # Resolved before any work, so a refused --out fails before reading anything.
+        target = None if arguments.dry_run else _checked_target(arguments.out)
+        predictions = out_of_fold_frame(arguments.predictions)
+        report = find_label_errors(
+            predictions,
+            read_train(),
+            threshold=arguments.threshold,
+            dimension_names=names,
+            scored_only=arguments.scored_only,
+        )
+    except (OSError, KeyError, ValueError, RuntimeError) as failure:
+        print(f"cannot find label errors: {failure}", file=sys.stderr)
+        return 1
+
+    if arguments.top is not None:
+        report = report.head(arguments.top)
+
+    print(f"[label-errors] {len(report)} suspected error(s) at confidence >= {arguments.threshold:g}")
+    print(f"[label-errors] per dimension: {_summarise(report)}")
+    if arguments.dry_run:
+        print("[label-errors] --dry-run: nothing written")
+        return 0
+
+    written = write_label_errors(report, target)
+    print(f"[label-errors] -> {written}")
+    print("[label-errors] holds train labels: never commit it. A human sends it on Discord (product rule 7).")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
