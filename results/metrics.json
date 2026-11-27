@@ -1,7 +1,7 @@
 [
   {
     "id": "EXP-0001",
-    "created": "2026-11-27T16:50:58+01:00",
+    "created": "2026-11-27T16:59:18+01:00",
     "predictor": "majority",
     "commit": "fdecf9423b5b8714cf9c1b7a98c6dc8e73247c94",
     "dirty": false,
@@ -45,7 +45,7 @@
       "text_language": 0.1928899082568807
     },
     "overall_weighted_f1": 0.5792503138025146,
-    "images_per_second": 1743597.0614514549,
+    "images_per_second": 1805822.3696804063,
     "hardware": {
       "system": "Windows",
       "machine": "AMD64",
@@ -55,6 +55,6 @@
     },
     "usd_per_hour": null,
     "cost_per_100k_usd": null,
-    "note": ""
+    "note": "baseline, no model: images/s is not a product figure"
   }
 ]
