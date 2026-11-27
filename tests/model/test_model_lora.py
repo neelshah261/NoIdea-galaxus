@@ -274,3 +274,11 @@ def test_eval_lora_scores_end_to_end_through_a_fake_endpoint(tmp_path, monkeypat
                               results_path=tmp_path / "metrics.json", exp_id="EXP-0004", allow_dirty=True)
     assert row["predictor"] == "lora" and row["model"] == "apertus-lora" and row["config"]["fallbacks"] == 0
     assert (tmp_path / "out" / "predictions" / "EXP-0004" / "holdout.jsonl").is_file()
+
+
+def test_an_api_key_from_the_environment_reaches_the_backend(fake_endpoint):
+    """#76: an HF Job's exposed port wants an HF token; ``$LORA_API_KEY`` carries it, unset means no header."""
+    lora._vllm_backend({"LORA_BASE_URL": "http://gpu:8000/v1", "LORA_API_KEY": "secret-value"})
+    assert fake_endpoint.built[-1].options.get("api_key") == "secret-value"
+    lora._vllm_backend({"LORA_BASE_URL": "http://gpu:8000/v1"})
+    assert fake_endpoint.built[-1].options.get("api_key") is None

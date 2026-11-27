@@ -296,6 +296,9 @@ class LoraPredictor:
 BASE_URL_ENV = "LORA_BASE_URL"
 SERVED_NAME_ENV = "LORA_SERVED_MODEL"
 DEFAULT_SERVED_NAME = "apertus-lora"
+#: A bearer token for an endpoint behind an authenticating proxy, e.g. an HF Job's exposed port (#76), which takes
+#: an HF token with read access to the job's namespace. Read from the environment, never logged.
+API_KEY_ENV = "LORA_API_KEY"
 #: Same as the Saturday run sheet (#58): a 429 burst longer than 2 retries stops a run.
 RETRIES = 4
 
@@ -324,7 +327,10 @@ def eval_factory(environ: Mapping[str, str] | None = None, backend: Any = None) 
 
 
 def _vllm_backend(settings: Mapping[str, str]) -> Any:
-    """The vLLM endpoint from ``$LORA_BASE_URL``. Checked first, so a missing endpoint is the first, clearest error."""
+    """The vLLM endpoint from ``$LORA_BASE_URL`` (and ``$LORA_API_KEY`` when it sits behind a proxy that wants one).
+
+    Checked first, so a missing endpoint is the first, clearest error.
+    """
     base_url = settings.get(BASE_URL_ENV)
     if not base_url:
         raise RuntimeError(
@@ -333,7 +339,8 @@ def _vllm_backend(settings: Mapping[str, str]) -> Any:
         )
     from galaxus.model.apertus.vllm import VllmBackend
 
-    return VllmBackend(base_url, settings.get(SERVED_NAME_ENV, DEFAULT_SERVED_NAME), retries=RETRIES)
+    return VllmBackend(base_url, settings.get(SERVED_NAME_ENV, DEFAULT_SERVED_NAME),
+                       api_key=settings.get(API_KEY_ENV) or None, retries=RETRIES)
 
 
 def from_env(environ: Mapping[str, str] | None = None, backend: Any = None) -> LoraPredictor:
