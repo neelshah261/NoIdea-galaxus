@@ -327,3 +327,38 @@ def test_without_logprobs_there_is_no_confidence_and_it_is_counted():
 def test_the_vllm_backend_asks_for_logprobs(fake_endpoint):
     lora._vllm_backend({"LORA_BASE_URL": "http://gpu:8000/v1"})
     assert fake_endpoint.built[-1].options.get("extra_body") == {"logprobs": True}
+
+
+# ---------------------------------------------------------------- requests in flight
+
+
+def test_requests_run_concurrently_in_order_and_counts_stay_right():
+    import threading
+    import time
+
+    state = {"active": 0, "peak": 0}
+    lock = threading.Lock()
+
+    class Backend:
+        def generate(self, messages, images, json_schema=None, *, max_tokens, temperature):
+            with lock:
+                state["active"] += 1
+                state["peak"] = max(state["peak"], state["active"])
+            time.sleep(0.05)
+            with lock:
+                state["active"] -= 1
+            return Generation("garbage" if images == [b"bad"] else json.dumps({d: "beta" for d in DIMS}))
+
+    predictor = lora.LoraPredictor(Backend(), CLASSES, {d: "none" for d in DIMS},
+                                   lambda item: b"bad" if item.image_id.endswith("7") else b"jpeg", workers=4)
+    items = [_Item(f"i{k}") for k in range(12)]
+    answers = predictor.predict(items)
+    assert [a.image_id for a in answers] == [i.image_id for i in items]
+    assert state["peak"] > 1 and predictor.fallbacks == 1
+    assert predictor.config()["workers"] == 4
+
+
+@pytest.mark.real_contract
+def test_workers_come_from_the_environment(fake_endpoint):
+    predictor = lora.from_env({"LORA_BASE_URL": "http://gpu:8000/v1", "LORA_WORKERS": "16"})
+    assert predictor.workers == 16

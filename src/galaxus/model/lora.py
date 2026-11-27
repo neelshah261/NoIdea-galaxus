@@ -32,6 +32,9 @@ RARE_CLASS_TARGET = 200
 TEACHER_MIN_CONFIDENCE = 0.8
 MAX_REPEATS = 3
 IMAGE_SIZE = 512
+#: Requests in flight per batch ($LORA_WORKERS overrides it). The runner's --workers multiplies it, as for zero-shot.
+WORKERS = 8
+WORKERS_ENV = "LORA_WORKERS"
 #: Apertus' vision tokenizer turns 16 x 16 pixels into one token (Q-0002 measures it; this is the plan's number).
 PIXELS_PER_TOKEN_SIDE = 16
 
@@ -375,7 +378,9 @@ class LoraPredictor:
     name = "lora"
 
     def __init__(self, backend: Any, classes: Mapping[str, Sequence[str]], fallback: Mapping[str, str],
-                 image_bytes: Callable[[Any], bytes], model: str | None = None) -> None:
+                 image_bytes: Callable[[Any], bytes], model: str | None = None, workers: int = WORKERS) -> None:
+        import threading
+
         from galaxus.model.zero_shot import answer_schema
 
         self.backend = backend
@@ -387,37 +392,51 @@ class LoraPredictor:
         self.schema = answer_schema(list(self.classes), {d: frozenset(v) for d, v in self.classes.items()})
         self.fallbacks = 0
         self.no_confidence_cells = 0
+        self.workers = max(1, int(workers))
+        self._lock = threading.Lock()
 
-    def predict(self, batch: Sequence[Any]) -> list[Any]:
-        """One ``galaxus.types.Prediction`` per item, in order (the contract ``eval``, ``runner`` and ``submit`` read)."""
+    def _predict_one(self, item: Any) -> Any:
         from galaxus.model.zero_shot import value_confidence
         from galaxus.types import Prediction
 
-        answers = []
-        for item in batch:
-            generation = self.backend.generate(
-                [{"role": "system", "content": self.system},
-                 {"role": "user", "content": user_prompt(getattr(item, "context", None))}],
-                [self.image_bytes(item)],
-                json_schema=self.schema,
-                max_tokens=160,
-                temperature=0.0,
-            )
-            labels = parse_answer(generation.text, self.classes)
-            confidence: dict[str, float] = {}
-            if labels is None:
-                self.fallbacks += 1
-                labels = dict(self.fallback)
-            else:
-                # #75: P(class | answer so far) from the answer's token logprobs, as the zero-shot predictor does.
-                # None when the backend sent none; a fallback answer never gets a made-up number.
-                confidence = value_confidence(getattr(generation, "logprobs", None), labels)
+        generation = self.backend.generate(
+            [{"role": "system", "content": self.system},
+             {"role": "user", "content": user_prompt(getattr(item, "context", None))}],
+            [self.image_bytes(item)],
+            json_schema=self.schema,
+            max_tokens=160,
+            temperature=0.0,
+        )
+        labels = parse_answer(generation.text, self.classes)
+        confidence: dict[str, float] = {}
+        fell_back = labels is None
+        if fell_back:
+            labels = dict(self.fallback)
+        else:
+            # #75: P(class | answer so far) from the answer's token logprobs, as the zero-shot predictor does.
+            # None when the backend sent none; a fallback answer never gets a made-up number.
+            confidence = value_confidence(getattr(generation, "logprobs", None), labels)
+        with self._lock:
+            self.fallbacks += int(fell_back)
             self.no_confidence_cells += len(labels) - len(confidence)
-            answers.append(Prediction(image_id=item.image_id, labels=labels, confidence=confidence or None))
-        return answers
+        return Prediction(image_id=item.image_id, labels=labels, confidence=confidence or None)
+
+    def predict(self, batch: Sequence[Any]) -> list[Any]:
+        """One ``galaxus.types.Prediction`` per item, in order (the contract ``eval``, ``runner`` and ``submit`` read).
+
+        Up to ``workers`` requests are in flight at once, as the zero-shot predictor does: one request at a time spends
+        most of its time waiting on the network, and vLLM batches the concurrent ones on the GPU.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
+        if self.workers <= 1 or len(batch) <= 1:
+            return [self._predict_one(item) for item in batch]
+        with ThreadPoolExecutor(max_workers=self.workers, thread_name_prefix="lora") as pool:
+            return list(pool.map(self._predict_one, batch))
 
     def config(self) -> dict[str, object]:
-        return {"fallbacks": self.fallbacks, "no_confidence_cells": self.no_confidence_cells, "image_size": IMAGE_SIZE,
+        return {"fallbacks": self.fallbacks, "no_confidence_cells": self.no_confidence_cells, "workers": self.workers,
+                "image_size": IMAGE_SIZE,
                 "json_schema": "enum per dimension", "confidence": "token logprobs of the class name (#75)"}
 
 
@@ -452,7 +471,7 @@ def eval_factory(environ: Mapping[str, str] | None = None, backend: Any = None) 
         allowed = data.allowed_classes()
         fallback = MajorityPredictor.fit(rows, dimensions, data.scored_mask).answer
         return LoraPredictor(chosen, {d: sorted(allowed[d]) for d in dimensions}, fallback, _cached_image,
-                             model=getattr(chosen, "model", None))
+                             model=getattr(chosen, "model", None), workers=int(settings.get(WORKERS_ENV) or WORKERS))
 
     return factory
 
@@ -497,7 +516,7 @@ def from_env(environ: Mapping[str, str] | None = None, backend: Any = None) -> L
     allowed = allowed_classes()
     fallback = MajorityPredictor().answer
     return LoraPredictor(chosen, {d: sorted(allowed[d]) for d in names}, fallback, _cached_image,
-                         model=getattr(chosen, "model", None))
+                         model=getattr(chosen, "model", None), workers=int(settings.get(WORKERS_ENV) or WORKERS))
 
 
 def _cached_image(item: Any) -> bytes:
