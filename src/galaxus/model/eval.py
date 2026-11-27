@@ -32,6 +32,7 @@ import pandas as pd
 
 from galaxus.model.baselines import MajorityPredictor
 from galaxus.model.contract import ImageItem, Prediction, Predictor
+from galaxus.model.lora import eval_factory as _lora
 from galaxus.model.results import (
     REPOSITORY,
     RESULTS_FILE,
@@ -118,6 +119,7 @@ PREDICTORS: dict[str, PredictorFactory] = {
     "majority": _majority,
     "zero-shot": _zero_shot(use_context=True),
     "zero-shot-no-context": _zero_shot(use_context=False),
+    "lora": _lora(),  # EXP-0004 (#49): the merged LoRA served by vLLM at $LORA_BASE_URL
 }
 
 

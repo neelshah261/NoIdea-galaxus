@@ -103,3 +103,45 @@ def test_predictor_parses_answers_and_falls_back_on_garbage():
     first, second = predictor.predict([Item("a"), Item("b")])
     assert first["labels"]["subject"] == "beta" and second["labels"]["subject"] == "none"
     assert predictor.fallbacks == 1 and predictor.config()["fallbacks"] == 1
+
+
+def test_the_eval_script_knows_the_lora_predictor_and_it_scores_through_a_fake_endpoint():
+    from galaxus.model import eval as model_eval
+
+    assert "lora" in model_eval.PREDICTORS
+
+    class Data:
+        def dimensions(self):
+            return DIMS
+
+        def allowed_classes(self):
+            return {d: frozenset(CLASSES[d]) for d in DIMS}
+
+        def scored_mask(self, rows, dim):
+            return rows[f"{dim}_source"] == "human"
+
+    rows = pd.DataFrame({"image_id": ["a", "b"], **{d: ["beta", "beta"] for d in DIMS},
+                         **{f"{d}_source": ["human", "human"] for d in DIMS}})
+
+    class Backend:
+        model = "apertus-lora"
+
+        def generate(self, messages, images, max_tokens, temperature):
+            return Generation(json.dumps({d: "alpha" for d in DIMS}))
+
+    predictor = lora.eval_factory(backend=Backend())(rows, Data(), 0)
+    predictor.image_bytes = lambda item: b"jpeg"
+    assert predictor.model == "apertus-lora" and predictor.fallback == {d: "beta" for d in DIMS}
+
+    @dataclass(frozen=True)
+    class Item:
+        image_id: str
+        path: str = ""
+        context: dict | None = None
+
+    assert predictor.predict([Item("x")])[0]["labels"] == {d: "alpha" for d in DIMS}
+
+
+def test_without_an_endpoint_the_lora_predictor_says_what_to_set():
+    with pytest.raises(RuntimeError, match="LORA_BASE_URL"):
+        lora.eval_factory(environ={})(pd.DataFrame(), None, 0)
