@@ -146,12 +146,27 @@ class ChatCompletionsBackend:
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = 0.0,
     ) -> Generation:
+        return self._generate(
+            messages, images, json_schema, max_tokens=max_tokens, temperature=temperature, api_key=self._api_key
+        )
+
+    def _generate(
+        self,
+        messages: Sequence[Message],
+        images: Sequence[ImageInput],
+        json_schema: Mapping[str, Any] | None,
+        *,
+        max_tokens: int,
+        temperature: float,
+        api_key: str | None,
+    ) -> Generation:
+        """One request with ``api_key``; busy servers are retried on that same key."""
         body = json.dumps(
             self.payload(messages, images, json_schema, max_tokens=max_tokens, temperature=temperature)
         ).encode("utf-8")
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
-        if self._api_key:
-            headers["Authorization"] = f"Bearer {self._api_key}"
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
         started = time.perf_counter()
         for attempt in range(self.retries + 1):
             try:
