@@ -80,9 +80,17 @@ python -m galaxus.serve.final_run --predictor <package.module:name> --exp <EXP-i
 
 1. If the method calls Apertus over HTTP (gateway, HF endpoint or a vLLM server), add `--workers N` with the N that
    gave the best img/s in the dry run (`bench --workers N`). Keep the default of 1 for a model loaded in this process.
+   **Over the Hack Apertus gateway: start with `--workers 8`**, and build the predictor's `GatewayBackend` with
+   **`retries=4`** (the load test, #58: with the default of 2, a 429 burst longer than the retries stops the run).
+   The load test proved correctness up to 16 workers on a fake gateway; the real gateway's rate limit is not known
+   until #46 / #59 measure it, so replace 8 with the best value from the timed dry run.
 2. Paste the passphrase when asked (not echoed, never stored or logged).
 3. If anything stops it, run the same command again: the decrypted files are reused and the runner resumes where it
    stopped, without duplicates.
+   **If the gateway answers HTTP 429 (too many requests) and the run stops:** run the same command again with
+   `--workers` halved (8 → 4 → 2). Nothing is lost: finished images are kept, only the rest is sent again. Check the
+   time with `python -m galaxus.serve.preflight --images-per-second <new speed>` after the restart.
+   **If it stops on HTTP 402:** every key in `.env` is out of credits; add another `LLM_API_KEY_n` and run again.
 4. It ends with `valid: <file>` and the exact `kaggle competitions submit ...` command.
 5. A human runs that command, waits for the score, then **selects** that submission on Kaggle.
 6. If Kaggle is down: the fallback in challenge_description.md "Submission file" (the owner sends the validated file).
