@@ -92,18 +92,28 @@ def _check_dimension(dimension: str, allowed: Mapping[str, Iterable[str]]) -> No
         raise KeyError(f"{dimension!r} is not a dimension of the classes source; it has {sorted(allowed)}")
 
 
-def _the_mirrorable_dimension(allowed: Mapping[str, Iterable[str]]) -> str:
+def mirrorable_dimension(allowed: Mapping[str, Iterable[str]] | None = None) -> str:
     """The one dimension whose classes change under a flip, worked out from the names rather than typed.
 
-    Mirroring applies to whichever dimension has left/right classes; :func:`mirrorable_dimensions` finds it. That
-    keeps the dimension's name out of this module (#81) and makes a classes source that has no such dimension an
-    explicit error instead of a silent no-op on a name that happens not to be there.
+    Mirroring applies to whichever dimension has left/right classes; :func:`mirrorable_dimensions` finds them all
+    and this returns the single one, raising when there is none or more than one. That keeps the dimension's name
+    out of this module (#81) and makes a classes source without such a dimension an explicit error instead of a
+    silent no-op on a name that happens not to be there.
+
+    Public because a caller that wants the name and not the list would otherwise have to index
+    ``mirrorable_dimensions()[0]`` blindly or repeat the two checks below. #81 removed
+    ``PERSPECTIVE_DIMENSION`` and left only the plural accessor, which is what `galaxus.serve.results_tables`
+    imported (#85); this is the replacement for that one-value use.
+
+    Raises:
+        ValueError: if no dimension of the classes source can be mirrored, or if more than one can.
     """
-    found = mirrorable_dimensions(allowed)
+    resolved = dict(allowed) if allowed is not None else allowed_classes()
+    found = mirrorable_dimensions(resolved)
     if not found:
         raise ValueError(
             "no dimension of the classes source has left/right classes, so there is nothing to mirror; "
-            f"it has {sorted(allowed)}. Pass dimension= to say which one to use"
+            f"it has {sorted(resolved)}. Pass dimension= to say which one to use"
         )
     if len(found) > 1:
         raise ValueError(f"more than one dimension could be mirrored ({list(found)}); pass dimension= to choose")
@@ -135,7 +145,7 @@ def mirrored_rows(
     resolved = dict(allowed) if allowed is not None else allowed_classes()
     # Resolved lazily, never at import: a caller that passes its own names (every test here does) must not need
     # the contract to be present at all.
-    dimension = dimension if dimension is not None else _the_mirrorable_dimension(resolved)
+    dimension = dimension if dimension is not None else mirrorable_dimension(resolved)
     text_dimension = text_dimension if text_dimension is not None else overlay_dimension()
     _check_dimension(dimension, resolved)
     _check_dimension(text_dimension, resolved)
