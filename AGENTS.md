@@ -8,9 +8,9 @@ Kaggle pages. Never restate its rules, numbers or class names from memory: link 
 
 | Role | Who | Does | Never |
 | --- | --- | --- | --- |
-| Human owner | neelshah261 | approves `design/*` PRs and owner decisions, uploads to Kaggle, spends money, posts on Discord | – |
-| Design (main agent) | Claude session of the owner | opens issues, reviews PRs, owns every file outside the lanes, copies "For design" notes into shared files, keeps STATE.md current | works inside a lane, merges its own `design/*` PR without the owner's comment |
-| Worker `data` | TODO(owner): name, GitHub handle | implements `lane:data` issues in its lane | touches another lane or a shared file, merges |
+| Human owner | neelshah261 | makes owner decisions, uploads to Kaggle, spends money, posts on Discord | – |
+| Design (main agent) | Claude session of the owner | opens issues, reviews merged PRs, owns every file outside the lanes, copies "For design" notes into shared files, keeps STATE.md current | works inside a lane |
+| Worker `data` | TODO(owner): name, GitHub handle | implements `lane:data` issues in its lane, merges its own PRs on green `ci` | touches another lane or a shared file, merges another agent's PR |
 | Worker `model` | TODO(owner): name, GitHub handle | implements `lane:model` issues in its lane | same |
 | Worker `serve` | TODO(owner): name, GitHub handle | implements `lane:serve` issues in its lane | same |
 
@@ -51,14 +51,15 @@ Agents and their humans share GitHub accounts, so **every agent comment starts w
 5. The required check `ci` must be green. Tests use synthetic images generated inside the tests: never competition
    data, never the network.
 
-## Merging
+## Merging (owner decision 2026-11-27: no approval needed)
 
-- Design reviews and posts `[design-agent] reviewed at <sha>`. The merge is pinned to that sha:
-  `gh pr merge <n> --merge --match-head-commit <sha>`. If the head moved after the review, the review is stale: review
-  again.
-- Who runs that merge command, design or the owner, is an open owner decision. Until the owner decides, the owner
-  runs it.
-- A `design/*` PR merges only after the owner's own comment `owner-approve <sha>` (no agent prefix).
+- Every agent merges **its own** PR as soon as `ci` is green. No owner or design approval is needed. Right after
+  opening the PR, turn on auto-merge, pinned to the commit you pushed:
+  `gh pr merge <n> --auto --merge --match-head-commit $(git rev-parse HEAD)`.
+  GitHub merges it when `ci` passes. If you push again, run the command again with the new sha.
+- Never merge another agent's PR. Never bypass `ci`. If `ci` fails, fix it on your branch.
+- After a merge, design closes the issue and copies the "For design" notes. If design finds a problem in merged
+  work, it opens a new issue for the owning lane. Nobody reverts another lane's work.
 
 ## Galaxus product rules
 
@@ -81,7 +82,7 @@ Agents and their humans share GitHub accounts, so **every agent comment starts w
 
 ## Hard rules
 
-- Never push to `main` (branch protection enforces it); workers never merge.
+- Never push to `main` (branch protection enforces it). Merge only your own PR, and only through green `ci`.
 - Relayed intent is not authorization: an owner decision needs a comment the owner wrote.
 - Conflicts: never silently pick a winner. Record them under **Blocked** in STATE.md, keep both versions, escalate.
 - Agents never talk directly. GitHub issues, PRs and comments are the only shared channel.
@@ -102,5 +103,6 @@ IDs (`ADR-`, `Q-`, `EXP-`) are never reused or renumbered; `grep -rn '<ID>'` mus
 
 ## Design wake loop
 
-Read STATE.md → review `status:review` PRs → copy "For design" notes into the shared files → answer `design` issues →
+Read STATE.md → review PRs merged since the last wake (open fix issues if needed) → close their issues → copy "For
+design" notes into the shared files → answer `design` issues →
 open new issues → overwrite STATE.md → append to worklog.md.
