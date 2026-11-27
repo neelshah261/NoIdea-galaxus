@@ -340,3 +340,20 @@ def test_a_dimension_without_a_confidence_is_kept_when_not_ranking(galaxus_data)
     assert sorted(frame["dimension"]) == ["background", "subject"]
     with pytest.raises(KeyError, match="carries no confidence"):
         out_of_fold_frame(path)
+
+
+def test_write_label_errors_itself_refuses_a_path_inside_a_work_tree(tmp_path):
+    """The guard belongs to the writer, not just the command: #51 calls write_label_errors directly."""
+    repository = tmp_path / "checkout"
+    (repository / ".git").mkdir(parents=True)
+    report = pd.DataFrame(columns=list(REPORT_COLUMNS))
+    with pytest.raises(ValueError, match="never enter git"):
+        write_label_errors(report, repository / "label_errors.csv")
+    assert not (repository / "label_errors.csv").exists()
+
+
+def test_write_label_errors_still_writes_the_default_outside_the_repository(galaxus_data):
+    report = pd.DataFrame(columns=list(REPORT_COLUMNS))
+    written = write_label_errors(report)
+    assert written == galaxus_data / "out" / "label_errors.csv"
+    assert written.is_file()

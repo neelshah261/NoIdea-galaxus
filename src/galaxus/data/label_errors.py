@@ -203,7 +203,9 @@ def write_label_errors(
     columns = list(REPORT_COLUMNS)
     if list(report.columns) != columns:
         raise ValueError(f"the report must have exactly the columns {columns}, got {list(report.columns)}")
-    target = Path(path) if path is not None else out_dir() / name
+    # The guard lives here, not only in this module's command: #51 calls this function directly, so a caller
+    # that passes a path of its own must be refused too, or the CSV of labels could land in a work tree.
+    target = _checked_target(path, name)
     target.parent.mkdir(parents=True, exist_ok=True)
     report.to_csv(target, index=False)
     return target
