@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import math
 import threading
@@ -10,6 +11,7 @@ import pytest
 from model_synthetic import DIMENSIONS, FAKE_CLASSES, FakeMetric, fake_data_lane, train_table
 from PIL import Image
 
+from galaxus.data.images import prepared_jpeg
 from galaxus.data.label_errors import out_of_fold_frame
 from galaxus.model import apertus
 from galaxus.model import eval as model_eval
@@ -19,9 +21,15 @@ from galaxus.model.contract import ImageItem
 from galaxus.model.zero_shot import (
     IMAGE_FIRST,
     INSTRUCTION,
+    MACRO_AWARE,
     NO_CONTEXT,
+    OBSERVATION_FIELD,
+    OBSERVE_FIRST,
+    OBSERVE_MAX_TOKENS,
+    PRESETS,
     ZeroShotPredictor,
     answer_schema,
+    cropped_jpeg,
     parse_answer,
     system_prompt,
     value_confidence,
@@ -45,7 +53,9 @@ class FakeBackend:
 
     def generate(self, messages, images=(), json_schema=None, *, max_tokens=256, temperature=0.0):
         with self._lock:
-            self.calls.append({"messages": messages, "images": list(images), "schema": json_schema, "t": temperature})
+            self.calls.append(
+                {"messages": messages, "images": list(images), "schema": json_schema, "t": temperature, "max": max_tokens}
+            )
             answer = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
         if isinstance(answer, Exception):
             raise answer
@@ -158,6 +168,118 @@ def test_the_runner_can_build_the_image_first_predictor_without_arguments(monkey
     monkeypatch.setattr(zero_shot_module, "ZeroShotPredictor", lambda **options: built.update(options) or "built")
     assert zero_shot_module.image_first() == "built"
     assert built == {"image_first": True}
+
+
+# --- #106: the score sprint's prompt and image variants ---------------------------------------------------------
+
+
+def test_the_default_schema_is_unchanged_and_observe_first_puts_the_observation_first():
+    plain = answer_schema(DIMENSIONS, ALLOWED)
+    assert list(plain["properties"]) == plain["required"] == list(DIMENSIONS)
+    observed = answer_schema(DIMENSIONS, ALLOWED, observe_first=True)
+    assert list(observed["properties"]) == observed["required"] == [OBSERVATION_FIELD, *DIMENSIONS]
+    assert observed["additionalProperties"] is False
+    assert observed["properties"][DIMENSIONS[0]] == plain["properties"][DIMENSIONS[0]]
+
+
+def test_each_prompt_line_is_added_once_in_a_fixed_order_and_image_first_alone_is_what_exp_0014_sends():
+    text = system_prompt("Rule one.", DIMENSIONS, image_first=True, macro_aware=True, observe_first=True)
+    assert text.index(IMAGE_FIRST) < text.index(MACRO_AWARE) < text.index(OBSERVE_FIRST) < text.index("Rule one.")
+    assert all(text.count(line) == 1 for line in (IMAGE_FIRST, MACRO_AWARE, OBSERVE_FIRST))
+    instruction = INSTRUCTION.format(dimensions=", ".join(DIMENSIONS))
+    assert system_prompt("Rule one.", DIMENSIONS, image_first=True) == f"{instruction}\n{IMAGE_FIRST}\n\nRule one."
+
+
+def test_observe_first_asks_for_an_observation_with_room_and_still_reads_the_labels(data_dir):
+    backend = FakeBackend(json.dumps({OBSERVATION_FIELD: "A black mouse on white, seen from above.", **GOOD}))
+    observe = predictor(backend, observe_first=True)
+    [prediction] = observe.predict([item(data_dir)])
+    assert prediction.labels == GOOD
+    [call] = backend.calls
+    assert call["schema"] == answer_schema(DIMENSIONS, ALLOWED, observe_first=True)
+    assert call["max"] == OBSERVE_MAX_TOKENS
+    assert OBSERVE_FIRST in call["messages"][0]["content"]
+    assert observe.config()["max_tokens"] == OBSERVE_MAX_TOKENS and observe.config()["defaulted_cells"] == 0
+
+
+def test_no_title_drops_the_title_keeps_the_rest_and_falls_back_to_no_context(data_dir):
+    backend = FakeBackend(json.dumps(GOOD))
+    no_title = predictor(backend, drop_context=("product_title",))
+    no_title.predict([item(data_dir, "img_a", context={"product_title": "Mouse", "brand": "Acme"})])
+    no_title.predict([item(data_dir, "img_b", context={"product_title": "Mouse"})])
+    first, second = (call["messages"][1]["content"] for call in backend.calls)
+    assert "brand: Acme" in first and "Mouse" not in first
+    assert second == NO_CONTEXT
+    assert no_title.config()["drop_context"] == ["product_title"]
+
+
+def _decoded(data: bytes) -> Image.Image:
+    return Image.open(io.BytesIO(data)).convert("RGB")
+
+
+def _red_share(image: Image.Image) -> float:
+    raw = image.tobytes()
+    pixels = list(zip(raw[0::3], raw[1::3], raw[2::3], strict=True))
+    return sum(1 for r, g, b in pixels if r > 180 and g < 90 and b < 90) / len(pixels)
+
+
+def test_crop_cuts_the_white_margins_so_the_product_fills_the_image(tmp_path):
+    path = tmp_path / "small_product.png"
+    image = Image.new("RGB", (1000, 800), (255, 255, 255))
+    image.paste((210, 30, 30), (400, 300, 600, 500))
+    image.save(path)
+    cropped, plain = _decoded(cropped_jpeg(path)), _decoded(prepared_jpeg(path))
+    assert _red_share(plain) < 0.1
+    assert _red_share(cropped) > 0.6
+    assert abs(cropped.width - cropped.height) <= 32
+
+
+@pytest.mark.parametrize(
+    "picture",
+    [
+        Image.new("RGB", (600, 400), (30, 120, 200)),  # a coloured background fills the frame: nothing to crop
+        Image.new("RGB", (600, 400), (255, 255, 255)),  # blank: nothing to crop towards
+        Image.new("RGBA", (300, 200), (255, 0, 0, 0)),  # fully transparent: white once composited
+    ],
+)
+def test_crop_leaves_an_image_without_white_margins_exactly_as_the_data_lane_prepares_it(tmp_path, picture):
+    path = tmp_path / "picture.png"
+    picture.save(path)
+    assert cropped_jpeg(path) == prepared_jpeg(path)
+
+
+def test_the_crop_variant_sends_the_cropped_image(data_dir, monkeypatch):
+    monkeypatch.setattr(zero_shot_module, "cropped_jpeg", lambda path, image_size: b"\xff\xd8\xffcropped")
+    backend = FakeBackend(json.dumps(GOOD))
+    crop = predictor(backend, image="crop")
+    crop.predict([item(data_dir)])
+    assert backend.calls[0]["images"] == [b"\xff\xd8\xffcropped"]
+    assert crop.config()["image"] == "crop"
+
+
+def test_an_unknown_image_mode_is_refused():
+    options = {"defaults": DEFAULTS, "dimensions": DIMENSIONS, "allowed": ALLOWED, "guideline": ""}
+    with pytest.raises(ValueError, match="image must be one of"):
+        ZeroShotPredictor(FakeBackend("{}"), image="sepia", **options)
+
+
+@pytest.mark.parametrize(("name", "options"), sorted(PRESETS.items()))
+def test_every_preset_runs_through_the_eval_script_and_records_its_options(tmp_path, data_dir, monkeypatch, name, options):
+    monkeypatch.setattr(model_eval, "git_state", lambda: ("0" * 40, False))
+    backend = FakeBackend(json.dumps(GOOD))
+    monkeypatch.setattr(apertus, "backend", lambda *args, **kwargs: backend)
+    train = train_table()
+    train["image_file"] = [str(image_file(data_dir, image_id)) for image_id in train["image_id"]]
+    data = fake_data_lane(train, tmp_path / "out", FakeMetric())
+    row = model_eval.run_eval(name, data, results_path=tmp_path / "results" / "metrics.json", exp_id="EXP-0016")
+    config = row["config"]
+    assert row["predictor"] == name
+    assert config["image"] == options.get("image", "plain")
+    assert config["image_size"] == options.get("image_size", 512)
+    assert config["drop_context"] == list(options.get("drop_context", ()))
+    for flag in ("image_first", "macro_aware", "observe_first"):
+        assert config[flag] is options.get(flag, False)
+    assert config["images"] == row["holdout"]["images"] == len(backend.calls)
 
 
 def test_a_bad_answer_is_asked_once_more(data_dir):

@@ -42,6 +42,7 @@ from galaxus.model.results import (
     next_exp_id,
     read_rows,
 )
+from galaxus.model.zero_shot import PRESETS as ZERO_SHOT_PRESETS
 from galaxus.model.zero_shot import ZeroShotPredictor
 
 ID_COLUMN = "image_id"
@@ -101,15 +102,16 @@ def _majority(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
     return MajorityPredictor.fit(rows, data.dimensions(), data.scored_mask)
 
 
-def _zero_shot(use_context: bool, image_first: bool = False) -> PredictorFactory:
+def _zero_shot(**options: Any) -> PredictorFactory:
+    """The zero-shot predictor with ``options`` (context, prompt lines, image mode; see ``zero_shot.PRESETS``)."""
+
     def factory(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
         # shortcut: always the gateway (api); add a --backend flag when a vLLM run needs this script.
         return ZeroShotPredictor(
-            use_context=use_context,
-            image_first=image_first,
             defaults=MajorityPredictor.fit(rows, data.dimensions(), data.scored_mask).answer,
             dimensions=data.dimensions(),
             allowed=data.allowed_classes(),
+            **options,
         )
 
     return factory
@@ -144,6 +146,8 @@ PREDICTORS: dict[str, PredictorFactory] = {
     "zero-shot": _zero_shot(use_context=True),
     "zero-shot-no-context": _zero_shot(use_context=False),
     "zero-shot-image-first": _zero_shot(use_context=True, image_first=True),  # EXP-0014 (#106)
+    # The score sprint's prompt and image variants (#106), one holdout run each; ids reserved on #106.
+    **{name: _zero_shot(**options) for name, options in ZERO_SHOT_PRESETS.items()},
     "lora": _lora(),  # EXP-0004 (#49): the merged LoRA served by vLLM at $LORA_BASE_URL
     "mirror-tta:zero-shot": _mirror_tta("zero-shot"),  # EXP-0006 (#48)
 }

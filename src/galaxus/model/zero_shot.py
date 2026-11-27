@@ -3,6 +3,7 @@
     uv run --env-file .env python -m galaxus.model.eval zero-shot --exp-id EXP-0002
     uv run --env-file .env python -m galaxus.model.eval zero-shot-no-context
     uv run --env-file .env python -m galaxus.model.eval zero-shot-image-first --exp-id EXP-0014
+    uv run --env-file .env python -m galaxus.model.eval zero-shot-crop --exp-id EXP-0016    # and the rest of PRESETS
 
 - The image is the data lane's prepared JPEG (white compositing, about 512 x 512, through the image cache).
 - The system prompt is ``labeling_guideline.md`` read from ``$GALAXUS_DATA`` at runtime, never committed (AGENTS.md
@@ -55,6 +56,39 @@ IMAGE_FIRST = (
     "dimension from what you see in the image, use the context only where the image alone cannot decide, and when "
     "the image and the context disagree, trust the image."
 )
+#: EXP-0019 (#106): the metric is macro F1, so a model that falls back on the most common class loses the rare ones.
+MACRO_AWARE = (
+    "Every class counts equally in the evaluation, the rare ones as much as the common ones. Do not fall back on the "
+    "most common class when the image shows a rarer one."
+)
+#: EXP-0021 (#106): describe, then label. The answer gets an ``observation`` field first, so the labels are chosen
+#: after one sentence about the image. It costs completion tokens, so it is slower; ``OBSERVE_MAX_TOKENS`` leaves room.
+OBSERVATION_FIELD = "observation"
+OBSERVE_FIRST = (
+    f'Before the labels, write one short sentence in the field "{OBSERVATION_FIELD}" about what the image shows: the '
+    "object, what surrounds it, the viewing angle and any visible text."
+)
+OBSERVE_MAX_TOKENS = 400
+#: Image processing (#106, EXP-0016): white margins are cropped away so the product fills the image. A pixel is
+#: content when one of its channels differs from white by more than ``CROP_WHITE_THRESHOLD`` (JPEG noise on white
+#: stays white); the box around the content grows by ``CROP_MARGIN`` of its size on each side. An image whose box
+#: covers more than ``CROP_MAX_FRACTION`` of it (a coloured background, a scene) or less than ``CROP_MIN_FRACTION``
+#: (a speck on a blank image) is left as it is.
+CROP_WHITE_THRESHOLD = 10
+CROP_MARGIN = 0.06
+CROP_MAX_FRACTION = 0.9
+CROP_MIN_FRACTION = 0.01
+IMAGE_MODES = ("plain", "crop")
+#: The score sprint's variants (#106): one holdout run each, ``python -m galaxus.model.eval <name> --exp-id <id>``.
+#: The ids are reserved on #106; a variant that wins a dimension becomes an ensemble member there.
+PRESETS: dict[str, dict[str, Any]] = {
+    "zero-shot-crop": {"image": "crop"},  # EXP-0016: white margins cropped away
+    "zero-shot-768": {"image_size": 768},  # EXP-0017: more pixels, for small text
+    "zero-shot-no-title": {"drop_context": ("product_title",)},  # EXP-0018: the context without the title
+    "zero-shot-macro-aware": {"macro_aware": True},  # EXP-0019: rare classes count as much
+    "zero-shot-observe-first": {"observe_first": True},  # EXP-0021: one sentence, then the labels
+    "zero-shot-image-first-crop": {"image_first": True, "image": "crop"},  # EXP-0022: the two together
+}
 
 
 def read_guideline() -> str:
@@ -64,25 +98,78 @@ def read_guideline() -> str:
     return data_file(GUIDELINE_FILE).read_text(encoding="utf-8")
 
 
-def answer_schema(dimensions: Sequence[str], allowed: Mapping[str, frozenset[str]]) -> dict[str, Any]:
-    """A JSON schema with one enum of allowed classes per dimension, every dimension required."""
-    return {
-        "type": "object",
-        "properties": {dimension: {"type": "string", "enum": sorted(allowed[dimension])} for dimension in dimensions},
-        "required": list(dimensions),
-        "additionalProperties": False,
+def answer_schema(
+    dimensions: Sequence[str], allowed: Mapping[str, frozenset[str]], observe_first: bool = False
+) -> dict[str, Any]:
+    """A JSON schema with one enum of allowed classes per dimension, every dimension required.
+
+    With ``observe_first`` (EXP-0021) a free-text ``observation`` field comes first; without it the schema is exactly
+    what EXP-0002 sent.
+    """
+    properties: dict[str, Any] = {
+        dimension: {"type": "string", "enum": sorted(allowed[dimension])} for dimension in dimensions
     }
+    required = list(dimensions)
+    if observe_first:
+        properties = {OBSERVATION_FIELD: {"type": "string"}, **properties}
+        required = [OBSERVATION_FIELD, *required]
+    return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
 
 
-def system_prompt(guideline: str, dimensions: Sequence[str], image_first: bool = False) -> str:
-    """The instruction, the image-first line when asked for (EXP-0014), then the guideline.
+def system_prompt(
+    guideline: str,
+    dimensions: Sequence[str],
+    image_first: bool = False,
+    macro_aware: bool = False,
+    observe_first: bool = False,
+) -> str:
+    """The instruction, the extra lines the variant asks for (#106), then the guideline.
 
-    Without ``image_first`` the text is exactly what EXP-0002 and EXP-0009 sent, so their prompt hashes still hold.
+    With no extra line the text is exactly what EXP-0002 and EXP-0009 sent, so their prompt hashes still hold.
     """
     instruction = INSTRUCTION.format(dimensions=", ".join(dimensions))
-    if image_first:
-        instruction += "\n" + IMAGE_FIRST
+    for wanted, line in ((image_first, IMAGE_FIRST), (macro_aware, MACRO_AWARE), (observe_first, OBSERVE_FIRST)):
+        if wanted:
+            instruction += "\n" + line
     return instruction + "\n\n" + guideline.strip()
+
+
+def content_box(rgb: Any, threshold: int = CROP_WHITE_THRESHOLD) -> tuple[int, int, int, int] | None:
+    """The box around every pixel with a channel more than ``threshold`` away from white, or None if there is none."""
+    from PIL import Image as PillowImage
+    from PIL import ImageChops
+
+    difference = ImageChops.difference(rgb, PillowImage.new("RGB", rgb.size, (255, 255, 255)))
+    red, green, blue = difference.split()
+    strongest = ImageChops.lighter(ImageChops.lighter(red, green), blue)
+    return strongest.point(lambda value: 255 if value > threshold else 0).getbbox()
+
+
+def cropped_jpeg(image_file: Any, image_size: int = IMAGE_SIZE) -> bytes:
+    """EXP-0016 (#106): the data lane's preparation, with the white margins cropped away before the resize.
+
+    The crop is cut from the original, so the product gains real pixels instead of enlarged ones. An image that is
+    not cropped (see ``CROP_MAX_FRACTION`` and ``CROP_MIN_FRACTION``) comes out byte for byte as ``prepared_jpeg``.
+    """
+    import io
+
+    from PIL import Image as PillowImage
+
+    from galaxus.data.images import JPEG_QUALITY, PATCH_SIZE, native_aspect_image, opaque_rgb_on_white
+
+    with PillowImage.open(image_file) as image:
+        rgb = opaque_rgb_on_white(image)
+    box = content_box(rgb)
+    if box is not None:
+        left, top, right, bottom = box
+        pad_x, pad_y = round((right - left) * CROP_MARGIN), round((bottom - top) * CROP_MARGIN)
+        crop = (max(0, left - pad_x), max(0, top - pad_y), min(rgb.width, right + pad_x), min(rgb.height, bottom + pad_y))
+        share = (crop[2] - crop[0]) * (crop[3] - crop[1]) / (rgb.width * rgb.height)
+        if CROP_MIN_FRACTION <= share < CROP_MAX_FRACTION:
+            rgb = rgb.crop(crop)
+    buffer = io.BytesIO()
+    native_aspect_image(rgb, image_size, PATCH_SIZE).save(buffer, format="JPEG", quality=JPEG_QUALITY)
+    return buffer.getvalue()
 
 
 def user_prompt(context: Mapping[str, str] | None) -> str:
@@ -155,6 +242,10 @@ class ZeroShotPredictor:
         *,
         use_context: bool = True,
         image_first: bool = False,
+        macro_aware: bool = False,
+        observe_first: bool = False,
+        image: str = "plain",
+        drop_context: Sequence[str] = (),
         defaults: Mapping[str, str] | None = None,
         dimensions: Sequence[str] | None = None,
         allowed: Mapping[str, frozenset[str]] | None = None,
@@ -178,8 +269,15 @@ class ZeroShotPredictor:
             defaults = fit_from_data_lane()
         self.backend = backend
         self.model = backend.model
+        if image not in IMAGE_MODES:
+            raise ValueError(f"image must be one of {IMAGE_MODES}, got {image!r}")
         self.use_context = use_context
         self.image_first = image_first
+        self.macro_aware = macro_aware
+        self.observe_first = observe_first
+        self.image = image
+        self.drop_context = tuple(drop_context)
+        self.max_tokens = OBSERVE_MAX_TOKENS if observe_first else MAX_TOKENS
         self.dimensions = tuple(dimensions)
         self.allowed = dict(allowed)
         self.defaults = dict(defaults)
@@ -188,9 +286,13 @@ class ZeroShotPredictor:
             raise ValueError(f"the defaults must be allowed classes, not for {bad}")
         self.image_size = image_size
         self.workers = workers
-        self.schema = answer_schema(self.dimensions, self.allowed)
+        self.schema = answer_schema(self.dimensions, self.allowed, observe_first=observe_first)
         self.system = system_prompt(
-            guideline if guideline is not None else read_guideline(), self.dimensions, image_first=image_first
+            guideline if guideline is not None else read_guideline(),
+            self.dimensions,
+            image_first=image_first,
+            macro_aware=macro_aware,
+            observe_first=observe_first,
         )
         self._lock = threading.Lock()
         self.stats = {
@@ -203,13 +305,23 @@ class ZeroShotPredictor:
         }
 
     def _image(self, item: ImageItem) -> bytes:
+        if self.image == "crop":
+            return cropped_jpeg(item.path, image_size=self.image_size)
         from galaxus.data.images import cached_jpeg
 
         return cached_jpeg(item.image_id, item.path, image_size=self.image_size)
 
+    def _context(self, item: ImageItem) -> Mapping[str, str] | None:
+        """The item's context, without the fields this variant drops (EXP-0018); None when nothing is left."""
+        if not self.use_context or not item.context:
+            return None
+        return {name: value for name, value in item.context.items() if name not in self.drop_context} or None
+
     def _ask(self, messages: list[dict[str, str]], image: bytes) -> dict[str, tuple[str, float | None]]:
         """``{dimension: (class, confidence or None)}`` for the dimensions the answer names validly."""
-        generation = self.backend.generate(messages, [image], self.schema, max_tokens=MAX_TOKENS, temperature=0.0)
+        generation = self.backend.generate(
+            messages, [image], self.schema, max_tokens=self.max_tokens, temperature=0.0
+        )
         with self._lock:
             self.stats["prompt_tokens"] += generation.prompt_tokens or 0
             self.stats["completion_tokens"] += generation.completion_tokens or 0
@@ -219,8 +331,10 @@ class ZeroShotPredictor:
 
     def _predict_one(self, item: ImageItem) -> Prediction:
         image = self._image(item)
-        context = item.context if self.use_context else None
-        messages = [{"role": "system", "content": self.system}, {"role": "user", "content": user_prompt(context)}]
+        messages = [
+            {"role": "system", "content": self.system},
+            {"role": "user", "content": user_prompt(self._context(item))},
+        ]
         answers = self._ask(messages, image)
         retried = len(answers) < len(self.dimensions)
         if retried:
@@ -259,8 +373,12 @@ class ZeroShotPredictor:
             "image_size": self.image_size,
             "context": self.use_context,
             "image_first": self.image_first,
+            "macro_aware": self.macro_aware,
+            "observe_first": self.observe_first,
+            "image": self.image,
+            "drop_context": list(self.drop_context),
             "temperature": 0.0,
-            "max_tokens": MAX_TOKENS,
+            "max_tokens": self.max_tokens,
             "workers": self.workers,
             "prompt_sha256": self.prompt_sha256(),
             **stats,
