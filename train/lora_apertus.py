@@ -56,6 +56,8 @@ from galaxus.model.lora import (
 #: Recipe (reference notebook, deep-dive slide 18): LoRA r32/a32 on all linear layers, lr 2e-4, cosine, 5% warmup,
 #: effective batch 16, 2-4 epochs (their holdout loss was flat after about 2).
 RANK, ALPHA, LEARNING_RATE, WARMUP, WEIGHT_DECAY, EPOCHS, SEED = 32, 32, 2e-4, 0.05, 0.01, 2, 3407
+#: WARMUP is a share of the total steps: transformers 5 dropped ``warmup_ratio`` and reads a float ``warmup_steps`` in
+#: [0, 1) as that ratio (second GPU run, 27 Nov: "unexpected keyword argument 'warmup_ratio'").
 #: One image per step: images of other aspect ratios give pixel tensors of other shapes; 1 x 16 = the recipe's 16.
 BATCH, ACCUMULATION = 1, 16
 #: Checkpoint interval (#76, Neel): 1 epoch is 851 steps, so a save about every 20-30 min on one L40S.
@@ -250,7 +252,7 @@ def train(arguments) -> int:
         args=TrainingArguments(
             output_dir=str(out), per_device_train_batch_size=BATCH, gradient_accumulation_steps=ACCUMULATION,
             num_train_epochs=arguments.epochs, max_steps=arguments.max_steps or -1, learning_rate=arguments.lr,
-            lr_scheduler_type="cosine", warmup_ratio=WARMUP, weight_decay=WEIGHT_DECAY, bf16=torch.cuda.is_available(),
+            lr_scheduler_type="cosine", warmup_steps=WARMUP, weight_decay=WEIGHT_DECAY, bf16=torch.cuda.is_available(),
             logging_steps=10, save_steps=arguments.save_steps, save_total_limit=2, seed=SEED, report_to="none",
             remove_unused_columns=False, dataloader_num_workers=4,
             optim="adamw_bnb_8bit" if _has("bitsandbytes") else "adamw_torch",
