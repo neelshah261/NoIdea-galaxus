@@ -85,9 +85,13 @@ def test_parallel_is_faster_over_a_slow_backend(tmp_path):
     runner.run(SlowPredictor(delay=0.1), items, "S", "dev", batch_size=2, root=tmp_path, log=None)
     sequential = time.perf_counter() - started
     started = time.perf_counter()
-    runner.run(SlowPredictor(delay=0.1), items, "P", "dev", batch_size=2, root=tmp_path, log=None, workers=8)
+    predictor = SlowPredictor(delay=0.1)
+    runner.run(predictor, items, "P", "dev", batch_size=2, root=tmp_path, log=None, workers=8)
     parallel = time.perf_counter() - started
-    assert parallel < sequential / 2
+    # The overlap is the proof; the wall-clock margin stays loose, since a busy ci runner once measured 1.95x
+    # against an old 2x bound (PR #102) while the batches did overlap.
+    assert predictor.max_active > 1
+    assert parallel < sequential * 0.8
 
 
 def test_bench_with_workers_times_every_batch():
