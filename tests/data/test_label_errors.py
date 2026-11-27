@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping
+from dataclasses import dataclass
+
 import pandas as pd
 import pytest
 
 from galaxus.data.label_errors import (
     PREDICTION_COLUMNS,
+    PREDICTIONS_FILE,
     REPORT_COLUMNS,
     find_label_errors,
     out_of_fold_frame,
@@ -132,3 +137,82 @@ def test_the_report_is_never_written_into_the_repository(tmp_path, train_table):
     report = find_label_errors(predictions(("img_1", "subject", "beta", 0.99)), train_table, dimension_names=DIMENSION)
     target = tmp_path / "label_errors.csv"
     assert write_label_errors(report, path=target) == target
+
+
+# The format design settled on: PLAN.md "Lanes and contracts", written by galaxus.model.eval.write_predictions.
+
+
+def record(image_id: str, label: str, confidence: float) -> dict:
+    return {"image_id": image_id, "labels": {"subject": label}, "confidence": {"subject": confidence}}
+
+
+def write_jsonl(path, records, trailing_blank_line: bool = False) -> None:
+    """One JSON object per line, the way ``galaxus.model.eval.write_predictions`` writes it."""
+    with path.open("w", encoding="utf-8") as handle:
+        for item in records:
+            print(json.dumps(item), file=handle)
+        if trailing_blank_line:
+            print(file=handle)
+
+
+def test_prediction_records_from_the_model_lane_are_accepted(train_table):
+    report = find_label_errors([record("img_1", "beta", 0.99)], train_table, dimension_names=DIMENSION)
+    assert report.to_dict(orient="records") == [
+        {"image_id": "img_1", "dimension": "subject", "label": "alpha", "suggested_label": "beta"}
+    ]
+
+
+def test_prediction_objects_are_accepted_not_only_mappings(train_table):
+    """``Prediction`` is a frozen dataclass in galaxus.types, so attributes must work as well as keys."""
+
+    @dataclass(frozen=True)
+    class Prediction:
+        image_id: str
+        labels: Mapping[str, str]
+        confidence: Mapping[str, float] | None = None
+
+    predicted = [Prediction(image_id="img_1", labels={"subject": "beta"}, confidence={"subject": 0.99})]
+    report = find_label_errors(predicted, train_table, dimension_names=DIMENSION)
+    assert report["suggested_label"].tolist() == ["beta"]
+
+
+def test_the_jsonl_file_the_model_lane_writes_is_read(tmp_path, train_table):
+    target = tmp_path / PREDICTIONS_FILE
+    write_jsonl(target, [record("img_1", "beta", 0.99), record("img_5", "beta", 0.95)])
+    report = find_label_errors(target, train_table, dimension_names=DIMENSION)
+    assert report["image_id"].tolist() == ["img_1", "img_5"]
+
+
+def test_the_directory_holding_the_jsonl_file_is_accepted(tmp_path, train_table):
+    """The model lane writes it under ``out/predictions/<EXP id>/``, so the run directory is the natural handle."""
+    write_jsonl(tmp_path / PREDICTIONS_FILE, [record("img_1", "beta", 0.99)])
+    assert find_label_errors(tmp_path, train_table, dimension_names=DIMENSION).shape[0] == 1
+
+
+def test_blank_lines_in_the_jsonl_file_are_skipped(tmp_path):
+    target = tmp_path / PREDICTIONS_FILE
+    write_jsonl(target, [record("img_1", "beta", 0.99)], trailing_blank_line=True)
+    assert out_of_fold_frame(target).shape[0] == 1
+
+
+def test_a_missing_jsonl_file_says_what_it_looked_for(tmp_path):
+    with pytest.raises(FileNotFoundError, match=PREDICTIONS_FILE):
+        out_of_fold_frame(tmp_path)
+
+
+def test_a_prediction_without_confidences_is_refused():
+    """``Prediction.confidence`` is optional in the contract, but this report ranks by it (issue #7)."""
+    with pytest.raises(ValueError, match="no confidence"):
+        out_of_fold_frame([{"image_id": "img_1", "labels": {"subject": "beta"}, "confidence": None}])
+
+
+def test_a_dimension_without_a_confidence_is_refused():
+    with pytest.raises(KeyError, match="background"):
+        out_of_fold_frame([{"image_id": "img_1", "labels": {"background": "white"}, "confidence": {"subject": 0.9}}])
+
+
+def test_records_and_the_long_table_agree():
+    """The old hand-written form and the contract form must produce the same table."""
+    from_records = out_of_fold_frame([record("img_1", "beta", 0.99)])
+    from_table = out_of_fold_frame(predictions(("img_1", "subject", "beta", 0.99)))
+    pd.testing.assert_frame_equal(from_records, from_table)

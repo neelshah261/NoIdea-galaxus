@@ -12,6 +12,9 @@ fixed seed-0 split and must not be re-rolled (AGENTS.md "Galaxus product rules" 
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
+import numpy as np
 import pandas as pd
 
 from galaxus.data.classes import ID_COLUMN, dimensions
@@ -20,6 +23,10 @@ PRODUCT_COLUMN = "product_id"
 #: Fraction of products held out, and the seed, both fixed by the challenge description.
 HOLDOUT_FRAC = 0.2
 HOLDOUT_SEED = 0
+
+#: Cross-validation on train minus the holdout (BASE_ARCHITECTURE.md B1).
+FOLD_COUNT = 5
+FOLD_SEED = 0
 
 _TRUE = frozenset({"true", "t", "yes", "y", "1"})
 _FALSE = frozenset({"false", "f", "no", "n", "0", ""})
@@ -59,6 +66,52 @@ def split_holdout(
         raise KeyError(f"{PRODUCT_COLUMN} is not a column of this table: the split must be by product, not by image")
     held_out = train[PRODUCT_COLUMN].isin(holdout_product_ids(train, frac, random_state))
     return train[~held_out], train[held_out]
+
+
+def product_folds(frame: pd.DataFrame, n_folds: int = FOLD_COUNT, random_state: int = FOLD_SEED) -> pd.Series:
+    """A fold number per row, grouped so that one product's images never straddle two folds.
+
+    BASE_ARCHITECTURE.md B1 asks for these "on the rest of train", so pass ``split_holdout(train)[0]``:
+    the fixed holdout stays out of cross-validation, or a model tuned on these folds would be tuned on
+    the holdout it is later scored against.
+
+    Folds are balanced by image count rather than by product count, because products carry very
+    different numbers of images. Products are permuted with ``random_state``, then taken largest
+    first and each put in the fold holding the fewest images, which is deterministic for a given
+    seed and set of products.
+    """
+    if PRODUCT_COLUMN not in frame.columns:
+        raise KeyError(f"{PRODUCT_COLUMN} is not a column of this table: folds must be grouped by product")
+    if n_folds < 2:
+        raise ValueError(f"n_folds must be at least 2 to cross-validate, got {n_folds}")
+    sizes = frame[PRODUCT_COLUMN].value_counts()
+    if n_folds > len(sizes):
+        raise ValueError(f"{n_folds} folds asked for, but only {len(sizes)} product(s) to spread over them")
+
+    permuted = np.random.default_rng(random_state).permutation(sizes.index.to_numpy())
+    sizes = sizes.reindex(permuted).sort_values(ascending=False, kind="stable")
+
+    images_per_fold = [0] * n_folds
+    fold_of_product: dict[object, int] = {}
+    for product, size in sizes.items():
+        fold = min(range(n_folds), key=lambda index: (images_per_fold[index], index))
+        fold_of_product[product] = fold
+        images_per_fold[fold] += int(size)
+    return frame[PRODUCT_COLUMN].map(fold_of_product).astype(int)
+
+
+def iter_product_folds(
+    frame: pd.DataFrame, n_folds: int = FOLD_COUNT, random_state: int = FOLD_SEED
+) -> Iterator[tuple[pd.DataFrame, pd.DataFrame]]:
+    """``(fit, validate)`` once per fold: ``validate`` is that fold, ``fit`` is every other fold.
+
+    Predicting each ``validate`` part with a model fitted on its ``fit`` part gives one out-of-fold
+    prediction per row, which is what the label-error finder and the feature heads need.
+    """
+    folds = product_folds(frame, n_folds, random_state)
+    for index in range(n_folds):
+        held = folds == index
+        yield frame[~held], frame[held]
 
 
 def scored_mask(holdout: pd.DataFrame, dimension: str) -> pd.Series:

@@ -11,16 +11,26 @@ message anyone on Discord (AGENTS.md "Galaxus product rules" 7).
 Only disagreements with a **human** label are reported. A ``model`` prelabel is not a label error: about a fifth of
 the train cells are unchecked prelabels (FAQ.md, "Why do some train labels have the source ``model``?").
 
-TODO(model): the prediction format is the model lane's to define; agreed shape is being settled on issue #7. Until
-then :func:`out_of_fold_frame` accepts the long table below and the nested mapping, and nothing else:
+The out-of-fold format is design's, not this lane's: PLAN.md "Lanes and contracts" (branch ``design/3-plan``) and
+``contracts/prediction.md`` once B0 (#11) lands define ``Prediction{image_id, labels: {dimension: class},
+confidence: {dimension: float} | None}``. The model lane writes exactly those records, one JSON object per line, to
+``$GALAXUS_DATA/out/predictions/<EXP id>/holdout.jsonl`` (``galaxus.model.eval.write_predictions``).
 
-    image_id, dimension, prediction, confidence
+:func:`out_of_fold_frame` therefore reads, in this order of preference:
+
+1. a path to that jsonl file, or to the directory holding it;
+2. ``Prediction`` records, as mappings or as objects with ``image_id`` / ``labels`` / ``confidence``;
+3. a long table with the columns ``image_id, dimension, prediction, confidence``;
+4. ``{image_id: {dimension: (class, confidence)}}``.
+
+Forms 3 and 4 predate the contract and are kept because they are the convenient ones to write by hand in a test.
 """
 
 from __future__ import annotations
 
+import json
 import os
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 import pandas as pd
@@ -35,21 +45,57 @@ DEFAULT_THRESHOLD = 0.9
 
 PREDICTION_COLUMNS = (ID_COLUMN, "dimension", "prediction", "confidence")
 
-OutOfFold = pd.DataFrame | Mapping[str, Mapping[str, object]]
+#: The file the model lane's eval writes its holdout answers to, one ``Prediction`` record per line.
+PREDICTIONS_FILE = "holdout.jsonl"
+
+OutOfFold = pd.DataFrame | Mapping[str, Mapping[str, object]] | Iterable[object] | str | os.PathLike[str]
+
+
+def _records_from_jsonl(path: str | os.PathLike[str]) -> list[object]:
+    """The model lane's ``holdout.jsonl``, or the directory holding it. It lives outside the repository."""
+    target = Path(path)
+    if target.is_dir():
+        target = target / PREDICTIONS_FILE
+    if not target.is_file():
+        raise FileNotFoundError(f"no out-of-fold predictions at {target}: the model lane writes {PREDICTIONS_FILE}")
+    with target.open(encoding="utf-8") as handle:
+        return [json.loads(line) for line in handle if line.strip()]
+
+
+def _rows_from_records(records: Iterable[object]) -> list[tuple[str, str, str, object]]:
+    """Rows from ``Prediction`` records, mappings or objects alike."""
+    rows: list[tuple[str, str, str, object]] = []
+    for record in records:
+        if isinstance(record, Mapping):
+            image_id, labels, confidence = record["image_id"], record["labels"], record.get("confidence")
+        else:
+            image_id, labels = record.image_id, record.labels
+            confidence = getattr(record, "confidence", None)
+        if confidence is None:
+            raise ValueError(
+                f"the prediction for {image_id!r} has no confidence, so it cannot be ranked: the finder reports "
+                "high-confidence disagreements only (issue #7). Fill Prediction.confidence in the eval run."
+            )
+        for dimension, prediction in (labels or {}).items():
+            if dimension not in confidence:
+                raise KeyError(f"{image_id!r} predicts {dimension!r} but carries no confidence for that dimension")
+            rows.append((str(image_id), str(dimension), str(prediction), confidence[dimension]))
+    return rows
 
 
 def out_of_fold_frame(predictions: OutOfFold) -> pd.DataFrame:
     """Out-of-fold predictions as a long table with the columns in :data:`PREDICTION_COLUMNS`.
 
-    Accepts that table directly, or ``{image_id: {dimension: (class, confidence)}}`` where the value may also be a
-    mapping with the keys ``prediction`` and ``confidence``.
+    Accepts any of the four forms listed in the module docstring.
     """
+    if isinstance(predictions, (str, os.PathLike)):
+        predictions = _records_from_jsonl(predictions)
     if isinstance(predictions, pd.DataFrame):
         missing = [column for column in PREDICTION_COLUMNS if column not in predictions.columns]
         if missing:
             raise KeyError(f"the out-of-fold table is missing {missing}; expected columns {list(PREDICTION_COLUMNS)}")
         frame = predictions[list(PREDICTION_COLUMNS)].copy()
-    else:
+    elif isinstance(predictions, Mapping):
         rows = []
         for image_id, per_dimension in predictions.items():
             for dimension, value in (per_dimension or {}).items():
@@ -59,6 +105,8 @@ def out_of_fold_frame(predictions: OutOfFold) -> pd.DataFrame:
                     prediction, confidence = value
                 rows.append((str(image_id), str(dimension), str(prediction), confidence))
         frame = pd.DataFrame(rows, columns=list(PREDICTION_COLUMNS))
+    else:
+        frame = pd.DataFrame(_rows_from_records(predictions), columns=list(PREDICTION_COLUMNS))
     frame[ID_COLUMN] = frame[ID_COLUMN].astype(str)
     frame["dimension"] = frame["dimension"].astype(str)
     frame["prediction"] = frame["prediction"].astype(str)
