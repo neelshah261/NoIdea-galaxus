@@ -20,7 +20,7 @@ if TYPE_CHECKING:  # pragma: no cover - for type checkers and editors only
     from galaxus.data.load import read_dev, read_final, read_part, read_sample_submission, read_train
     from galaxus.data.metric import evaluate, load_metric, score
     from galaxus.data.paths import GALAXUS_DATA_ENV, MissingDataDir, data_dir, data_file, out_dir
-    from galaxus.data.split import scored_mask, solution_frame, split_holdout
+    from galaxus.data.split import iter_product_folds, product_folds, scored_mask, solution_frame, split_holdout
     from galaxus.data.submission import write_submission
     from galaxus.data.validate import SubmissionInvalid, validate_submission
 
@@ -35,11 +35,13 @@ _EXPORTS = {
     "dimensions": "classes",
     "evaluate": "metric",
     "find_label_errors": "label_errors",
+    "iter_product_folds": "split",
     "load_metric": "metric",
     "opaque_rgb_on_white": "images",
     "out_dir": "paths",
     "prepare_image": "images",
     "prepared_jpeg": "images",
+    "product_folds": "split",
     "read_dev": "load",
     "read_final": "load",
     "read_part": "load",
@@ -68,11 +70,13 @@ __all__ = [
     "dimensions",
     "evaluate",
     "find_label_errors",
+    "iter_product_folds",
     "load_metric",
     "opaque_rgb_on_white",
     "out_dir",
     "prepare_image",
     "prepared_jpeg",
+    "product_folds",
     "read_dev",
     "read_final",
     "read_part",
