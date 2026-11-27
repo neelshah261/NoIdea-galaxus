@@ -16,6 +16,20 @@ jobs:
         with:
           fetch-depth: 0
 
+      # AGENTS.md product rule 3: no key, token, credential file or passphrase enters git. A pull request is scanned on
+      # the lines and files it adds, a push to main on every tracked file. Hits print the place, never the value.
+      - name: Secret scan
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "pull_request" ]; then
+            python3 .github/secret_scan.py --diff "origin/$BASE_REF...HEAD"
+          else
+            python3 .github/secret_scan.py --tree
+          fi
+
       # Enforces the lane table and the data rules of AGENTS.md. Change both in one design/* PR.
       - name: Lane and data-leak check
         if: github.event_name == 'pull_request'
