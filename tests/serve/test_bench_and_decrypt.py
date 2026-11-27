@@ -33,14 +33,50 @@ def test_bench_needs_something_to_time(items):
         bench.bench(StubPredictor(), items, batch_size=3, warmup_batches=1)
 
 
-def test_find_final_csv_wants_exactly_one(tmp_path):
-    (tmp_path / "a").mkdir()
-    (tmp_path / "a" / "final.csv").write_text("image_id\n")
-    assert final_run.find_final_csv(tmp_path).name == "final.csv"
-    (tmp_path / "b").mkdir()
-    (tmp_path / "b" / "final.csv").write_text("image_id\n")
-    with pytest.raises(FileNotFoundError):
-        final_run.find_final_csv(tmp_path)
+def _final_csv(folder, ids=("img_f1", "img_f2")):
+    folder.mkdir(parents=True, exist_ok=True)
+    rows = "".join(f"{image_id},images/{image_id}.jpg\n" for image_id in ids)
+    (folder / "final.csv").write_text("image_id,image_path\n" + rows, encoding="utf-8")
+
+
+def _never_asked(prompt):
+    raise AssertionError("the passphrase must not be asked for here")
+
+
+def test_no_final_csv_decrypts_once_then_reads_it(galaxus_data, monkeypatch):
+    (galaxus_data / "final_encrypted.bin").write_bytes(b"x")
+    decrypted = []
+
+    def fake_decrypt(archive, destination, passphrase):
+        decrypted.append(passphrase)
+        _final_csv(destination / "hackapertus-final")
+
+    monkeypatch.setattr(final_run, "decrypt", fake_decrypt)
+    items = final_run.final_items(lambda prompt: " phrase ")
+    assert decrypted == ["phrase"] and [item.image_id for item in items] == ["img_f1", "img_f2"]
+
+
+def test_one_final_csv_is_reused_without_a_passphrase(galaxus_data, monkeypatch):
+    _final_csv(galaxus_data / "final" / "deep" / "er")
+    monkeypatch.setattr(final_run, "decrypt", lambda *a: pytest.fail("decrypted again"))
+    assert len(final_run.final_items(_never_asked)) == 2
+
+
+def test_two_final_csv_stop_naming_both_without_prompting_or_decrypting(galaxus_data, monkeypatch):
+    _final_csv(galaxus_data / "final" / "a")
+    _final_csv(galaxus_data / "final" / "b")
+    monkeypatch.setattr(final_run, "decrypt", lambda *a: pytest.fail("decrypted again"))
+    with pytest.raises(final_run.FinalFilesError, match="found 2") as stopped:
+        final_run.final_items(_never_asked)
+    assert "a" in str(stopped.value) and "b" in str(stopped.value) and "Nothing was decrypted" in str(stopped.value)
+
+
+def test_the_saturday_command_stops_cleanly_on_two_final_csv(galaxus_data, capsys):
+    _final_csv(galaxus_data / "final" / "a")
+    _final_csv(galaxus_data / "final" / "b")
+    code = final_run.main(["--predictor", "serve_helpers:StubPredictor", "--exp", "EXP-0123"],
+                          passphrase_prompt=_never_asked)
+    assert code == 1 and "[final] stopped:" in capsys.readouterr().err
 
 
 def test_decrypt_failure_never_shows_the_passphrase(tmp_path, monkeypatch):
