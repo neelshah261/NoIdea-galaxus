@@ -144,3 +144,22 @@ def test_predictor_meets_the_contract_and_computes_missing_features(tmp_path):
 
     with pytest.raises(KeyError, match="no Apertus backend"):
         heads.HeadsPredictor(model, {}).predict([ImageItem("img_0002", "")])
+
+
+def test_out_of_fold_predictions_find_a_planted_label_error(tmp_path):
+    frame, features = frame_and_features(300)
+    # Plant one wrong human label on a typical 'a' image: the heads, never trained on its product, should disagree.
+    centre = np.mean([features[i].reshape(-1) for i, lab in zip(frame.image_id, frame.subject) if lab == "a"], axis=0)
+    candidates = frame[(frame.subject == "a") & (frame.subject_source == "human")].image_id
+    planted = min(candidates, key=lambda i: np.linalg.norm(features[i].reshape(-1) - centre))
+    frame.loc[frame.image_id == planted, "subject"] = "b"
+
+    records = heads.out_of_fold_records(frame, features, DIMS, scored, folds)
+    assert len(records) == len(frame) and all(set(r["labels"]) == set(DIMS) for r in records)
+    path = heads.write_records(records, tmp_path / "oof.jsonl")
+
+    label_errors = pytest.importorskip("galaxus.data.label_errors")
+    report = label_errors.find_label_errors(path, frame, threshold=0.5, dimension_names=DIMS)
+    assert list(report.columns) == ["image_id", "dimension", "label", "suggested_label"]
+    hit = report[(report.image_id == planted) & (report.dimension == "subject")]
+    assert len(hit) == 1 and hit.iloc[0]["label"] == "b" and hit.iloc[0]["suggested_label"] == "a"

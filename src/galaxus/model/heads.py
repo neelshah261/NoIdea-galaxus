@@ -315,6 +315,49 @@ def fit_heads(
     return HeadsModel(heads=heads, key=key, meta={"calibration": report, "seed": seed})
 
 
+def out_of_fold_records(
+    rows: pd.DataFrame,
+    features: Mapping[str, np.ndarray],
+    dimensions: Sequence[str],
+    scored_mask: Callable[[pd.DataFrame, str], pd.Series],
+    folds: Callable[[pd.DataFrame], Iterable[tuple[pd.DataFrame, pd.DataFrame]]],
+    seed: int = 0,
+) -> list[dict[str, Any]]:
+    """One ``Prediction`` record per row of ``rows``, each predicted by heads that never saw that row's product.
+
+    This is the input of the data lane's label-error finder (#7, ``galaxus.data.label_errors``): a confident
+    out-of-fold answer that disagrees with a human label is a suspected label error, for the bonus. Heads are trained
+    on scored human labels only; no calibration, so the confidence is the head's own probability.
+    """
+    records: dict[str, dict[str, Any]] = {
+        str(i): {"image_id": str(i), "labels": {}, "confidence": {}} for i in rows["image_id"]
+    }
+    for fit_part, held in folds(rows):
+        held_ids = [str(i) for i in held["image_id"]]
+        x_held = _matrix(features, held_ids)
+        for dimension in dimensions:
+            fit_scored = fit_part[scored_mask(fit_part, dimension)]
+            if fit_scored.empty:
+                continue
+            head = fit_head(
+                _matrix(features, fit_scored["image_id"]), fit_scored[dimension].astype(str).tolist(), seed=seed
+            )
+            answers, confidence = head.predict(x_held)
+            for image_id, answer, probability in zip(held_ids, answers, confidence):
+                records[image_id]["labels"][dimension] = answer
+                records[image_id]["confidence"][dimension] = float(probability)
+    return [record for record in records.values() if record["labels"]]
+
+
+def write_records(records: Iterable[Mapping[str, Any]], path: Path) -> Path:
+    """Prediction records as jsonl (outside git: under ``$GALAXUS_DATA/out/``)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="\n") as handle:
+        for record in records:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    return path
+
+
 # ---------------------------------------------------------------- predictor
 
 
@@ -411,7 +454,7 @@ def predictor_from_env() -> HeadsPredictor:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """``python -m galaxus.model.heads extract|fit``."""
+    """``python -m galaxus.model.heads extract|fit|label-errors``."""
     parser = argparse.ArgumentParser(prog="python -m galaxus.model.heads", description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
     extract_cmd = sub.add_parser("extract", help="Apertus hidden states for one part (GPU)")
@@ -422,7 +465,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     fit_cmd.add_argument("--no-calibration", action="store_true")
     fit_cmd.add_argument("--allow-dirty", action="store_true")
     fit_cmd.add_argument("--note", default="")
-    for command in (extract_cmd, fit_cmd):
+    errors_cmd = sub.add_parser("label-errors", help="out-of-fold heads over all of train -> the bonus csv (#7)")
+    errors_cmd.add_argument("--threshold", type=float, default=None, help="minimum confidence (data lane default)")
+    errors_cmd.add_argument("--scored-only", action="store_true", help="only cells the metric scores")
+    for command in (extract_cmd, fit_cmd, errors_cmd):
         command.add_argument("--model", default=os.environ.get(APERTUS_ENV, "swiss-ai/Apertus-v1.5-8B"))
         command.add_argument("--layers", default=",".join(map(str, default_layers())), help="e.g. -1 or -1,-9")
         command.add_argument("--pool", default=DEFAULT_POOL, choices=("last", "mean"))
@@ -447,6 +493,22 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     features = store.load()
     key = feature_key(arguments.model, layers, arguments.pool)
+
+    if arguments.command == "label-errors":
+        from galaxus.data import classes, label_errors
+
+        train = load.read_train()
+        records = out_of_fold_records(train, features, classes.dimensions(), split.scored_mask, split.iter_product_folds)
+        oof_path = write_records(records, out_dir() / "predictions" / f"heads-oof-{key}" / "train_oof.jsonl")
+        options: dict[str, Any] = {"scored_only": arguments.scored_only}
+        if arguments.threshold is not None:
+            options["threshold"] = arguments.threshold
+        report = label_errors.find_label_errors(oof_path, train, **options)
+        target = label_errors.write_label_errors(report)
+        print(f"[heads] {len(records)} out-of-fold predictions -> {oof_path}")
+        print(f"[heads] {len(report)} suspected label errors -> {target}")
+        print("Never commit it. A human sends it to the Galaxus hosts by Discord DM (challenge_description.md).")
+        return 0
     saved: dict[str, Path] = {}
 
     def factory(training_rows: pd.DataFrame, data: Any, seed: int) -> HeadsPredictor:
