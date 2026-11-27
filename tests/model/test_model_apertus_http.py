@@ -121,6 +121,19 @@ def test_the_answer_and_token_counts_are_read():
     assert answer.seconds >= 0
 
 
+def test_token_logprobs_are_asked_for_through_extra_body_and_read_when_sent():
+    tokens = [{"token": "red", "logprob": -0.25, "bytes": [114, 101, 100], "top_logprobs": []}]
+    body = json.loads(completion("red"))
+    body["choices"][0]["logprobs"] = {"content": tokens}
+    transport = FakeTransport((200, json.dumps(body).encode()))
+    answer = chat(transport, extra_body={"logprobs": True}).generate(HI)
+    assert transport.requests[0]["body"]["logprobs"] is True
+    assert answer.logprobs == tokens
+    assert chat(FakeTransport()).generate(HI).logprobs is None
+    body["choices"][0]["logprobs"] = "not a block"
+    assert chat(FakeTransport((200, json.dumps(body).encode()))).generate(HI).logprobs is None
+
+
 def test_an_answer_in_parts_is_joined():
     body = json.dumps({"choices": [{"message": {"content": [{"type": "text", "text": "Re"}, {"text": "d"}]}}]})
     assert chat(FakeTransport((200, body.encode()))).generate(HI).text == "Red"

@@ -3,7 +3,8 @@
 Standard library only (``urllib``), so neither backend needs a dependency. Images travel as base64 ``data:`` URLs
 in the last user message, before its text. A JSON schema travels as ``response_format`` (OpenAI structured
 outputs), as ``guided_json`` (vLLM's older parameter), or not at all; which one a server enforces is Q-0002, and
-the smoke script tries them.
+the smoke script tries them. Token logprobs are asked for with ``extra_body={"logprobs": True}`` (OpenAI's field,
+which vLLM and the gateway accept) and come back in ``Generation.logprobs`` (#75).
 
 The API key goes only into the ``Authorization`` header: never into a message, a log line or an EXP row.
 """
@@ -192,6 +193,9 @@ class ChatCompletionsBackend:
         except (ValueError, KeyError, IndexError, TypeError, AttributeError) as error:
             raise BackendError(f"{self.name}: not a chat completion: {_excerpt(raw)}") from error
         usage = response.get("usage") or {}
+        # Optional, so a malformed block means no logprobs, not a failed request.
+        logprobs = choice.get("logprobs")
+        content = logprobs.get("content") if isinstance(logprobs, dict) else None
         return Generation(
             text=text,
             prompt_tokens=usage.get("prompt_tokens"),
@@ -199,4 +203,5 @@ class ChatCompletionsBackend:
             finish_reason=choice.get("finish_reason"),
             model=response.get("model"),
             seconds=seconds,
+            logprobs=content if isinstance(content, list) else None,
         )

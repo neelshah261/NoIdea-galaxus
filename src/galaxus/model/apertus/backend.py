@@ -52,6 +52,9 @@ class Generation:
     finish_reason: str | None = None
     model: str | None = None
     seconds: float | None = None
+    #: The server's ``choices[0].logprobs.content`` (one ``{"token", "logprob", ...}`` per answer token) when the
+    #: request asked for it, ``extra_body={"logprobs": True}`` on a chat-completions backend (#75); else None.
+    logprobs: Sequence[Mapping[str, Any]] | None = None
 
 
 @runtime_checkable

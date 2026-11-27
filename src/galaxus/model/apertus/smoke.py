@@ -10,7 +10,8 @@ It answers B6's open questions for the backend it runs on and prints them as a "
 - Q-0002: is a JSON schema enforced (asked to answer "hello", does it still write schema JSON), and how many
   prompt tokens does an image cost at a few sizes, which gives the pixels per vision token the data lane's resize
   should use;
-- Q-0006 (local only): which transformers version and model class loaded Apertus, and do hidden states come out.
+- Q-0006 (local only): which transformers version and model class loaded Apertus, and do hidden states come out;
+- #75: does an answer held to the schema come with token logprobs (the zero-shot confidences need them)?
 
 About a dozen short requests in all. The API key is never printed.
 """
@@ -138,6 +139,7 @@ def run_smoke(backend: Backend, sizes: Sequence[tuple[int, int]] = SIZES) -> dic
     report["image_tokens"] = {"per_size": tokens, **pixels_per_token(tokens)}
 
     report["json_schema"] = check_json_schema(backend, texts)
+    report["logprobs"] = check_logprobs(backend)
     report["think_block"] = any(marker in text for text in texts for marker in THINK_MARKERS)
     report["local"] = check_local(backend)
     return report
@@ -163,6 +165,19 @@ def check_json_schema(backend: Backend, texts: list[str]) -> dict[str, Any]:
     finally:
         backend.schema_mode = original
     return results
+
+
+def check_logprobs(backend: Backend) -> bool | None:
+    """Whether an answer held to the schema carries token logprobs when asked (#75). None: not a chat server."""
+    if not hasattr(backend, "extra_body"):
+        return None
+    original = backend.extra_body
+    backend.extra_body = {**original, "logprobs": True}
+    try:
+        answer, _ = _try(lambda: backend.generate(_user(PROBE), [square()], SCHEMA, max_tokens=64))
+    finally:
+        backend.extra_body = original
+    return bool(answer and answer.logprobs)
 
 
 def check_local(backend: Backend) -> dict[str, Any] | None:
@@ -218,12 +233,14 @@ def render_markdown(report: Mapping[str, Any]) -> str:
     else:
         q6 = f"not answered by `{report['backend']}`: run `--backend local`"
     think = "yes: turn thinking off in the chat template" if report["think_block"] else "none seen"
+    logprobs = {True: "yes", False: "no", None: "not asked: not a chat-completions backend"}[report.get("logprobs")]
     lines = [
         f"**B6 smoke test (#13):** backend `{report['backend']}`, model `{report['model']}`, {report['started']}",
         "",
         f"- **Q-0001 images:** {q1}",
         f"- **Q-0002 JSON schema:** {schema}",
         f"- **Q-0002 tokens per image:** {per_size or 'not measured'}; {sizing}",
+        f"- **Token logprobs with the JSON schema (#75):** {logprobs}",
         f"- **Q-0006 transformers:** {q6}",
         f"- **Think block in the answers:** {think}",
         f"- **One request with one image:** {_seconds(image['seconds'])} (latency, not throughput: B7 measures that)",
