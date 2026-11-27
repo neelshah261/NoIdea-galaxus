@@ -80,10 +80,13 @@ def final_dir() -> Path:
 def locate_final_csv() -> Path | None:
     """The one ``final.csv`` anywhere below ``$GALAXUS_DATA/final/``, or ``None`` while it is not decrypted yet.
 
-    The archive decides how deep it lands, so this searches the tree, which is the rule
-    ``galaxus.serve.final_run.find_final_csv`` already follows; keeping both the same is what makes
-    ``runner --part final`` and :func:`galaxus.data.load.read_final` agree on Saturday (issue #26). Serve can
-    import this and drop its own copy.
+    The archive decides how deep it lands, so this searches the tree, which is what makes ``runner --part final``
+    and :func:`galaxus.data.load.read_final` agree on Saturday (issue #26).
+
+    **Serve imports this one** (``galaxus.serve.final_run``, #91) rather than keeping its own copy of the rule, so
+    this function is on the 13:00 path of the final run and not only on this lane's readers: changing it changes
+    that run. Measured, rather than assumed - making the search shallow (``glob`` for ``rglob``) fails 6 tests in
+    ``tests/data`` and 5 in ``tests/serve``.
 
     Raises:
         FileNotFoundError: if the tree holds more than one, since guessing which is the real one could silently
