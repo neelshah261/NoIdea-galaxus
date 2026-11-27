@@ -127,6 +127,20 @@ class LazyDataset:
         return self.encode(self.examples[index])
 
 
+def chat_messages(system: str, image: Any, context: dict[str, str] | None, answer: str) -> list[dict[str, Any]]:
+    """One training conversation in the shape Apertus 1.5's chat template accepts (chat_template.jinja):
+
+    the system and the assistant content are plain strings (a list of parts raises "Invalid system message" /
+    "Invalid assistant content"); the user content is a list of parts, the image first, then the text, which is also
+    the order the vLLM backend sends at inference. Checked on the real processor in the HF job's setup rehearsal (#76).
+    """
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": user_prompt(context)}]},
+        {"role": "assistant", "content": answer},
+    ]
+
+
 def apertus_encoder(processor, classes):
     """Example -> model inputs + labels with Apertus' processor. Unverified until the first GPU run (see top)."""
     from PIL import Image as PillowImage
@@ -143,12 +157,7 @@ def apertus_encoder(processor, classes):
     def encode(example: Example) -> dict[str, Any]:
         image = PillowImage.open(io.BytesIO(cached_jpeg(example.image_id, example.image_file, mirrored=example.mirrored,
                                                         image_size=IMAGE_SIZE))).convert("RGB")
-        messages = [
-            {"role": "system", "content": [{"type": "text", "text": system}]},
-            {"role": "user", "content": [{"type": "image", "image": image},
-                                         {"type": "text", "text": user_prompt(example.context)}]},
-            {"role": "assistant", "content": [{"type": "text", "text": example.answer}]},
-        ]
+        messages = chat_messages(system, image, example.context, example.answer)
         inputs = processor.apply_chat_template(messages, tokenize=True, return_dict=True, return_tensors="pt")
         ids = inputs["input_ids"][0].tolist()
         features = {"input_ids": ids, "labels": training_labels(ids, example.answer, example.trained_dimensions,
