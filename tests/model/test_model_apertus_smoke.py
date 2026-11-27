@@ -8,8 +8,10 @@ import numpy as np
 
 from galaxus.model.apertus import smoke
 from galaxus.model.apertus.backend import BackendError, Generation
+from galaxus.model.apertus.chat_http import ChatCompletionsBackend
 from galaxus.model.apertus.smoke import (
     check_json_schema,
+    check_logprobs,
     conforms,
     pixels_per_token,
     render_markdown,
@@ -169,3 +171,24 @@ def test_the_square_is_red_on_white():
     image = square((100, 50))
     assert image.getpixel((0, 0)) == (255, 255, 255)
     assert image.getpixel((50, 25)) == (220, 30, 30)
+
+
+def server(sends_logprobs: bool) -> ChatCompletionsBackend:
+    """A chat server that answers schema JSON, with logprobs when asked if ``sends_logprobs``."""
+
+    def transport(url, headers, body, timeout):
+        asked = json.loads(body).get("logprobs") and sends_logprobs
+        logprobs = {"content": [{"token": "red", "logprob": 0.0}]} if asked else None
+        choice = {"message": {"content": json.dumps({"color": "red", "shape": "square"})}, "logprobs": logprobs}
+        return 200, json.dumps({"choices": [choice]}).encode()
+
+    return ChatCompletionsBackend("https://gateway.example/v1", "apertus-test", transport=transport, backoff=0)
+
+
+def test_the_block_says_whether_a_schema_answer_carries_logprobs():
+    backend = server(sends_logprobs=True)
+    assert check_logprobs(backend) is True
+    assert backend.extra_body == {}, "the check leaves the backend as it was"
+    assert check_logprobs(server(sends_logprobs=False)) is False
+    assert check_logprobs(FakeBackend()) is None
+    assert "logprobs with the JSON schema (#75):** not asked" in render_markdown(run_smoke(FakeBackend()))

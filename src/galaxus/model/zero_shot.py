@@ -13,12 +13,18 @@
   dimension gets its default, the majority class of the training rows, and the count goes into the EXP row.
 - A backend error (keys spent, server down after its retries) is raised, never turned into defaults: a run that
   silently answers "majority" for half the images would look like a real score.
+- ``Prediction.confidence[d]`` is the probability the model gave its chosen class: the product of the probabilities
+  of the answer tokens that spell the class name (#75, see :func:`value_confidence`). A cell without one (no
+  logprobs from the backend, or a default) has no key, and the count goes into the EXP row as
+  ``no_confidence_cells``.
 """
 
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
+import math
 import re
 import threading
 from collections.abc import Mapping, Sequence
@@ -90,6 +96,33 @@ def parse_answer(text: str, dimensions: Sequence[str], allowed: Mapping[str, fro
     }
 
 
+def value_confidence(logprobs: Sequence[Mapping[str, Any]] | None, labels: Mapping[str, str]) -> dict[str, float]:
+    """The probability of each chosen class: exp of the summed logprobs of the tokens that spell its name.
+
+    By the chain rule this is P(class | the answer so far), multi-token names included. The gateway enforces the
+    schema while decoding, and the probe on #75 saw only class-name prefixes among the top alternatives at a value,
+    so the mass is already over the allowed classes and is not renormalised here. The tokens are
+    joined back into text and each ``"<dimension>": "<class>"`` is found there; every token overlapping the class
+    name counts. A dimension that cannot be found, or bad logprobs, is left out: no number is made up.
+    """
+    try:
+        tokens = [(str(entry["token"]), float(entry["logprob"])) for entry in logprobs or ()]
+    except (TypeError, KeyError, ValueError):
+        return {}
+    text = "".join(token for token, _ in tokens)
+    ends = list(itertools.accumulate(len(token) for token, _ in tokens))
+    confidence = {}
+    for dimension, label in labels.items():
+        match = re.search(rf'"{re.escape(dimension)}"\s*:\s*"({re.escape(label)})"', text)
+        if match is None:
+            continue
+        start, end = match.span(1)
+        total = sum(logprob for (token, logprob), stop in zip(tokens, ends) if stop > start and stop - len(token) < end)
+        if total <= 1e-6:  # a logprob is never positive; NaN fails this too
+            confidence[dimension] = min(1.0, math.exp(total))
+    return confidence
+
+
 class ZeroShotPredictor:
     """Apertus v1.5 classifies each image in one call, with or without the product context.
 
@@ -115,7 +148,7 @@ class ZeroShotPredictor:
         if backend is None:
             from galaxus.model.apertus import backend as make_backend
 
-            backend = make_backend("api", retries=GATEWAY_RETRIES)
+            backend = make_backend("api", retries=GATEWAY_RETRIES, extra_body={"logprobs": True})
         if dimensions is None or allowed is None:
             from galaxus.data.classes import allowed_classes
             from galaxus.data.classes import dimensions as read_dimensions
@@ -140,35 +173,50 @@ class ZeroShotPredictor:
         self.schema = answer_schema(self.dimensions, self.allowed)
         self.system = system_prompt(guideline if guideline is not None else read_guideline(), self.dimensions)
         self._lock = threading.Lock()
-        self.stats = {"images": 0, "retries": 0, "defaulted_cells": 0, "prompt_tokens": 0, "completion_tokens": 0}
+        self.stats = {
+            "images": 0,
+            "retries": 0,
+            "defaulted_cells": 0,
+            "no_confidence_cells": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+        }
 
     def _image(self, item: ImageItem) -> bytes:
         from galaxus.data.images import cached_jpeg
 
         return cached_jpeg(item.image_id, item.path, image_size=self.image_size)
 
-    def _ask(self, messages: list[dict[str, str]], image: bytes) -> dict[str, str]:
+    def _ask(self, messages: list[dict[str, str]], image: bytes) -> dict[str, tuple[str, float | None]]:
+        """``{dimension: (class, confidence or None)}`` for the dimensions the answer names validly."""
         generation = self.backend.generate(messages, [image], self.schema, max_tokens=MAX_TOKENS, temperature=0.0)
         with self._lock:
             self.stats["prompt_tokens"] += generation.prompt_tokens or 0
             self.stats["completion_tokens"] += generation.completion_tokens or 0
-        return parse_answer(generation.text, self.dimensions, self.allowed)
+        labels = parse_answer(generation.text, self.dimensions, self.allowed)
+        confidence = value_confidence(generation.logprobs, labels)
+        return {dimension: (label, confidence.get(dimension)) for dimension, label in labels.items()}
 
     def _predict_one(self, item: ImageItem) -> Prediction:
         image = self._image(item)
         context = item.context if self.use_context else None
         messages = [{"role": "system", "content": self.system}, {"role": "user", "content": user_prompt(context)}]
-        labels = self._ask(messages, image)
-        retried = len(labels) < len(self.dimensions)
+        answers = self._ask(messages, image)
+        retried = len(answers) < len(self.dimensions)
         if retried:
-            labels = {**self._ask(messages, image), **labels}
-        missing = [dimension for dimension in self.dimensions if dimension not in labels]
+            answers = {**self._ask(messages, image), **answers}
+        missing = [dimension for dimension in self.dimensions if dimension not in answers]
+        confidence = {dimension: value for dimension, (_, value) in answers.items() if value is not None}
         with self._lock:
             self.stats["images"] += 1
             self.stats["retries"] += retried
             self.stats["defaulted_cells"] += len(missing)
+            self.stats["no_confidence_cells"] += len(answers) - len(confidence)
+        labels = {dimension: label for dimension, (label, _) in answers.items()}
         labels.update({dimension: self.defaults[dimension] for dimension in missing})
-        return Prediction(image_id=item.image_id, labels={d: labels[d] for d in self.dimensions})
+        return Prediction(
+            image_id=item.image_id, labels={d: labels[d] for d in self.dimensions}, confidence=confidence or None
+        )
 
     def predict(self, batch: Sequence[ImageItem]) -> list[Prediction]:
         """One prediction per item, in order. Up to ``workers`` requests are in flight at once."""
