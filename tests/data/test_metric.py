@@ -192,6 +192,31 @@ def test_parity_evaluate_covers_every_dimension():
 
 
 @_needs_real_data
+def test_parity_the_report_is_indexable_by_dimension_the_way_its_consumers_index_it():
+    """The test above checks the names appear *somewhere* in ``str(report)``; this checks the access path.
+
+    ``bench/ocr_language.py`` reads ``evaluate(...)[dimension]["f1_macro"]`` (#101 item 9, PR #108) to compare an
+    OCR route against zero-shot, and #106 turns numbers like that one into the per-dimension pick. Nothing in the
+    repo records that the real metric.py's report is shaped that way: the coverage test above passes for any shape
+    whose string happens to hold the names, and this lane's own doubles return ``{"overall": ...}``
+    (``STUB``) and ``{"per_dimension": ..., "overall": ...}`` (``test_saturday_chain``) - neither of which
+    supports that access. So this is the one place where the real file settles it.
+
+    If this fails, the shape is not what those consumers assume, and any per-dimension number printed through
+    that path needs re-reading before it decides anything.
+    """
+    from galaxus.data.classes import dimensions
+
+    _, solution, submission, _, _ = _real_holdout_and_submission()
+    report = evaluate(solution, submission)
+
+    for name in dimensions():
+        assert name in report, f"evaluate()'s report is not keyed by dimension; its keys are {sorted(report)}"
+        assert "f1_macro" in report[name], f"{name} carries no f1_macro; its keys are {sorted(report[name])}"
+        assert isinstance(report[name]["f1_macro"], int | float)
+
+
+@_needs_real_data
 def test_parity_unscored_cells_are_skipped_dimension_by_dimension():
     """The sharp version, and the one that decides whether our local score matches the leaderboard.
 

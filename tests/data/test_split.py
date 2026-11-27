@@ -169,6 +169,28 @@ def test_the_folds_are_balanced_by_image_count_not_product_count():
     assert counts.max() - counts.min() <= 4
 
 
+def test_the_halves_stay_comparable_when_one_product_dominates():
+    """The test above cannot tell image-count balance from product-count balance; this one can.
+
+    ``catalog()`` gives products 1, 2, 3, 4 images in a cycle, which divides evenly however you balance it:
+    with the sizes added up by product instead of by image the folds come out identical (spread 0 both ways),
+    so the assertion above holds for a build that balances the wrong thing.
+
+    A real catalog is not even - a few products carry many shots - and that is where the two part company. One
+    product of 12 against 39 singletons, at the two folds ``galaxus.model.ensemble`` actually uses: balancing by
+    image count gives 25/26, balancing by product count gives 20/31. The second is what makes an ensemble pick a
+    dimension's winner on 20 images and score it on 31 while believing the halves are comparable, so the ratio is
+    the thing worth pinning rather than the spread.
+    """
+    rows = [
+        (f"img_{product}_{shot}", f"p{product}") for product in range(40) for shot in range(12 if product == 0 else 1)
+    ]
+    frame = pd.DataFrame(rows, columns=["image_id", PRODUCT_COLUMN])
+
+    counts = product_folds(frame, n_folds=2).value_counts()
+    assert counts.min() / counts.max() >= 0.9, f"halves are lopsided: {sorted(counts.tolist())}"
+
+
 def test_a_table_without_product_id_is_refused_by_the_folds():
     with pytest.raises(KeyError, match=PRODUCT_COLUMN):
         product_folds(catalog().drop(columns=[PRODUCT_COLUMN]))

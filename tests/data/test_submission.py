@@ -92,8 +92,14 @@ def test_a_table_of_predictions_works_too(data_with_sample):
 
 
 def test_an_unknown_image_id_is_refused(data_with_sample):
-    with pytest.raises(KeyError, match="img_99999"):
+    with pytest.raises(KeyError, match="img_99999") as caught:
         write_submission({"img_99999": FULL})
+    # The id alone is not enough to pin this. Removing the explicit check and re-running, pandas' own `.loc`
+    # assignment still raises KeyError and still names the id ("None of [Index(['img_99999'], ...)] are in the
+    # [index]"), so a match on the id passes either way. What that message does not do is say what went wrong or
+    # what to do about it, and at 13:00 on Saturday the message is what a human has to act on. So the sentence is
+    # the contract, not just the exception type.
+    assert "not in sample_submission.csv" in str(caught.value)
 
 
 def test_an_invalid_class_is_refused_before_the_file_can_reach_kaggle(data_with_sample):
