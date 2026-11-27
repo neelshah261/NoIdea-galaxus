@@ -141,8 +141,9 @@ def out_of_fold_frame(predictions: OutOfFold, require_confidence: bool = True) -
     else:
         parsed, unrankable = _rows_from_records(predictions, require_confidence)
         frame = pd.DataFrame(parsed, columns=list(PREDICTION_COLUMNS))
-        # Recorded rather than printed or dropped quietly: a caller that skipped cells should be able to say so,
-        # and the command does. pandas keeps ``attrs`` across the operations this frame goes through.
+        # Recorded rather than dropped quietly, so a caller can say how many cells it ignored; the command
+        # prints it. ``find_label_errors`` carries the number onto its report, because pandas does not keep
+        # ``attrs`` across the merge in between.
         frame.attrs["unrankable_cells"] = unrankable
     frame[ID_COLUMN] = frame[ID_COLUMN].astype(str)
     frame["dimension"] = frame["dimension"].astype(str)
@@ -208,7 +209,9 @@ def find_label_errors(
     disagreements = disagreements.sort_values(
         ["confidence", ID_COLUMN, "dimension"], ascending=[False, True, True], kind="stable"
     )
-    return disagreements[list(REPORT_COLUMNS)].reset_index(drop=True)
+    report = disagreements[list(REPORT_COLUMNS)].reset_index(drop=True)
+    report.attrs["unrankable_cells"] = frame.attrs.get("unrankable_cells", 0)
+    return report
 
 
 def write_label_errors(
@@ -327,6 +330,11 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"[label-errors] {len(report)} suspected error(s) at confidence >= {arguments.threshold:g}")
     print(f"[label-errors] per dimension: {_summarise(report)}")
+    skipped = report.attrs.get("unrankable_cells", 0)
+    if skipped:
+        # Said out loud: a predictor that fell back, or parsed only some dimensions, leaves cells that cannot be
+        # ranked (#75, #122). They are not candidates, but a quiet skip would look like a clean run.
+        print(f"[label-errors] {skipped} cell(s) skipped for want of a confidence, so they were not ranked")
     if arguments.dry_run:
         print("[label-errors] --dry-run: nothing written")
         return 0
