@@ -1,0 +1,53 @@
+{
+  "_about": [
+    "The perspective confusion pairs the hosts showed on slide 22 of the deep dive (issue #17), for the report in",
+    "bench/perspective_report.py (issue #34). This file is data, not code: as in",
+    "src/galaxus/serve/demo/hero_rules.json it is the only place in this part of the lane where a class name is",
+    "written down, and every name here is checked against galaxus.data.classes when it loads.",
+    "The percentages are the hosts' own model (slide 21: Qwen 3.5 9B), NOT ours. They are a target to aim at and a",
+    "reference line on the figure; they are never our result. Our own numbers come from the predictions file and",
+    "the holdout human labels, and no number goes in front of a judge unless it is in results/metrics.json",
+    "(AGENTS.md 'Galaxus product rules' 1)."
+  ],
+  "dimension": "perspective",
+  "source": "deep-dive slides, issue #17 'Slide 22: perspective errors'",
+  "pairs": [
+    {
+      "true": "back_angle_right",
+      "predicted": "front_angle_right",
+      "host_share": 0.14,
+      "open_for_hosts": true,
+      "status": "known",
+      "source": "issue #17 slide 22: 'back_angle_right read as front_angle_right: 14%' and 'Open for us: right_side vs left_side, back_angle_right.'"
+    },
+    {
+      "true": "right_side",
+      "predicted": "left_side",
+      "host_share": 0.12,
+      "open_for_hosts": true,
+      "status": "known",
+      "source": "issue #17 slide 22: 'right_side read as left_side: 12%' and 'Open for us: right_side vs left_side, back_angle_right.'"
+    },
+    {
+      "true": "left_side",
+      "predicted": "right_side",
+      "host_share": 0.08,
+      "open_for_hosts": false,
+      "status": "known",
+      "source": "issue #17 slide 22: 'left_side read as right_side: 8%'"
+    },
+    {
+      "true": "top_down",
+      "predicted": "front_head_on",
+      "host_share": 0.07,
+      "open_for_hosts": false,
+      "status": "known",
+      "source": "issue #17 slide 22: 'top_down read as front_head_on: 7%'"
+    }
+  ],
+  "combine": {
+    "rule": "higher_mean_confidence",
+    "status": "assumption",
+    "todo": "TODO(owner): how the two mirror answers are combined is ours, not the hosts'. The deep dive only says 'Mirroring helped' (#17 slide 19). Confirm, or replace with a rule an EXP row measures."
+  }
+}
