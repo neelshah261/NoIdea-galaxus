@@ -282,3 +282,48 @@ def test_an_api_key_from_the_environment_reaches_the_backend(fake_endpoint):
     assert fake_endpoint.built[-1].options.get("api_key") == "secret-value"
     lora._vllm_backend({"LORA_BASE_URL": "http://gpu:8000/v1"})
     assert fake_endpoint.built[-1].options.get("api_key") is None
+
+
+# ---------------------------------------------------------------- #75: confidences from the LoRA's token logprobs
+
+
+@dataclass
+class _GenerationWithLogprobs:
+    text: str
+    logprobs: list | None = None
+
+
+def test_confidences_come_from_the_class_name_tokens_and_a_fallback_gets_none():
+    import math
+
+    answer = json.dumps({d: "alpha" for d in DIMS})
+    start = answer.index('"alpha"') + 1  # the first dimension's class name
+    tokens = [{"token": ch, "logprob": (-0.1 if start <= i < start + len("alpha") else 0.0)}
+              for i, ch in enumerate(answer)]
+    replies = iter([_GenerationWithLogprobs(answer, tokens), _GenerationWithLogprobs("not json", None)])
+
+    class Backend:
+        def generate(self, messages, images, json_schema=None, *, max_tokens, temperature):
+            return next(replies)
+
+    predictor = lora.LoraPredictor(Backend(), CLASSES, {d: "none" for d in DIMS}, lambda item: b"jpeg")
+    good, fallback = predictor.predict([_Item("a"), _Item("b")])
+    assert good.confidence[DIMS[0]] == pytest.approx(math.exp(-0.5))
+    assert all(good.confidence[d] == pytest.approx(1.0) for d in DIMS[1:])
+    assert fallback.confidence is None and predictor.fallbacks == 1
+    assert predictor.config()["no_confidence_cells"] == len(DIMS)
+
+
+def test_without_logprobs_there_is_no_confidence_and_it_is_counted():
+    class Backend:
+        def generate(self, messages, images, json_schema=None, *, max_tokens, temperature):
+            return Generation(json.dumps({d: "beta" for d in DIMS}))
+
+    predictor = lora.LoraPredictor(Backend(), CLASSES, {d: "none" for d in DIMS}, lambda item: b"jpeg")
+    assert predictor.predict([_Item("a")])[0].confidence is None
+    assert predictor.config()["no_confidence_cells"] == len(DIMS)
+
+
+def test_the_vllm_backend_asks_for_logprobs(fake_endpoint):
+    lora._vllm_backend({"LORA_BASE_URL": "http://gpu:8000/v1"})
+    assert fake_endpoint.built[-1].options.get("extra_body") == {"logprobs": True}
