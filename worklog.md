@@ -35,5 +35,7 @@ Fri 27 Nov before 19:00 were written at once from the merge history of `main` (m
 - 18:49 #84: overlay roles read from the contract; metric cache fix.
 - 18:49 #86: LoRA predictor registered for EXP-0004.
 - 18:49 #61: ensemble picks the main method per dimension, cross-fitted, as an EXP row.
+- 18:56 #85: results page from main's runs; no typed dimensions in serve; vLLM serves the merged LoRA.
+- 18:56 #89: public `mirrorable_dimension()`, the replacement #85 needed.
 - 19:00 B0 rest (#11) and the technical report (#54) in one design PR: justfile, extras, MODELS.md, decisions.md,
   STATE.md, this file, the report and its PDF.

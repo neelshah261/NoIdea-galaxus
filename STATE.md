@@ -1,7 +1,7 @@
 # STATE.md: what is true now
 
-Overwritten on every update; it wins over worklog.md (AGENTS.md "State files"). **As of Fri 27 Nov 2026, 19:00 CET,
-`main` at `374d160` (#61).** Plan: [BUILD_PLAN.md](BUILD_PLAN.md). Board: issue #50.
+Overwritten on every update; it wins over worklog.md (AGENTS.md "State files"). **As of Fri 27 Nov 2026, 19:15 CET,
+`main` at `58e08a1` (#89).** Plan: [BUILD_PLAN.md](BUILD_PLAN.md). Board: issue #50.
 
 ## Results (`results/metrics.json`, official holdout of 2,444 images)
 
@@ -18,7 +18,8 @@ The Galaxus baselines are in challenge_description.md "Baselines". No Kaggle sub
   checked on the real data, 0 differences, #79), the writer and validator, the runner, the Saturday drill and dry run.
 - **Code:** shared types, the class contract and the ci secret scan (#80).
 - **Methods:** zero-shot (#63), LoRA script and predictor (#71, #86), ensemble (#61).
-- **Tools and docs:** perspective report, gallery, speed matrix, diagram and video script.
+- **Tools and docs:** perspective report, gallery, speed matrix, diagram and video script, results page (#85).
+- **No typed names:** the data and serve lanes read dimensions and classes from the contract (#84, #85, #89).
 
 ## In flight
 
@@ -29,13 +30,11 @@ The Galaxus baselines are in challenge_description.md "Baselines". No Kaggle sub
 | Kaggle team, then the first upload | Neel | #25, #15 |
 | Discord: Q-0003, Q-0005, Q-0007, dev pseudo-labels, hero rules | Neel | #40 |
 | Mirror TTA for perspective (the innovation) | Parth | #48 |
-| Serve literals + results page + vLLM for the LoRA | Swarup | #85 (blocked: imports a name #84 removed) |
 | Model literals, delete the contract copy | Parth | #83 |
 | B0 rest and the technical report | Parth | #11, #54 (this PR) |
 | Pitch deck (last) | Swarup | #52 |
 
 ## Blocked
-- **#85:** imports `galaxus.data.mirror.PERSPECTIVE_DIMENSION`, removed by #84. The fix is on the PR.
 - **#51 (heads + calibration):** parked until the hosts answer Q-0007 and Q-0005.
 
 ## Not done yet
