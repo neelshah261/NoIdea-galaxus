@@ -31,7 +31,13 @@ from galaxus.data.classes import ID_COLUMN
 from galaxus.data.load import IMAGE_FILE_COLUMN
 from galaxus.data.paths import cache_dir
 
-#: Vision patch size: both sides of a prepared image are a multiple of it.
+#: Default vision patch size: both sides of a prepared image are a multiple of it.
+#:
+#: 32 is **Qwen's**, from the reference notebook, not Apertus v1.5's. Apertus' is Q-0002, measured as pixels per
+#: vision token by the B6 smoke test (#13, #46). Since #28 every function here takes ``patch_size``, so answering
+#: Q-0002 is a change to this one line rather than an edit through the code; the cache folder carries the patch
+#: size (``<size>-p<patch>``), so the old pixels are never served to a model expecting the new ones.
+#: TODO(owner): set this from the #46 measurement and say so on Q-0002.
 PATCH_SIZE = 32
 #: An image is never scaled so that its longest side exceeds ``MAX_SIDE_FACTOR * image_size``.
 MAX_SIDE_FACTOR = 8
@@ -54,15 +60,18 @@ def opaque_rgb_on_white(image: PillowImage.Image) -> PillowImage.Image:
     return canvas.convert("RGB")
 
 
-def native_aspect_image(image: PillowImage.Image, image_size: int = IMAGE_SIZE) -> PillowImage.Image:
+def native_aspect_image(
+    image: PillowImage.Image, image_size: int = IMAGE_SIZE, patch_size: int = PATCH_SIZE
+) -> PillowImage.Image:
     """The image scaled to about ``image_size`` squared pixels, aspect ratio kept.
 
-    Each side is a multiple of :data:`PATCH_SIZE`.
+    Each side is a multiple of ``patch_size``, because the model sees whole patches.
     """
+    _check_patch_size(patch_size)
     scale = image_size / (image.width * image.height) ** 0.5
     scale *= min(1.0, MAX_SIDE_FACTOR * image_size / (max(image.width, image.height) * scale))
-    width = max(PATCH_SIZE, round(image.width * scale / PATCH_SIZE) * PATCH_SIZE)
-    height = max(PATCH_SIZE, round(image.height * scale / PATCH_SIZE) * PATCH_SIZE)
+    width = max(patch_size, round(image.width * scale / patch_size) * patch_size)
+    height = max(patch_size, round(image.height * scale / patch_size) * patch_size)
     return image.resize((width, height), PillowImage.LANCZOS)
 
 
@@ -71,15 +80,16 @@ def prepared_jpeg(
     mirrored: bool = False,
     image_size: int = IMAGE_SIZE,
     jpeg_quality: int = JPEG_QUALITY,
+    patch_size: int = PATCH_SIZE,
 ) -> bytes:
     """The image as the model gets it, as JPEG bytes, mirrored first if asked."""
-    _check_image_size(image_size)
+    _check_image_size(image_size, patch_size)
     with PillowImage.open(image_file) as image:
         rgb = opaque_rgb_on_white(image)
     if mirrored:
         rgb = ImageOps.mirror(rgb)
     buffer = io.BytesIO()
-    native_aspect_image(rgb, image_size).save(buffer, format="JPEG", quality=jpeg_quality)
+    native_aspect_image(rgb, image_size, patch_size).save(buffer, format="JPEG", quality=jpeg_quality)
     return buffer.getvalue()
 
 
@@ -88,17 +98,20 @@ def prepare_image(
     mirrored: bool = False,
     image_size: int = IMAGE_SIZE,
     jpeg_quality: int = JPEG_QUALITY,
+    patch_size: int = PATCH_SIZE,
 ) -> PillowImage.Image:
     """The prepared JPEG decoded again: exactly the pixels the model is served."""
-    return PillowImage.open(io.BytesIO(prepared_jpeg(image_file, mirrored, image_size, jpeg_quality))).convert("RGB")
+    prepared = prepared_jpeg(image_file, mirrored, image_size, jpeg_quality, patch_size)
+    return PillowImage.open(io.BytesIO(prepared)).convert("RGB")
 
 
-def vision_tokens(image: PillowImage.Image) -> int:
+def vision_tokens(image: PillowImage.Image, patch_size: int = PATCH_SIZE) -> int:
     """The vision-token count of a prepared image. Any other count means something resized it."""
-    return (image.width // PATCH_SIZE) * (image.height // PATCH_SIZE)
+    _check_patch_size(patch_size)
+    return (image.width // patch_size) * (image.height // patch_size)
 
 
-def image_cache_dir(image_size: int = IMAGE_SIZE, patch_size: int | None = None) -> Path:
+def image_cache_dir(image_size: int = IMAGE_SIZE, patch_size: int = PATCH_SIZE) -> Path:
     """``$GALAXUS_DATA/cache/images/<size>-p<patch>/``: one prepared JPEG per image (issue #27).
 
     The patch size is in the folder name, not only the image size, because it decides the pixels: the prepared
@@ -107,18 +120,12 @@ def image_cache_dir(image_size: int = IMAGE_SIZE, patch_size: int | None = None)
     serving the old one's pixels.
 
     Args:
-        image_size: the target area per side, a multiple of the patch size.
-        patch_size: only to say out loud which patch size the caller expects. It must match the one the
-            preparation actually uses, so a folder can never be labelled with a patch size it does not hold.
+        image_size: the target area per side, a multiple of ``patch_size``.
+        patch_size: the patch size these pixels were prepared at. Since #28 this is a real parameter, so two
+            patch sizes keep two caches and can never serve each other's pixels.
     """
-    _check_image_size(image_size)
-    patch = PATCH_SIZE if patch_size is None else patch_size
-    if patch != PATCH_SIZE:
-        raise ValueError(
-            f"this build prepares images at patch size {PATCH_SIZE}, so it cannot fill a p{patch} cache; "
-            "making the patch size a real parameter is issue #28, which waits on the measurement in #46"
-        )
-    return cache_dir("images", f"{image_size}-p{patch}")
+    _check_image_size(image_size, patch_size)
+    return cache_dir("images", f"{image_size}-p{patch_size}")
 
 
 def _cache_name(image_id: object, mirrored: bool) -> str:
@@ -141,16 +148,19 @@ def cached_jpeg(
     jpeg_quality: int = JPEG_QUALITY,
     refresh: bool = False,
     directory: str | os.PathLike[str] | None = None,
+    patch_size: int = PATCH_SIZE,
 ) -> bytes:
     """:func:`prepared_jpeg`, but written through the image cache so the same pixels are prepared once.
 
     The mirror is cached under its own name, so test-time augmentation does not evict the original.
     """
-    folder = Path(directory) if directory is not None else image_cache_dir(image_size)
+    folder = Path(directory) if directory is not None else image_cache_dir(image_size, patch_size)
     target = folder / _cache_name(image_id, mirrored)
     if target.is_file() and not refresh:
         return target.read_bytes()
-    data = prepared_jpeg(image_file, mirrored=mirrored, image_size=image_size, jpeg_quality=jpeg_quality)
+    data = prepared_jpeg(
+        image_file, mirrored=mirrored, image_size=image_size, jpeg_quality=jpeg_quality, patch_size=patch_size
+    )
     folder.mkdir(parents=True, exist_ok=True)
     partial = target.with_name(target.name + ".part")
     partial.write_bytes(data)
@@ -194,6 +204,7 @@ def cached_image(
     image_size: int = IMAGE_SIZE,
     jpeg_quality: int = JPEG_QUALITY,
     directory: str | os.PathLike[str] | None = None,
+    patch_size: int = PATCH_SIZE,
 ) -> Path:
     """The **path** of one prepared image in the cache, preparing it first if it is not there yet (issue #27).
 
@@ -207,7 +218,7 @@ def cached_image(
     Raises:
         KeyError: the id is not in any part on disk, so there is nothing to prepare it from.
     """
-    folder = Path(directory) if directory is not None else image_cache_dir(image_size)
+    folder = Path(directory) if directory is not None else image_cache_dir(image_size, patch_size)
     target = folder / _cache_name(image_id, mirrored)
     if target.is_file():
         return target
@@ -227,6 +238,7 @@ def cached_image(
         image_size=image_size,
         jpeg_quality=jpeg_quality,
         directory=folder,
+        patch_size=patch_size,
     )
     return target
 
@@ -250,6 +262,7 @@ def fill_image_cache(
     directory: str | os.PathLike[str] | None = None,
     skip_missing: bool = False,
     workers: int = 1,
+    patch_size: int = PATCH_SIZE,
 ) -> dict[str, object]:
     """Prepare every image once into the cache; this is what ``just prep`` fills (BASE_ARCHITECTURE.md B1).
 
@@ -259,7 +272,7 @@ def fill_image_cache(
     Returns:
         How many files were ``written``, ``skipped`` and ``missing``, and the ``directory`` they are in.
     """
-    folder = Path(directory) if directory is not None else image_cache_dir(image_size)
+    folder = Path(directory) if directory is not None else image_cache_dir(image_size, patch_size)
     pairs = _id_path_pairs(rows)
     todo = [
         (image_id, image_file)
@@ -282,6 +295,7 @@ def fill_image_cache(
                 jpeg_quality=jpeg_quality,
                 refresh=refresh,
                 directory=folder,
+                patch_size=patch_size,
             )
         except FileNotFoundError:
             if not skip_missing:
@@ -315,6 +329,15 @@ def fill_image_cache(
     }
 
 
-def _check_image_size(image_size: int) -> None:
-    if not isinstance(image_size, int) or image_size < PATCH_SIZE or image_size % PATCH_SIZE:
-        raise ValueError(f"image_size must be a multiple of {PATCH_SIZE} and at least {PATCH_SIZE}, got {image_size!r}")
+def _check_patch_size(patch_size: int) -> None:
+    if not isinstance(patch_size, int) or isinstance(patch_size, bool) or patch_size < 1:
+        raise ValueError(f"patch_size must be a positive whole number of pixels, got {patch_size!r}")
+
+
+def _check_image_size(image_size: int, patch_size: int = PATCH_SIZE) -> None:
+    _check_patch_size(patch_size)
+    if not isinstance(image_size, int) or image_size < patch_size or image_size % patch_size:
+        raise ValueError(
+            f"image_size must be a multiple of the patch size {patch_size} and at least {patch_size}, "
+            f"got {image_size!r}"
+        )

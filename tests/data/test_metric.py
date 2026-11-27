@@ -33,11 +33,11 @@ def evaluate(solution, submission, id_column):
 
 @pytest.fixture(autouse=True)
 def fresh_cache():
-    """The module caches the loaded metric; every test starts without it."""
-    metric_module._loaded = None
+    """The module caches each loaded metric by path; every test starts with an empty cache."""
+    metric_module._loaded.clear()
     sys.modules.pop(METRIC_MODULE_NAME, None)
     yield
-    metric_module._loaded = None
+    metric_module._loaded.clear()
     sys.modules.pop(METRIC_MODULE_NAME, None)
 
 
@@ -94,3 +94,181 @@ def test_the_real_metric_exposes_the_entry_points_we_use():
     loaded = load_metric()
     assert len(loaded.DIMENSIONS) == 6
     assert callable(loaded.score) and callable(loaded.evaluate)
+
+
+# --- Parity with the real metric.py -------------------------------------------------------------------------
+#
+# These are the checks that decide whether our local score equals the leaderboard's. They need the Kaggle files,
+# so they skip everywhere except a machine with $GALAXUS_DATA (issue #68). They are named "parity" so that
+# ``pytest tests/data -k parity`` selects them.
+
+_HAS_REAL_METRIC = (
+    bool(os.environ.get(GALAXUS_DATA_ENV)) and Path(os.environ.get(GALAXUS_DATA_ENV, ""), "metric.py").is_file()
+)
+_needs_real_data = pytest.mark.skipif(
+    not _HAS_REAL_METRIC,
+    reason=f"parity needs the Kaggle files: set ${GALAXUS_DATA_ENV} to a directory holding metric.py and train.csv",
+)
+
+
+def _real_holdout_and_submission():
+    """The official holdout, our solution frame for it, and a constant-answer submission over the same ids."""
+    from galaxus.data.classes import allowed_classes, dimensions
+    from galaxus.data.load import read_train
+    from galaxus.data.split import solution_frame, split_holdout
+
+    _, holdout = split_holdout(read_train())
+    names = dimensions()
+    solution = solution_frame(holdout, names)
+    allowed = allowed_classes()
+    answer = {name: min(allowed[name]) for name in names}
+    submission = pd.DataFrame({"image_id": solution["image_id"], **{n: answer[n] for n in names}})
+    return holdout, solution, submission, names, allowed
+
+
+@_needs_real_data
+def test_parity_our_wrapper_returns_exactly_what_metric_py_returns():
+    """Guards against the wrapper quietly growing post-processing of its own."""
+    _, solution, submission, _, _ = _real_holdout_and_submission()
+    assert score(solution, submission) == load_metric().score(solution, submission, "image_id")
+
+
+@_needs_real_data
+def test_parity_an_unscored_cell_cannot_change_the_score():
+    """The assumption our whole local score rests on.
+
+    ``solution_frame`` puts ``None`` in every cell the labeling rules do not score. If Kaggle's ``metric.py``
+    counted those cells instead of skipping them, our local number would drift from the leaderboard and we would
+    not find out until a submission came back. So: change the prediction in *only* the unscored cells and the
+    score must not move.
+    """
+    _, solution, submission, names, allowed = _real_holdout_and_submission()
+    before = score(solution, submission)
+
+    changed = submission.copy()
+    touched = 0
+    for name in names:
+        other = max(allowed[name])
+        unscored = solution[name].isna()
+        touched += int(unscored.sum())
+        changed.loc[unscored.to_numpy(), name] = other
+
+    assert touched > 0, "no unscored cell in the holdout, so this check proves nothing - investigate"
+    assert score(solution, changed) == before
+
+
+@_needs_real_data
+def test_parity_a_scored_cell_does_change_the_score():
+    """The other half: if nothing moves the score, the test above would pass for the wrong reason."""
+    _, solution, submission, names, allowed = _real_holdout_and_submission()
+    before = score(solution, submission)
+
+    changed = submission.copy()
+    for name in names:
+        other = max(allowed[name])
+        scored = solution[name].notna()
+        changed.loc[scored.to_numpy(), name] = other
+
+    assert score(solution, changed) != before
+
+
+@_needs_real_data
+def test_parity_evaluate_covers_every_dimension():
+    """`evaluate` feeds the per-dimension rows of the report and the deck, so it must cover all six."""
+    from galaxus.data.classes import dimensions
+
+    _, solution, submission, _, _ = _real_holdout_and_submission()
+    report = evaluate(solution, submission)
+    flat = str(report)
+    for name in dimensions():
+        assert name in flat, f"{name} missing from evaluate()'s report"
+
+
+@_needs_real_data
+def test_parity_unscored_cells_are_skipped_dimension_by_dimension():
+    """The sharp version, and the one that decides whether our local score matches the leaderboard.
+
+    Changing predictions *inside* unscored cells can, where the class distribution is balanced, move the penalty
+    from one class to another and leave the mean untouched - so that check alone can pass against a ``metric.py``
+    that wrongly counts unscored cells. This one scores a single dimension twice: once over every row, once with
+    that dimension's unscored rows removed outright. If nulls are skipped the two are identical; if they are
+    counted, they differ.
+    """
+    _, solution, submission, names, _ = _real_holdout_and_submission()
+    checked = 0
+    for name in names:
+        unscored = solution[name].isna()
+        if not unscored.any() or unscored.all():
+            continue
+        checked += 1
+        one = solution[["image_id", name]]
+        with_nulls = score(one, submission)
+        kept = one[~unscored.to_numpy()].reset_index(drop=True)
+        without = score(kept, submission[submission["image_id"].isin(kept["image_id"])].reset_index(drop=True))
+        assert without == with_nulls, (
+            f"{name}: scoring it over every row gives {with_nulls}, but dropping its unscored rows gives "
+            f"{without}. metric.py is counting cells our solution leaves empty, so our local score and the "
+            "leaderboard's will not agree"
+        )
+    assert checked > 0, "no dimension had a mix of scored and unscored cells, so this proves nothing"
+
+
+# --- #73: the cache is per file, not per process ------------------------------------------------------------
+#
+# A single global cached the first metric.py forever. With the real data present that made 12 failures and 2
+# errors in one run (#68): tests that pointed $GALAXUS_DATA at a stub were handed the real metric's classes.
+
+
+def _stub_metric(folder: Path, value: float) -> Path:
+    """A folder holding a metric.py whose ``score`` returns ``value``. Never the real file."""
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "metric.py").write_text(
+        "DIMENSIONS = ('subject',)\n"
+        f"def score(solution, submission, id_column):\n    return {value}\n"
+        f"def evaluate(solution, submission, id_column):\n    return {{'overall': {{'f1_macro': {value}}}}}\n",
+        encoding="utf-8",
+    )
+    return folder
+
+
+def test_pointing_the_data_dir_at_another_folder_loads_that_folders_metric(tmp_path, monkeypatch):
+    first = _stub_metric(tmp_path / "one", 0.25)
+    second = _stub_metric(tmp_path / "two", 0.75)
+
+    monkeypatch.setenv(GALAXUS_DATA_ENV, str(first))
+    assert load_metric().score(None, None, "image_id") == 0.25
+
+    monkeypatch.setenv(GALAXUS_DATA_ENV, str(second))
+    assert load_metric().score(None, None, "image_id") == 0.75, (
+        "the second $GALAXUS_DATA was ignored and the first metric came back from the cache (#73)"
+    )
+
+    # Back to the first: served from its own cache entry, still the first stub's answer.
+    monkeypatch.setenv(GALAXUS_DATA_ENV, str(first))
+    assert load_metric().score(None, None, "image_id") == 0.25
+
+
+def test_the_two_folders_give_two_distinct_modules(tmp_path, monkeypatch):
+    first = _stub_metric(tmp_path / "one", 0.25)
+    second = _stub_metric(tmp_path / "two", 0.75)
+    monkeypatch.setenv(GALAXUS_DATA_ENV, str(first))
+    one = load_metric()
+    monkeypatch.setenv(GALAXUS_DATA_ENV, str(second))
+    assert load_metric() is not one
+
+
+def test_one_data_dir_still_reads_the_file_once(tmp_path, monkeypatch):
+    """Saturday's case: one process, one $GALAXUS_DATA. The file is read and executed once, not per call."""
+    folder = tmp_path / "once"
+    folder.mkdir()
+    (folder / "metric.py").write_text(
+        "from pathlib import Path\n"
+        "with Path(__file__).with_name('loads.txt').open('a', encoding='utf-8') as handle:\n"
+        "    handle.write('x')\n"
+        "DIMENSIONS = ('subject',)\n"
+        "def score(solution, submission, id_column):\n    return 0.5\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(GALAXUS_DATA_ENV, str(folder))
+    assert load_metric() is load_metric()
+    assert (folder / "loads.txt").read_text(encoding="utf-8") == "x", "the module was executed more than once"

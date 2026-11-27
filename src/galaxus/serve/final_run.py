@@ -1,4 +1,4 @@
-"""B7: the Saturday run. Passphrase → decrypt → runner → merge into the best dev file → validate → the command.
+"""B7: the Saturday run. Passphrase -> decrypt -> runner -> merge into the best dev file -> validate -> the command.
 
 When and how the final images are released, and what the final file must hold, is in
 [challenge_description.md, "Timeline" and "Submission file"](../../../challenge_description.md#submission-file).
@@ -434,8 +434,9 @@ def drill(
         images=images,
         killed_after=killed,
         resumed=resumed,
-        wall_seconds=round(time.perf_counter() - wall_started, 3),
-        prediction_seconds=round(prediction_seconds, 3),
+        # Unrounded (#74): a stub answers in microseconds, and round(..., 3) turned that into 0.0. Printing rounds.
+        wall_seconds=time.perf_counter() - wall_started,
+        prediction_seconds=prediction_seconds,
         images_per_second=speed,
         floor_images_per_second=floor,
         margin_images_per_second=round(speed - floor, 3) if speed is not None else None,
@@ -455,14 +456,25 @@ def drill(
     return report
 
 
+def _duration(seconds: float) -> str:
+    """A duration a person reads at a glance: "12 s", "1.4 s", "3 ms", "<1 ms" (#74)."""
+    if seconds >= 10:
+        return f"{seconds:.0f} s"
+    if seconds >= 1:
+        return f"{seconds:.1f} s"
+    if seconds >= 0.001:
+        return f"{seconds * 1000:.0f} ms"
+    return "<1 ms"
+
+
 def _log_drill(report: DrillReport, path: Path, log: Callable[[str], None] | None) -> None:
     """The summary a human reads off the screen; the same numbers are in ``path``."""
     if log is None:
         return
     log(f"[drill] report: {path}")
     log(
-        f"[drill] {report.images} image(s) of {report.part}: {report.wall_seconds:.1f} s wall time, of which "
-        f"{report.prediction_seconds:.1f} s predicting at {report.images_per_second} img/s"
+        f"[drill] {report.images} image(s) of {report.part}: {_duration(report.wall_seconds)} wall time, of which "
+        f"{_duration(report.prediction_seconds)} predicting at {report.images_per_second} img/s"
     )
     if report.images_per_second is not None and report.floor_images_per_second > 0:
         clears = "clears" if report.meets_floor else "is BELOW"
@@ -564,4 +576,7 @@ def main(argv: list[str] | None = None, passphrase_prompt: Any = getpass.getpass
 
 
 if __name__ == "__main__":
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
     sys.exit(main())

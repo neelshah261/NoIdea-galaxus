@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import time
+
 import pandas as pd
 import pytest
-from conftest import DIMENSIONS
+from conftest import DIMENSIONS, FAKE_CLASSES
 
 from galaxus.data.validate import CAPITAL_NONE, SubmissionInvalid, main, validate_submission
 
@@ -136,3 +138,55 @@ def test_the_cli_fails_loudly_when_it_cannot_even_read_the_file(tmp_path, capsys
     sample_submission.to_csv(galaxus_data / "sample_submission.csv", index=False)
     assert main([str(tmp_path / "nope.csv")]) == 1
     assert "cannot validate" in capsys.readouterr().err
+
+
+# --- #72: the validator has to stay linear ------------------------------------------------------------------
+#
+# The real dev file Swarup profiled has 10,553 rows and took 124.5 s, 124.4 s of it rebuilding one set per
+# expected id. The rest of this file uses 3 rows, which is why the cost never showed up here.
+
+#: Bigger than the real dev file, so this test exercises at least what Saturday will.
+BIG_ROWS = 12_000
+#: Generous on purpose: the linear version is milliseconds, the quadratic one minutes, so no runner can flake
+#: this either way.
+TIME_LIMIT_SECONDS = 10.0
+
+
+@pytest.fixture
+def big_pair() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """A synthetic sample and an identical, valid submission, both larger than the real dev file.
+
+    Built here from invented ids and the synthetic classes: no competition data, nothing read from disk.
+    """
+    frame = pd.DataFrame(
+        {
+            "image_id": [f"img_{n:06d}" for n in range(BIG_ROWS)],
+            **{dimension: [FAKE_CLASSES[dimension][0]] * BIG_ROWS for dimension in DIMENSIONS},
+        }
+    )
+    return frame, frame.copy()
+
+
+def test_validating_a_dev_sized_file_is_not_quadratic(big_pair, allowed):
+    """On Saturday this runs inside write_submission, the drill, preflight and by hand, between the final
+    passphrase and the deadline. Quadratic is not affordable there."""
+    sample, submission = big_pair
+    started = time.perf_counter()
+    validate_submission(submission, sample=sample, allowed=allowed)
+    elapsed = time.perf_counter() - started
+    assert elapsed < TIME_LIMIT_SECONDS, (
+        f"validating {BIG_ROWS} rows took {elapsed:.1f} s, over the {TIME_LIMIT_SECONDS:.0f} s limit. The id "
+        "check has probably gone back to building a set per expected id (#72)."
+    )
+
+
+def test_a_dev_sized_file_still_reports_its_problems(big_pair, allowed):
+    """Speed must not have cost us the checks: the same problems are still found at this size."""
+    sample, submission = big_pair
+    broken = submission.copy()
+    broken.loc[0, "image_id"] = "img_999999"
+    broken.loc[1, "subject"] = "not_a_class"
+    problems = problems_of(broken, sample, allowed)
+    assert any("missing" in line for line in problems)
+    assert any("not in sample_submission.csv" in line for line in problems)
+    assert any("not allowed in this dimension" in line for line in problems)

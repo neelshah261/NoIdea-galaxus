@@ -44,3 +44,24 @@ def galaxus_data(tmp_path, monkeypatch):
         train[f"{dimension}_relevant"] = ["true"] * 3
     pd.DataFrame(train).to_csv(directory / "train.csv", index=False)
     return directory
+
+
+@pytest.fixture(autouse=True)
+def _isolated_from_the_real_data(monkeypatch):
+    """#68: ``galaxus.data.metric.load_metric`` caches metric.py once per process, whatever ``$GALAXUS_DATA`` says.
+
+    On a machine where ``$GALAXUS_DATA`` holds the real Kaggle files, a test that resolves the classes without the
+    synthetic ``galaxus_data`` fixture loads the *real* metric.py, and every later test then validates its invented
+    class names against the real ones and fails. Each serve test starts with an empty cache; the cache itself is the
+    data lane's (reported on #6).
+    """
+    # Serve tests are synthetic: run them exactly as ci does, without the machine's real $GALAXUS_DATA. Tests that
+    # need a data folder build their own with the ``galaxus_data`` fixture, which sets the variable again.
+    monkeypatch.delenv("GALAXUS_DATA", raising=False)
+    try:
+        from galaxus.data import metric
+    except ImportError:
+        yield
+        return
+    monkeypatch.setattr(metric, "_loaded", None)
+    yield

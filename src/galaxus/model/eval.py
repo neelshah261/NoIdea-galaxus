@@ -41,6 +41,7 @@ from galaxus.model.results import (
     next_exp_id,
     read_rows,
 )
+from galaxus.model.zero_shot import ZeroShotPredictor
 
 ID_COLUMN = "image_id"
 IMAGE_FILE_COLUMN = "image_file"
@@ -99,8 +100,25 @@ def _majority(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
     return MajorityPredictor.fit(rows, data.dimensions(), data.scored_mask)
 
 
+def _zero_shot(use_context: bool) -> PredictorFactory:
+    def factory(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+        # shortcut: always the gateway (api); add a --backend flag when a vLLM run needs this script.
+        return ZeroShotPredictor(
+            use_context=use_context,
+            defaults=MajorityPredictor.fit(rows, data.dimensions(), data.scored_mask).answer,
+            dimensions=data.dimensions(),
+            allowed=data.allowed_classes(),
+        )
+
+    return factory
+
+
 #: The predictors this script runs, by name. A new method registers its factory here and changes nothing else.
-PREDICTORS: dict[str, PredictorFactory] = {"majority": _majority}
+PREDICTORS: dict[str, PredictorFactory] = {
+    "majority": _majority,
+    "zero-shot": _zero_shot(use_context=True),
+    "zero-shot-no-context": _zero_shot(use_context=False),
+}
 
 
 def items_from_rows(rows: pd.DataFrame) -> list[ImageItem]:

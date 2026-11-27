@@ -74,12 +74,18 @@ def _id_problems(frame: pd.DataFrame, sample: pd.DataFrame) -> list[str]:
     if duplicated:
         problems.append(f"{len(duplicated)} duplicated {ID_COLUMN}(s), first: {duplicated[:EXAMPLES]}")
     expected = sample[ID_COLUMN].astype(str).tolist()
-    missing = [image_id for image_id in expected if image_id not in set(ids)]
+    # Both sets are built once. Writing ``image_id not in set(ids)`` inside the comprehension rebuilt the whole
+    # set for every expected id, which made this check O(n^2): 124 s of the 124.5 s that validating a real
+    # 10,553-row dev file took (#72). The comparisons themselves are unchanged, so the same files get the same
+    # problems: ``present`` holds the submitted ids exactly as they are typed, as ``set(ids)`` did.
+    present = set(ids)
+    expected_set = set(expected)
+    missing = [image_id for image_id in expected if image_id not in present]
     if missing:
         problems.append(
             f"{len(missing)} {ID_COLUMN}(s) of sample_submission.csv are missing, first: {missing[:EXAMPLES]}"
         )
-    unknown = sorted(set(ids) - set(expected))
+    unknown = sorted(present - expected_set)
     if unknown:
         problems.append(f"{len(unknown)} {ID_COLUMN}(s) are not in sample_submission.csv, first: {unknown[:EXAMPLES]}")
     if not duplicated and not missing and not unknown and ids.tolist() != expected:
