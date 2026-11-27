@@ -87,10 +87,12 @@ parallel.** A step is done only when its "done when" holds.
 
 | Person | GitHub | Lane | PRs | Also |
 | --- | --- | --- | --- | --- |
-| Neel | neelshah261 | design (owner) | B0 | Kaggle team + download + SHA check, the B5 upload, Discord questions, GPU access |
-| Swarup | swarupgaikwad1801-ux | data | B1, B2 | label-error finder in the main phase |
+| Neel | neelshah261 | design (owner) | B0 (rest of it; PR #8 has the skeleton) | Kaggle team + download + SHA check, the B5 upload, Discord questions, GPU access |
+| Vernika | vernikas-ctrl | data (set in PR #8) | B1 = #4, B2 = #5 + #6 | label-error finder #7 |
 | Parth | deshmukhparth921-commits | model | B3, B6 | heads / LoRA in the main phase |
-| Varika | vernikas-ctrl | serve | B4, B5 (file + command), B7 | benchmark numbers, diagram, deck and demo video |
+| Swarup | swarupgaikwad1801-ux | serve | B4, B5 (file + command), B7 | benchmark numbers, diagram, deck and demo video |
+
+Merges into `main` wait for the owner while the merge freeze (#9) is open.
 
 ```mermaid
 flowchart TB
@@ -110,18 +112,17 @@ flowchart TB
 ```
 
 ### B0 · Foundations (design)
-- `pyproject.toml` + `uv.lock`, Python 3.12. Core deps stay light (pandas, numpy, pillow, scikit-learn, pytest);
-  heavy ones are extras so `ci` stays fast: `local` (torch, transformers), `api` (an OpenAI-compatible client),
+- `pyproject.toml` + `uv.lock`, the `galaxus` package and `ruff` + `pytest` in `ci`: **already in PR #8**. Still to
+  add: heavy deps as extras so `ci` stays fast: `local` (torch, transformers), `api` (an OpenAI-compatible client),
   `gpu` (vllm).
 - `.env.example` with `LLM_NAME`, `LLM_BASE_URL`, `LLM_API_KEY` (as the [README](README.md) asks) and `GALAXUS_DATA`.
 - `justfile`: `setup`, `test`, `prep`, `eval <predictor>`, `run <predictor> <part>`, `bench`, `final --dry-run`.
 - `src/galaxus/types.py` and `contracts/` exactly as PLAN.md "Lanes and contracts" describes; `classes.json`
   copied verbatim from challenge_description.md "Classes".
 - Stubs: MODELS.md, decisions.md (Q-0001 to Q-0006 from PLAN.md, plus Q-0007 below), STATE.md, worklog.md.
-- **Add a `pytest` step to `ci`.** Today `ci` only runs the lane and data-leak check.
 - **Done when:** `uv sync && uv run pytest` is green locally and in `ci`, and every lane can import `galaxus.types`.
 
-### B1 · Data access (data)
+### B1 · Data access (data, issue #4; the split is in #5)
 - Download: the owner runs the Kaggle CLI into `$GALAXUS_DATA/kaggle/` and checks the SHA-256 of the encrypted final
   file against the Kaggle data page; also check that `7z x` (`7zz` on a Mac) asks for a passphrase.
 - `load.py`, `paths.py`, `images.py`. The white compositing follows the reference notebook (`opaque_rgb_on_white`);
@@ -131,7 +132,7 @@ flowchart TB
 - **Done when:** tests on a synthetic transparent image give a white background and sides that are multiples of 32;
   the split is identical on every run; `just prep` fills the image cache.
 
-### B2 · Scoring and submission (data)
+### B2 · Scoring and submission (data, issues #5 and #6)
 - `scoring.py`: builds the solution frame (human label and relevant, otherwise empty) and calls metric.py
   `score` / `evaluate` from `$GALAXUS_DATA`.
 - `submission.py`: writer that keeps the ids and order of sample_submission.csv and keeps the constant final rows
