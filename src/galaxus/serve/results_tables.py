@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape
 
-from galaxus.serve.report import DIMENSIONS_ORDER, read_rows
+from galaxus.serve.report import dimension_order, read_rows
 
 PAPER, WHITE, INK, MUTED, RULE, RULE2, ACCENT, ACCENT2 = (
     "#f2efe9", "#ffffff", "#141414", "#55524c", "#dcd6cc", "#c4bcae", "#c93c05", "#a86400")
@@ -52,13 +52,27 @@ def _num(value: Any, digits: int = 3) -> str:
     return "-" if value is None else f"{value:.{digits}f}"
 
 
+def no_model(row: Mapping[str, Any]) -> bool:
+    """A run whose images/s measures no model (the majority baseline): never shown as a speed (#67 review)."""
+    return row.get("predictor") == "majority" or "not a product figure" in str(row.get("note", ""))
+
+
+def _speed(row: Mapping[str, Any]) -> str:
+    return "n/a (no model)" if no_model(row) else _num(row.get("images_per_second"), 1)
+
+
+def _gain(value: float) -> str:
+    return f"{0.0 if abs(value) < 0.0005 else value:+.3f}"
+
+
 def _sha(row: Mapping[str, Any]) -> str | None:
     return (row.get("holdout") or {}).get("sha256")
 
 
 def _dims(rows: Sequence[Mapping[str, Any]]) -> list[str]:
     seen = {d for row in rows for d in (row.get("macro_f1") or {})}
-    return [d for d in DIMENSIONS_ORDER if d in seen] + sorted(seen - set(DIMENSIONS_ORDER))
+    order = dimension_order(rows)
+    return [d for d in order if d in seen] + sorted(seen - set(order))
 
 
 def parent_of(row: Mapping[str, Any], rows: Sequence[Mapping[str, Any]]) -> tuple[Mapping[str, Any] | None, str]:
@@ -86,7 +100,7 @@ def all_runs_table(rows: Sequence[Mapping[str, Any]]) -> str:
         lines.append(
             f"| {row.get('id')} | {row.get('predictor', '')} | **{_num(row.get('score'))}** | "
             + " | ".join(_num(macro.get(d)) for d in dims)
-            + f" | {_num(row.get('overall_weighted_f1'))} | {_num(row.get('images_per_second'), 1)} | "
+            + f" | {_num(row.get('overall_weighted_f1'))} | {_speed(row)} | "
             f"{_num(row.get('cost_per_100k_usd'), 2)} | `{str(row.get('commit') or '-')[:8]}` |"
         )
     return "\n".join(lines)
@@ -103,26 +117,37 @@ def ablation_table(rows: Sequence[Mapping[str, Any]]) -> str:
             continue
         gains = [(row.get("macro_f1") or {}).get(d) for d in dims]
         bases = [(parent.get("macro_f1") or {}).get(d) for d in dims]
-        cells = [("-" if g is None or b is None else f"{g - b:+.3f}") for g, b in zip(gains, bases)]
+        cells = [("-" if g is None or b is None else _gain(g - b)) for g, b in zip(gains, bases)]
         mean = (None if row.get("score") is None or parent.get("score") is None
-                else f"{row['score'] - parent['score']:+.3f}")
+                else _gain(row["score"] - parent["score"]))
         lines.append(f"| {row.get('id')} | {parent.get('id')} | {why} | **{mean or '-'}** | " + " | ".join(cells) + " |")
     return "\n".join(lines)
 
 
+def _perspective() -> str:
+    """The bonus dimension: the one with left/right classes, which the data lane derives from the classes (#81)."""
+    from galaxus.data.mirror import mirrorable_dimensions
+
+    return mirrorable_dimensions()[0]
+
+
 def perspective_line(rows: Sequence[Mapping[str, Any]]) -> str:
-    scored = [r for r in rows if (r.get("macro_f1") or {}).get("perspective") is not None]
+    view = _perspective()
+    scored = [r for r in rows if (r.get("macro_f1") or {}).get(view) is not None]
     if not scored:
         return "Perspective: no run has a perspective score yet."
-    best = max(scored, key=lambda r: r["macro_f1"]["perspective"])
-    runs = ", ".join(f"{r.get('id')} {r['macro_f1']['perspective']:.3f}" for r in scored)
+    best = max(scored, key=lambda r: r["macro_f1"][view])
+    runs = ", ".join(f"{r.get('id')} {r['macro_f1'][view]:.3f}" for r in scored)
     return f"**Perspective** (the hosts' priority and a bonus): best {best.get('id')} at " \
-           f"**{best['macro_f1']['perspective']:.3f}**. All runs: {runs}."
+           f"**{best['macro_f1'][view]:.3f}**. All runs: {runs}."
 
 
 def chart_svg(rows: Sequence[Mapping[str, Any]], title: str = "Macro F1 per dimension, official holdout") -> str:
     """Grouped bars, one group per dimension, one bar per EXP; numbers written on the bars."""
-    dims = _dims(rows) or list(DIMENSIONS_ORDER)
+    dims = _dims(rows) or list(dimension_order(rows))
+    if not dims:  # no rows and no classes source: an honest empty chart
+        return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 200" role="img"><title>{escape(title)}'
+                '</title><text x="40" y="100">No EXP rows yet.</text></svg>\n')
     width, height, left, right, top, bottom = 1600, 700, 90, 40, 120, 110
     plot_w, plot_h = width - left - right, height - top - bottom
     group = plot_w / len(dims)
@@ -159,11 +184,12 @@ def chart_svg(rows: Sequence[Mapping[str, Any]], title: str = "Macro F1 per dime
                        f'{value:.2f}</text>')
         label_x = left + i * group + group / 2
         out.append(f'<text x="{label_x:.1f}" y="{top + plot_h + 28}" class="m" text-anchor="middle">{escape(dim)}</text>')
-    for j, row in enumerate(rows):
-        x = left + j * 260
-        out.append(f'<rect x="{x}" y="{height - 46}" width="16" height="16" fill="{palette[j]}"/>')
+    x = left
+    for j, row in enumerate(rows):  # each entry as wide as its text: 13 px Geist Mono is about 8 px per character
         label = f"{row.get('id')} {row.get('predictor', '')} (mean {_num(row.get('score'))})"
+        out.append(f'<rect x="{x}" y="{height - 46}" width="16" height="16" fill="{palette[j]}"/>')
         out.append(f'<text x="{x + 24}" y="{height - 33}" class="m">{escape(label)}</text>')
+        x += 24 + 8 * len(label) + 36
     out.append("</svg>")
     return "\n".join(out) + "\n"
 

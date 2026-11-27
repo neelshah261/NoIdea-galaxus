@@ -52,7 +52,7 @@ from galaxus.serve.runner import predictions_path, read_predictions
 #: The pairs the hosts showed, as data. Never a class name in this module.
 PAIRS_FILE = Path(__file__).with_name("perspective_pairs.json")
 #: Where the slide 8 figure goes, under ``$GALAXUS_DATA/out/`` and never in git.
-FIGURE_DIR = "perspective"
+FIGURE_DIR = "perspective_report"
 FIGURE_NAME = "slide8_perspective_pairs.png"
 #: STYLE.md "Colours", the tokens this figure uses.
 PALETTE = {
@@ -582,7 +582,7 @@ class FigureResult:
 
 
 def figure_path(out_root: str | os.PathLike[str] | None = None) -> Path:
-    """``$GALAXUS_DATA/out/perspective/slide8_perspective_pairs.png``, or the same name under ``out_root``."""
+    """``$GALAXUS_DATA/out/perspective_report/slide8_perspective_pairs.png``, or the same name under ``out_root``."""
     if out_root is None:
         from galaxus.data.paths import out_dir
 

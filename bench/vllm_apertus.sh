@@ -10,6 +10,7 @@
 #   export HF_TOKEN=...            # read from your shell, never echoed
 #   bash bench/vllm_apertus.sh               # bf16
 #   QUANT=fp8 bash bench/vllm_apertus.sh     # FP8 weights for the ablation (#43)
+#   MODEL=<run>/merged bash bench/vllm_apertus.sh   # our merged LoRA (#49): a local folder, served as "apertus-lora"
 #
 # Then, from the machine with the data:
 #
@@ -33,6 +34,7 @@ MAX_NUM_SEQS="${MAX_NUM_SEQS:-64}"        # images decoded together; raise while
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-8192}"    # Apertus docs' recommended start; one 512 px image is ~1k tokens
 GPU_UTIL="${GPU_UTIL:-0.90}"
 PREFIX_CACHING="${PREFIX_CACHING:-on}"   # on | off (speed matrix #33)
+SERVED_NAME="${SERVED_NAME:-}"            # the name clients ask for; a local folder defaults to apertus-lora
 
 if [[ -z "${HF_TOKEN:-}" ]]; then
   echo "HF_TOKEN is not set: the Apertus v1.5 models are gated on Hugging Face (FAQ.md, 'Do we need a Hugging Face account?')." >&2
@@ -50,18 +52,31 @@ case "$QUANT" in
   *) echo "QUANT must be none or fp8, got $QUANT" >&2; exit 1 ;;
 esac
 
-echo "serving $MODEL on port $PORT (quant=$QUANT, max_pixels=$MAX_PIXELS, max_num_seqs=$MAX_NUM_SEQS, prefix_caching=$PREFIX_CACHING)"
+# A local folder (the merged LoRA) is not visible inside the container: mount it read-only at /model.
+mount_args=()
+model_ref="$MODEL"
+if [[ -d "$MODEL" ]]; then
+  mount_args=(-v "$(cd "$MODEL" && pwd):/model:ro")
+  model_ref=/model
+  SERVED_NAME="${SERVED_NAME:-apertus-lora}"   # what galaxus.model.lora ($LORA_SERVED_MODEL) asks for
+fi
+name_args=()
+if [[ -n "$SERVED_NAME" ]]; then name_args=(--served-model-name "$SERVED_NAME"); fi
+
+echo "serving $MODEL on port $PORT (quant=$QUANT, max_pixels=$MAX_PIXELS, max_num_seqs=$MAX_NUM_SEQS, prefix_caching=$PREFIX_CACHING, name=${SERVED_NAME:-$MODEL})"
 exec docker run --rm --gpus all --ipc=host -p "$PORT:8000" \
   -e HF_TOKEN \
   -v "${HF_HOME:-$HOME/.cache/huggingface}:/root/.cache/huggingface" \
+  "${mount_args[@]}" \
   "$IMAGE" \
-  vllm serve "$MODEL" \
+  vllm serve "$model_ref" \
     --host 0.0.0.0 --port 8000 \
     --chat-template-content-format string \
     --max-model-len "$MAX_MODEL_LEN" \
     --gpu-memory-utilization "$GPU_UTIL" \
-    --enable-prefix-caching \
+    "${cache_args[@]}" \
     --max-num-seqs "$MAX_NUM_SEQS" \
     --limit-mm-per-prompt '{"image": 1}' \
     --mm-processor-kwargs "{\"max_pixels\": $MAX_PIXELS, \"min_pixels\": $MAX_PIXELS}" \
+    "${name_args[@]}" \
     "${quant_args[@]}"

@@ -16,6 +16,8 @@ from galaxus.serve.demo.rules import hidden_reason, load_rules, mirror_class, pr
 # instead of real competition classes. The shipped hero_rules.json is checked separately.
 TEST_RULES = {
     "match_context_keys": ["title"],
+    "dimensions": {"view": "perspective", "backdrop": "background", "content": "subject", "language": "text_language",
+                   "overlay": "text_classification"},
     "no_text_class": "none",
     "shop_languages": {
         "classes": ["text_language_a"],
