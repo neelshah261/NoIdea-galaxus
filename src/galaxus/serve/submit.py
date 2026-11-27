@@ -1,4 +1,4 @@
-"""B5: predictions → a validated submission file → the exact Kaggle command, printed for a human.
+"""B5: predictions -> a validated submission file -> the exact Kaggle command, printed for a human.
 
 AGENTS.md "Galaxus product rules" 7: agents never upload or select a submission. This module stops at the command.
 The file rules (sample_submission order, constant final rows before the passphrase, lowercase ``none``) live in
@@ -130,4 +130,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
     sys.exit(main())

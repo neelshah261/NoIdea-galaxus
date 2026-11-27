@@ -33,11 +33,11 @@ def evaluate(solution, submission, id_column):
 
 @pytest.fixture(autouse=True)
 def fresh_cache():
-    """The module caches the loaded metric; every test starts without it."""
-    metric_module._loaded = None
+    """The module caches each loaded metric by path; every test starts with an empty cache."""
+    metric_module._loaded.clear()
     sys.modules.pop(METRIC_MODULE_NAME, None)
     yield
-    metric_module._loaded = None
+    metric_module._loaded.clear()
     sys.modules.pop(METRIC_MODULE_NAME, None)
 
 
@@ -211,3 +211,64 @@ def test_parity_unscored_cells_are_skipped_dimension_by_dimension():
             "leaderboard's will not agree"
         )
     assert checked > 0, "no dimension had a mix of scored and unscored cells, so this proves nothing"
+
+
+# --- #73: the cache is per file, not per process ------------------------------------------------------------
+#
+# A single global cached the first metric.py forever. With the real data present that made 12 failures and 2
+# errors in one run (#68): tests that pointed $GALAXUS_DATA at a stub were handed the real metric's classes.
+
+
+def _stub_metric(folder: Path, value: float) -> Path:
+    """A folder holding a metric.py whose ``score`` returns ``value``. Never the real file."""
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "metric.py").write_text(
+        "DIMENSIONS = ('subject',)\n"
+        f"def score(solution, submission, id_column):\n    return {value}\n"
+        f"def evaluate(solution, submission, id_column):\n    return {{'overall': {{'f1_macro': {value}}}}}\n",
+        encoding="utf-8",
+    )
+    return folder
+
+
+def test_pointing_the_data_dir_at_another_folder_loads_that_folders_metric(tmp_path, monkeypatch):
+    first = _stub_metric(tmp_path / "one", 0.25)
+    second = _stub_metric(tmp_path / "two", 0.75)
+
+    monkeypatch.setenv(GALAXUS_DATA_ENV, str(first))
+    assert load_metric().score(None, None, "image_id") == 0.25
+
+    monkeypatch.setenv(GALAXUS_DATA_ENV, str(second))
+    assert load_metric().score(None, None, "image_id") == 0.75, (
+        "the second $GALAXUS_DATA was ignored and the first metric came back from the cache (#73)"
+    )
+
+    # Back to the first: served from its own cache entry, still the first stub's answer.
+    monkeypatch.setenv(GALAXUS_DATA_ENV, str(first))
+    assert load_metric().score(None, None, "image_id") == 0.25
+
+
+def test_the_two_folders_give_two_distinct_modules(tmp_path, monkeypatch):
+    first = _stub_metric(tmp_path / "one", 0.25)
+    second = _stub_metric(tmp_path / "two", 0.75)
+    monkeypatch.setenv(GALAXUS_DATA_ENV, str(first))
+    one = load_metric()
+    monkeypatch.setenv(GALAXUS_DATA_ENV, str(second))
+    assert load_metric() is not one
+
+
+def test_one_data_dir_still_reads_the_file_once(tmp_path, monkeypatch):
+    """Saturday's case: one process, one $GALAXUS_DATA. The file is read and executed once, not per call."""
+    folder = tmp_path / "once"
+    folder.mkdir()
+    (folder / "metric.py").write_text(
+        "from pathlib import Path\n"
+        "with Path(__file__).with_name('loads.txt').open('a', encoding='utf-8') as handle:\n"
+        "    handle.write('x')\n"
+        "DIMENSIONS = ('subject',)\n"
+        "def score(solution, submission, id_column):\n    return 0.5\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(GALAXUS_DATA_ENV, str(folder))
+    assert load_metric() is load_metric()
+    assert (folder / "loads.txt").read_text(encoding="utf-8") == "x", "the module was executed more than once"

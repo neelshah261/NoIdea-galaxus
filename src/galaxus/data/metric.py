@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from pathlib import Path
 from types import ModuleType
 from typing import Any
 
@@ -23,20 +24,29 @@ from galaxus.data.paths import data_file
 #: The name ``metric.py`` is registered under in :data:`sys.modules`, chosen not to collide with anything.
 METRIC_MODULE_NAME = "galaxus_official_metric"
 
-_loaded: ModuleType | None = None
+#: Loaded metrics, keyed by the resolved path of the ``metric.py`` they came from. A single global cached the
+#: first file forever, so pointing ``$GALAXUS_DATA`` at another folder kept returning the first folder's metric
+#: and its classes (#73).
+_loaded: dict[Path, ModuleType] = {}
 
 
 def load_metric() -> ModuleType:
-    """``metric.py`` from ``$GALAXUS_DATA``, loaded once and cached.
+    """``metric.py`` from ``$GALAXUS_DATA``, loaded once per file and cached by its path.
+
+    Called twice with the same ``$GALAXUS_DATA``, as on Saturday, it reads and executes the file once. Pointed at
+    a different ``$GALAXUS_DATA``, it loads that folder's file rather than handing back the first one.
 
     Raises:
         MissingDataDir: if ``$GALAXUS_DATA`` is unset or unusable.
         FileNotFoundError: if ``metric.py`` is not in ``$GALAXUS_DATA``.
     """
-    global _loaded
-    if _loaded is not None:
-        return _loaded
+    # Resolved before the cache is consulted, because the path is the key: where $GALAXUS_DATA points now is what
+    # decides which metric this is, not which one happened to be loaded first.
     path = data_file("metric.py")
+    key = Path(path).resolve()
+    cached = _loaded.get(key)
+    if cached is not None:
+        return cached
     spec = importlib.util.spec_from_file_location(METRIC_MODULE_NAME, path)
     if spec is None or spec.loader is None:
         raise ImportError(f"{path} cannot be imported as a Python module")
@@ -47,7 +57,10 @@ def load_metric() -> ModuleType:
     except BaseException:
         del sys.modules[METRIC_MODULE_NAME]
         raise
-    _loaded = module
+    # The module name is deliberately kept: it shadows nothing. Two different metric.py files in one process
+    # therefore both register under it, the later overwriting the earlier in sys.modules, while the module
+    # objects themselves stay distinct and cached per path.
+    _loaded[key] = module
     return module
 
 
