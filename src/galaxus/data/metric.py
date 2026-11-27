@@ -40,6 +40,15 @@ def load_metric() -> ModuleType:
         MissingDataDir: if ``$GALAXUS_DATA`` is unset or unusable.
         FileNotFoundError: if ``metric.py`` is not in ``$GALAXUS_DATA``.
     """
+    global _loaded
+    if not isinstance(_loaded, dict):
+        # Honour the older way of emptying the cache. While this was a single global, callers cleared it by
+        # assigning ``None``, and ``tests/serve/conftest.py`` still does to isolate the serve tests from a real
+        # ``$GALAXUS_DATA`` (#68, #77). Since #73 the cache is a dict, so that assignment would raise
+        # ``AttributeError`` on ``.get`` the moment anything loaded the metric -- and, worse, would silently stop
+        # emptying the cache, which is the whole point of that fixture. Anything that is not a dict therefore
+        # means "nothing cached". :func:`clear_metric_cache` is the supported way to say it.
+        _loaded = {}
     # Resolved before the cache is consulted, because the path is the key: where $GALAXUS_DATA points now is what
     # decides which metric this is, not which one happened to be loaded first.
     path = data_file("metric.py")
@@ -62,6 +71,18 @@ def load_metric() -> ModuleType:
     # objects themselves stay distinct and cached per path.
     _loaded[key] = module
     return module
+
+
+def clear_metric_cache() -> None:
+    """Forget every ``metric.py`` loaded so far, so the next :func:`load_metric` reads the file again.
+
+    For a test or a notebook that moves ``$GALAXUS_DATA``: the cache is keyed by path, so moving it is enough on
+    its own, but clearing is how to force a re-read of the *same* path. Use this rather than assigning to the
+    module's private ``_loaded``, which is what the serve tests had to do before this existed (#68).
+    """
+    global _loaded
+    _loaded = {}
+    sys.modules.pop(METRIC_MODULE_NAME, None)
 
 
 def score(solution: pd.DataFrame, submission: pd.DataFrame, id_column: str = ID_COLUMN) -> float:
