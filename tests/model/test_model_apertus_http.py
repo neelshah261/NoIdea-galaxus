@@ -15,7 +15,7 @@ from galaxus.model.apertus.backend import APERTUS_8B, BackendError, data_url, im
 from galaxus.model.apertus.chat_http import ChatCompletionsBackend, chat_completions_url
 from galaxus.model.apertus.vllm import DEFAULT_BASE_URL, VllmBackend
 
-SECRET = "sk-test-not-a-real-key"
+SECRET = "sk-test-not-a-real-key"  # secret-scan: allow (a fake key: the tests check it is never printed)
 HI = [{"role": "user", "content": "hi"}]
 
 
