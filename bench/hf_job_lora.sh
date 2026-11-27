@@ -51,7 +51,7 @@ log "commit $(git rev-parse --short HEAD)"
 uv sync --quiet --extra local --python 3.12
 
 log "2/5 competition data from Kaggle (this disk only)"
-uvx --quiet kaggle competitions download -c "$COMPETITION" -p "$GALAXUS_DATA" --quiet
+uvx --quiet --from "kaggle==2.2.5" --with six kaggle competitions download -c "$COMPETITION" -p "$GALAXUS_DATA" --quiet
 uv run --quiet python -c "import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" \
   "$GALAXUS_DATA/$COMPETITION.zip" "$GALAXUS_DATA"
 rm -f "$GALAXUS_DATA/$COMPETITION.zip"
