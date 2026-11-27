@@ -27,7 +27,17 @@ if TYPE_CHECKING:  # pragma: no cover - for type checkers and editors only
     from galaxus.data.label_errors import find_label_errors, write_label_errors
     from galaxus.data.load import read_dev, read_final, read_part, read_sample_submission, read_train
     from galaxus.data.metric import evaluate, load_metric, score
-    from galaxus.data.paths import GALAXUS_DATA_ENV, MissingDataDir, cache_dir, data_dir, data_file, out_dir
+    from galaxus.data.paths import (
+        GALAXUS_DATA_ENV,
+        MissingDataDir,
+        cache_dir,
+        data_dir,
+        data_file,
+        final_dir,
+        kaggle_dir,
+        locate_final_csv,
+        out_dir,
+    )
     from galaxus.data.split import iter_product_folds, product_folds, scored_mask, solution_frame, split_holdout
     from galaxus.data.submission import write_submission
     from galaxus.data.validate import SubmissionInvalid, validate_submission
@@ -45,9 +55,12 @@ _EXPORTS = {
     "dimensions": "classes",
     "evaluate": "metric",
     "fill_image_cache": "images",
+    "final_dir": "paths",
     "find_label_errors": "label_errors",
     "iter_product_folds": "split",
     "image_cache_dir": "images",
+    "kaggle_dir": "paths",
+    "locate_final_csv": "paths",
     "load_metric": "metric",
     "opaque_rgb_on_white": "images",
     "out_dir": "paths",
@@ -84,10 +97,13 @@ __all__ = [
     "dimensions",
     "evaluate",
     "fill_image_cache",
+    "final_dir",
     "find_label_errors",
     "image_cache_dir",
     "iter_product_folds",
+    "kaggle_dir",
     "load_metric",
+    "locate_final_csv",
     "opaque_rgb_on_white",
     "out_dir",
     "prepare_image",

@@ -60,3 +60,44 @@ def test_named_readers_read_their_file_from_the_data_dir(galaxus_data, reader, n
 def test_missing_final_csv_explains_the_passphrase_step(galaxus_data):
     with pytest.raises(FileNotFoundError, match="passphrase"):
         read_final()
+
+
+# Issue #26: on Saturday a human decrypts the final images into $GALAXUS_DATA/final/, and the
+# archive decides how deep final.csv lands. read_final must find it there, or runner --part final
+# fails at the one moment it cannot be retried.
+
+FINAL_ROW = "img_9,p9,images/img_9.jpg,alpha,human,true"
+
+
+def test_read_final_finds_the_csv_in_the_decrypted_folder(galaxus_data):
+    release = galaxus_data / "final" / "final_images"
+    release.mkdir(parents=True)
+    write_csv(release / "final.csv", FINAL_ROW)
+    assert read_final()["image_id"].tolist() == ["img_9"]
+
+
+def test_image_paths_of_the_final_rows_resolve_against_the_decrypted_csv(galaxus_data):
+    """Not against $GALAXUS_DATA: the images sit beside the csv the archive produced."""
+    release = galaxus_data / "final" / "final_images"
+    release.mkdir(parents=True)
+    write_csv(release / "final.csv", FINAL_ROW)
+    assert read_final()[IMAGE_FILE_COLUMN].tolist() == [str(release / "images/img_9.jpg")]
+
+
+def test_read_final_still_accepts_the_flat_layout(galaxus_data):
+    write_csv(galaxus_data / "final.csv", FINAL_ROW)
+    assert read_final()["image_id"].tolist() == ["img_9"]
+
+
+def test_read_final_prefers_the_decrypted_folder_over_a_stale_flat_file(galaxus_data):
+    """A leftover final.csv beside the Kaggle files must not win over Saturday's decryption."""
+    write_csv(galaxus_data / "final.csv", "img_stale,p0,images/x.jpg,alpha,human,true")
+    release = galaxus_data / "final"
+    release.mkdir(parents=True, exist_ok=True)
+    write_csv(release / "final.csv", FINAL_ROW)
+    assert read_final()["image_id"].tolist() == ["img_9"]
+
+
+def test_the_missing_final_message_names_the_decrypted_folder(galaxus_data):
+    with pytest.raises(FileNotFoundError, match="final"):
+        read_final()

@@ -12,6 +12,12 @@ from pathlib import Path
 GALAXUS_DATA_ENV = "GALAXUS_DATA"
 
 
+#: The folders of BASE_ARCHITECTURE.md section 3, "Data layout (outside git)".
+KAGGLE_SUBDIR = "kaggle"
+FINAL_SUBDIR = "final"
+FINAL_CSV = "final.csv"
+
+
 class MissingDataDir(RuntimeError):
     """``$GALAXUS_DATA`` is unset, empty or does not point at a directory."""
 
@@ -35,19 +41,62 @@ def data_dir() -> Path:
 
 
 def data_file(name: str) -> Path:
-    """The path of one Kaggle file inside ``$GALAXUS_DATA``.
+    """The path of one Kaggle file: ``$GALAXUS_DATA/kaggle/<name>`` if it is there, else ``$GALAXUS_DATA/<name>``.
+
+    BASE_ARCHITECTURE.md section 3 puts the download in ``kaggle/``. The flat layout is still accepted because
+    teammates downloaded straight into ``$GALAXUS_DATA`` before that was written (issue #26, and the "Path mismatch
+    to settle" note on PR #19).
 
     Raises:
         MissingDataDir: if ``$GALAXUS_DATA`` is unusable.
-        FileNotFoundError: if the file is not there, naming what to download.
+        FileNotFoundError: if the file is in neither place, naming both and what to download.
     """
-    path = data_dir() / name
-    if not path.exists():
-        raise FileNotFoundError(
-            f"{path} is missing. Download the competition files into ${GALAXUS_DATA_ENV} "
-            f"(https://www.kaggle.com/competitions/hackapertus-galaxus/data)."
-        )
-    return path
+    root = data_dir()
+    candidates = (root / KAGGLE_SUBDIR / name, root / name)
+    for path in candidates:
+        if path.exists():
+            return path
+    looked = " or ".join(str(path) for path in candidates)
+    raise FileNotFoundError(
+        f"{name} is missing: looked for {looked}. Download the competition files into ${GALAXUS_DATA_ENV} "
+        f"(https://www.kaggle.com/competitions/hackapertus-galaxus/data)."
+    )
+
+
+def kaggle_dir() -> Path:
+    """``$GALAXUS_DATA/kaggle/``: the competition download, untouched.
+
+    An input, so it is not created here. Read a file from it with :func:`data_file`, which also accepts the flat
+    layout.
+    """
+    return data_dir() / KAGGLE_SUBDIR
+
+
+def final_dir() -> Path:
+    """``$GALAXUS_DATA/final/``: where a human decrypts the final images on Saturday. An input, not created."""
+    return data_dir() / FINAL_SUBDIR
+
+
+def locate_final_csv() -> Path | None:
+    """The one ``final.csv`` anywhere below ``$GALAXUS_DATA/final/``, or ``None`` while it is not decrypted yet.
+
+    The archive decides how deep it lands, so this searches the tree, which is the rule
+    ``galaxus.serve.final_run.find_final_csv`` already follows; keeping both the same is what makes
+    ``runner --part final`` and :func:`galaxus.data.load.read_final` agree on Saturday (issue #26). Serve can
+    import this and drop its own copy.
+
+    Raises:
+        FileNotFoundError: if the tree holds more than one, since guessing which is the real one could silently
+            score the wrong images.
+    """
+    root = final_dir()
+    if not root.is_dir():
+        return None
+    candidates = sorted(root.rglob(FINAL_CSV))
+    if len(candidates) > 1:
+        found = [str(path.relative_to(root)) for path in candidates]
+        raise FileNotFoundError(f"expected one {FINAL_CSV} under {root}, found {len(found)}: {found[:10]}")
+    return candidates[0] if candidates else None
 
 
 def out_dir() -> Path:
