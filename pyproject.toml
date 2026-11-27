@@ -1,0 +1,24 @@
+[project]
+name = "galaxus"
+version = "0.1.0"
+description = "Team NoIdea: Hack Apertus x Galaxus product image classification"
+requires-python = ">=3.10"  # metric.py needs Python 3.10 and pandas 2.1 (challenge_description.md, Scoring locally)
+dependencies = [
+    "numpy",
+    "pandas>=2.1",
+    "pillow",
+]
+
+[dependency-groups]
+dev = ["pytest", "ruff"]
+
+[build-system]
+requires = ["uv_build>=0.9,<0.14"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 120
+extend-exclude = ["reference"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

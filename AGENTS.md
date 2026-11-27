@@ -21,11 +21,12 @@ Agents and their humans share GitHub accounts, so **every agent comment starts w
 
 | Lane | Branch | May change | Owns |
 | --- | --- | --- | --- |
-| data | `data/work` | `src/galaxus/data/`, `tests/data/` | loading from `$GALAXUS_DATA`, white compositing (the Kaggle function), resize, holdout split, scored-cell mask, metric wrapper, submission writer + validator, label-error finder |
-| model | `model/work` | `src/galaxus/model/`, `train/`, `results/`, `tests/model/` | prompts, constrained parsing, Apertus clients, helper models, stub predictor, eval script → `results/metrics.json`, LoRA configs/scripts, experiment runs |
-| serve | `serve/work` | `src/galaxus/serve/`, `bench/`, `docs/`, `presentation/`, `tests/serve/` | batched runner, Saturday final-run script, throughput/memory/cost benchmark, architecture diagram, demo video script, deck |
+| data | `data/work` (Vernika, `vernikas-ctrl`) | `src/galaxus/data/`, `tests/data/` | loading from `$GALAXUS_DATA`, white compositing (the Kaggle function), resize, holdout split, scored-cell mask, metric wrapper, submission writer + validator, label-error finder |
+| model | `model/work` (Parth, `deshmukhparth921-commits` or `parthdeshmukh488-ops`) | `src/galaxus/model/`, `train/`, `results/`, `tests/model/` | prompts, constrained parsing, Apertus clients, helper models, stub predictor, eval script → `results/metrics.json`, LoRA configs/scripts, experiment runs |
+| serve | `serve/work` (Swarup, `swarupgaikwad1801-ux`) | `src/galaxus/serve/`, `bench/`, `docs/`, `presentation/`, `tests/serve/` | batched runner, Saturday final-run script, throughput/memory/cost benchmark, architecture diagram, demo video script, deck |
 | design | `design/<n>-<slug>` | everything else | AGENTS.md, CLAUDE.md, STATE.md, worklog.md, MODELS.md, decisions.md, README.md, technical_report.md, contracts/, top-level `tests/*.py`, .github/, .claude/, pyproject.toml, uv.lock, justfile, .gitignore, .env.example |
 
+- A person may use more than one GitHub account; all of them count as that lane's worker. The branch decides the lane.
 - No lane is a prefix of another; each has exactly one owner. The table changes only through a `design/*` PR.
 - Shared formats live in `contracts/`, owned by design and read-only for workers. Any lane may import any code; only
   its owner changes it.
