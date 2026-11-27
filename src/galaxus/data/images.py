@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import io
 import os
+import time
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pandas as pd
@@ -37,6 +39,9 @@ MAX_SIDE_FACTOR = 8
 IMAGE_SIZE = 512
 #: JPEG quality of the encoded image, as in the reference notebook.
 JPEG_QUALITY = 92
+
+#: What marks the mirrored copy in the cache: ``<image_id>.mirror.jpg`` (issue #27).
+MIRROR_SUFFIX = ".mirror"
 
 
 def opaque_rgb_on_white(image: PillowImage.Image) -> PillowImage.Image:
@@ -93,10 +98,27 @@ def vision_tokens(image: PillowImage.Image) -> int:
     return (image.width // PATCH_SIZE) * (image.height // PATCH_SIZE)
 
 
-def image_cache_dir(image_size: int = IMAGE_SIZE) -> Path:
-    """``$GALAXUS_DATA/cache/images/<size>/``: one prepared JPEG per image, as the data layout specifies."""
+def image_cache_dir(image_size: int = IMAGE_SIZE, patch_size: int | None = None) -> Path:
+    """``$GALAXUS_DATA/cache/images/<size>-p<patch>/``: one prepared JPEG per image (issue #27).
+
+    The patch size is in the folder name, not only the image size, because it decides the pixels: the prepared
+    image is rounded to whole patches, so the same ``image_size`` at a different patch size is a different
+    picture. Keeping it in the name means a future patch size (#28) fills a new folder instead of silently
+    serving the old one's pixels.
+
+    Args:
+        image_size: the target area per side, a multiple of the patch size.
+        patch_size: only to say out loud which patch size the caller expects. It must match the one the
+            preparation actually uses, so a folder can never be labelled with a patch size it does not hold.
+    """
     _check_image_size(image_size)
-    return cache_dir("images", str(image_size))
+    patch = PATCH_SIZE if patch_size is None else patch_size
+    if patch != PATCH_SIZE:
+        raise ValueError(
+            f"this build prepares images at patch size {PATCH_SIZE}, so it cannot fill a p{patch} cache; "
+            "making the patch size a real parameter is issue #28, which waits on the measurement in #46"
+        )
+    return cache_dir("images", f"{image_size}-p{patch}")
 
 
 def _cache_name(image_id: object, mirrored: bool) -> str:
@@ -108,7 +130,7 @@ def _cache_name(image_id: object, mirrored: bool) -> str:
     name = str(image_id)
     if not name or name in {".", ".."} or "/" in name or "\\" in name or Path(name).name != name:
         raise ValueError(f"image_id {image_id!r} is not a plain file name, so it cannot be used as a cache key")
-    return f"{name}.mirrored.jpg" if mirrored else f"{name}.jpg"
+    return f"{name}{MIRROR_SUFFIX}.jpg" if mirrored else f"{name}.jpg"
 
 
 def cached_jpeg(
@@ -136,6 +158,79 @@ def cached_jpeg(
     return data
 
 
+_SOURCE_INDEX: dict[str, dict[str, str]] = {}
+
+
+def _source_index(refresh: bool = False) -> dict[str, str]:
+    """``image_id`` → source image path, built once per ``$GALAXUS_DATA`` from whichever parts are on disk.
+
+    Only used when a caller asks for a cached image by id alone. A part that is not there yet (``final.csv``
+    before Saturday) is simply skipped rather than raising.
+    """
+    from galaxus.data.paths import data_dir
+
+    key = str(data_dir())
+    if refresh:
+        _SOURCE_INDEX.pop(key, None)
+    if key not in _SOURCE_INDEX:
+        from galaxus.data import load
+
+        index: dict[str, str] = {}
+        for reader in (load.read_train, load.read_dev, load.read_final):
+            try:
+                frame = reader()
+            except (FileNotFoundError, KeyError, ValueError):
+                continue
+            if ID_COLUMN in frame.columns and IMAGE_FILE_COLUMN in frame.columns:
+                index.update(zip(frame[ID_COLUMN].astype(str), frame[IMAGE_FILE_COLUMN].astype(str), strict=True))
+        _SOURCE_INDEX[key] = index
+    return _SOURCE_INDEX[key]
+
+
+def cached_image(
+    image_id: object,
+    image_file: str | os.PathLike[str] | None = None,
+    mirrored: bool = False,
+    image_size: int = IMAGE_SIZE,
+    jpeg_quality: int = JPEG_QUALITY,
+    directory: str | os.PathLike[str] | None = None,
+) -> Path:
+    """The **path** of one prepared image in the cache, preparing it first if it is not there yet (issue #27).
+
+    This is what another lane should call: it hands back a file on disk, so a trainer or a runner can open it
+    without going through this module. :func:`cached_jpeg` returns the bytes instead.
+
+    Args:
+        image_file: where to prepare it from. Left out, the id is looked up in the parts on disk, so a caller
+            holding only an ``image_id`` still works.
+
+    Raises:
+        KeyError: the id is not in any part on disk, so there is nothing to prepare it from.
+    """
+    folder = Path(directory) if directory is not None else image_cache_dir(image_size)
+    target = folder / _cache_name(image_id, mirrored)
+    if target.is_file():
+        return target
+    source = image_file
+    if source is None:
+        found = _source_index().get(str(image_id))
+        if found is None:
+            raise KeyError(
+                f"image_id {image_id!r} is in no part on disk, so it cannot be prepared; "
+                "pass image_file, or check $GALAXUS_DATA"
+            )
+        source = found
+    cached_jpeg(
+        image_id,
+        source,
+        mirrored=mirrored,
+        image_size=image_size,
+        jpeg_quality=jpeg_quality,
+        directory=folder,
+    )
+    return target
+
+
 def _id_path_pairs(rows: pd.DataFrame | Iterable[tuple[object, str | os.PathLike[str]]]) -> list[tuple]:
     """``(image_id, image_file)`` pairs from a table read by :func:`galaxus.data.load.read_part`, or from pairs."""
     if isinstance(rows, pd.DataFrame):
@@ -154,6 +249,7 @@ def fill_image_cache(
     refresh: bool = False,
     directory: str | os.PathLike[str] | None = None,
     skip_missing: bool = False,
+    workers: int = 1,
 ) -> dict[str, object]:
     """Prepare every image once into the cache; this is what ``just prep`` fills (BASE_ARCHITECTURE.md B1).
 
@@ -164,11 +260,19 @@ def fill_image_cache(
         How many files were ``written``, ``skipped`` and ``missing``, and the ``directory`` they are in.
     """
     folder = Path(directory) if directory is not None else image_cache_dir(image_size)
-    written = skipped = missing = 0
-    for image_id, image_file in _id_path_pairs(rows):
-        if (folder / _cache_name(image_id, mirrored)).is_file() and not refresh:
-            skipped += 1
-            continue
+    pairs = _id_path_pairs(rows)
+    todo = [
+        (image_id, image_file)
+        for image_id, image_file in pairs
+        if refresh or not (folder / _cache_name(image_id, mirrored)).is_file()
+    ]
+    skipped = len(pairs) - len(todo)
+    written = missing = 0
+    started = time.perf_counter()
+
+    def prepare_one(pair: tuple[object, str | os.PathLike[str]]) -> bool:
+        """True when it was written, False when the source image was missing and that is allowed."""
+        image_id, image_file = pair
         try:
             cached_jpeg(
                 image_id,
@@ -182,10 +286,33 @@ def fill_image_cache(
         except FileNotFoundError:
             if not skip_missing:
                 raise
-            missing += 1
-            continue
-        written += 1
-    return {"written": written, "skipped": skipped, "missing": missing, "directory": folder}
+            return False
+        return True
+
+    if workers > 1 and len(todo) > 1:
+        # Threads, not processes: the work is reading, JPEG decoding and writing, and Pillow drops the GIL for
+        # the codecs. Each image is independent and written through its own ``.part`` file, so there is nothing
+        # to lock. An exception in a worker still propagates out of the ``with``.
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for was_written in pool.map(prepare_one, todo):
+                written += was_written
+                missing += not was_written
+    else:
+        for pair in todo:
+            was_written = prepare_one(pair)
+            written += was_written
+            missing += not was_written
+
+    seconds = time.perf_counter() - started
+    return {
+        "written": written,
+        "skipped": skipped,
+        "missing": missing,
+        "directory": folder,
+        "seconds": seconds,
+        "images_per_second": written / seconds if written and seconds > 0 else None,
+        "workers": workers,
+    }
 
 
 def _check_image_size(image_size: int) -> None:

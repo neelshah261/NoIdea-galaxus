@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:  # pragma: no cover - for type checkers and editors only
     from galaxus.data.classes import ID_COLUMN, allowed_classes, dimensions
     from galaxus.data.images import (
+        cached_image,
         cached_jpeg,
         fill_image_cache,
         image_cache_dir,
@@ -49,6 +50,7 @@ _EXPORTS = {
     "SubmissionInvalid": "validate",
     "allowed_classes": "classes",
     "cache_dir": "paths",
+    "cached_image": "images",
     "cached_jpeg": "images",
     "data_dir": "paths",
     "data_file": "paths",
@@ -91,6 +93,7 @@ __all__ = [
     "SubmissionInvalid",
     "allowed_classes",
     "cache_dir",
+    "cached_image",
     "cached_jpeg",
     "data_dir",
     "data_file",
