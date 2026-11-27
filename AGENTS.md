@@ -61,7 +61,8 @@ Agents and their humans share GitHub accounts, so **every agent comment starts w
      `contracts/` or shared files, or contradicting "For design" notes.
 - Then comment `reviewed at <sha>` (agents: `[<role>-agent] reviewed at <sha>`) and merge pinned to that sha:
   `gh pr merge <n> --merge --match-head-commit <sha>`. Never turn on auto-merge; never bypass `ci`.
-- A `design/*` PR (rules, contracts, shared files) also needs the owner's own approving comment.
+- A `design/*` PR (rules, contracts, shared files) follows the same three checks; no owner approval comment is
+  needed (owner decision 2026-11-27).
 - A check fails: don't merge. Comment `blocked at <sha>: <reason>`. A clash also gets the `design` label and goes
   under Blocked in STATE.md. The author fixes it on its branch (git conflict: `git fetch origin && git rebase
   origin/main`, then push). A new push makes the old review stale.
