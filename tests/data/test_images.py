@@ -10,6 +10,9 @@ from galaxus.data.images import (
     IMAGE_SIZE,
     MAX_SIDE_FACTOR,
     PATCH_SIZE,
+    cached_jpeg,
+    fill_image_cache,
+    image_cache_dir,
     native_aspect_image,
     opaque_rgb_on_white,
     prepare_image,
@@ -128,3 +131,122 @@ def test_transparency_survives_the_jpeg_round_trip_as_white(tmp_path):
     path = write_image(tmp_path / "rgba.png", "RGBA", (256, 256))
     prepared = prepare_image(path)
     assert min(prepared.getpixel((prepared.width // 2, prepared.height // 2))) >= 250
+
+
+# The image cache: BASE_ARCHITECTURE.md "Data layout" puts prepared JPEGs in
+# $GALAXUS_DATA/cache/images/<size>/, and B1 is done when `just prep` fills it.
+
+
+def an_image(tmp_path, name: str = "one.png"):
+    """A synthetic RGBA image on disk, and the (image_id, path) pair for it."""
+    path = tmp_path / name
+    write_image(path, "RGBA", (70, 40), (10, 200, 30, 0))
+    return name.split(".")[0], path
+
+
+def test_the_cache_directory_is_under_galaxus_data_and_named_by_size(galaxus_data):
+    assert image_cache_dir(512) == galaxus_data / "cache" / "images" / "512"
+    assert image_cache_dir(512).is_dir()
+
+
+def test_each_size_gets_its_own_cache_directory(galaxus_data):
+    """We ablate 384 / 512 / 768, so one size must never overwrite another's pixels."""
+    assert image_cache_dir(384) != image_cache_dir(768)
+
+
+def test_a_bad_image_size_is_refused_before_a_directory_appears(galaxus_data):
+    with pytest.raises(ValueError, match="multiple of"):
+        image_cache_dir(500)
+
+
+def test_the_first_call_writes_the_cache_file_and_the_second_reads_it(tmp_path, galaxus_data):
+    image_id, path = an_image(tmp_path)
+    first = cached_jpeg(image_id, path, image_size=64)
+    cached = image_cache_dir(64) / f"{image_id}.jpg"
+    assert cached.is_file()
+    assert cached.read_bytes() == first
+
+    path.unlink()  # the source is gone, so a second call can only come from the cache
+    assert cached_jpeg(image_id, path, image_size=64) == first
+
+
+def test_the_cached_bytes_are_the_same_as_preparing_directly(tmp_path, galaxus_data):
+    image_id, path = an_image(tmp_path)
+    assert cached_jpeg(image_id, path, image_size=64) == prepared_jpeg(path, image_size=64)
+
+
+def test_the_mirror_is_cached_under_its_own_name(tmp_path, galaxus_data):
+    """Test-time augmentation must not evict the original."""
+    path = tmp_path / "lopsided.png"
+    image = PillowImage.new("RGB", (64, 32), (10, 200, 30))
+    image.paste((240, 240, 240), (0, 0, 16, 32))  # a light stripe down one side only
+    image.save(path)
+
+    plain = cached_jpeg("lopsided", path, image_size=64)
+    mirrored = cached_jpeg("lopsided", path, mirrored=True, image_size=64)
+    assert plain != mirrored
+    assert (image_cache_dir(64) / "lopsided.jpg").read_bytes() == plain
+    assert (image_cache_dir(64) / "lopsided.mirrored.jpg").read_bytes() == mirrored
+
+
+def test_refresh_rewrites_a_stale_entry(tmp_path, galaxus_data):
+    image_id, path = an_image(tmp_path)
+    cached = image_cache_dir(64) / f"{image_id}.jpg"
+    cached.write_bytes(b"stale")
+    assert cached_jpeg(image_id, path, image_size=64) == b"stale"
+    assert cached_jpeg(image_id, path, image_size=64, refresh=True) != b"stale"
+
+
+def test_no_half_written_file_is_left_behind(tmp_path, galaxus_data):
+    """Each entry is written to a .part name and renamed, so an interrupted run is safe to resume."""
+    image_id, path = an_image(tmp_path)
+    cached_jpeg(image_id, path, image_size=64)
+    assert list(image_cache_dir(64).glob("*.part")) == []
+
+
+@pytest.mark.parametrize("image_id", ["../escape", "sub/dir", "..", ""])
+def test_an_image_id_that_is_not_a_plain_name_is_refused(tmp_path, galaxus_data, image_id):
+    """The ids come from a competition CSV: one must never write outside the cache."""
+    _, path = an_image(tmp_path)
+    with pytest.raises(ValueError, match="plain file name"):
+        cached_jpeg(image_id, path, image_size=64)
+
+
+def test_filling_the_cache_reports_what_it_did(tmp_path, galaxus_data):
+    pairs = [an_image(tmp_path, "a.png"), an_image(tmp_path, "b.png")]
+    report = fill_image_cache(pairs, image_size=64)
+    assert (report["written"], report["skipped"], report["missing"]) == (2, 0, 0)
+    assert report["directory"] == image_cache_dir(64)
+
+
+def test_filling_the_cache_twice_skips_everything_the_second_time(tmp_path, galaxus_data):
+    """`just prep` is re-run after an interrupted download, so this must be cheap and idempotent."""
+    pairs = [an_image(tmp_path, "a.png")]
+    fill_image_cache(pairs, image_size=64)
+    assert fill_image_cache(pairs, image_size=64)["skipped"] == 1
+
+
+def test_filling_the_cache_accepts_a_table_from_read_part(tmp_path, galaxus_data):
+    import pandas as pd
+
+    image_id, path = an_image(tmp_path)
+    table = pd.DataFrame({"image_id": [image_id], "image_file": [str(path)]})
+    assert fill_image_cache(table, image_size=64)["written"] == 1
+
+
+def test_a_table_without_the_path_column_says_how_to_read_it(galaxus_data):
+    import pandas as pd
+
+    with pytest.raises(KeyError, match="read_part"):
+        fill_image_cache(pd.DataFrame({"image_id": ["img_1"]}), image_size=64)
+
+
+def test_a_missing_source_image_raises_by_default(tmp_path, galaxus_data):
+    with pytest.raises(FileNotFoundError):
+        fill_image_cache([("gone", tmp_path / "not-there.png")], image_size=64)
+
+
+def test_skip_missing_counts_the_gaps_instead(tmp_path, galaxus_data):
+    pairs = [an_image(tmp_path, "a.png"), ("gone", tmp_path / "not-there.png")]
+    report = fill_image_cache(pairs, image_size=64, skip_missing=True)
+    assert (report["written"], report["missing"]) == (1, 1)

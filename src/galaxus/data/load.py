@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from galaxus.data.paths import data_file
+from galaxus.data.paths import FINAL_CSV, data_file, final_dir, locate_final_csv
 
 IMAGE_PATH_COLUMN = "image_path"
 IMAGE_FILE_COLUMN = "image_file"
@@ -44,12 +44,16 @@ def read_final() -> pd.DataFrame:
     Raises:
         FileNotFoundError: before the final images are decrypted, naming the next step.
     """
+    decrypted = locate_final_csv()
+    if decrypted is not None:
+        return read_part(decrypted)
     try:
-        return read_part(data_file("final.csv"))
+        return read_part(data_file(FINAL_CSV))
     except FileNotFoundError as missing:
         raise FileNotFoundError(
-            "final.csv is not in $GALAXUS_DATA yet. The final images are decrypted with the passphrase published "
-            "Sat 28 Nov 13:00 CET (challenge_description.md, Timeline); a human runs the decryption."
+            f"{FINAL_CSV} is not in $GALAXUS_DATA yet: it is neither under {final_dir()} nor beside the other "
+            "Kaggle files. The final images are decrypted with the passphrase published Sat 28 Nov 13:00 CET "
+            "(challenge_description.md, Timeline); a human runs the decryption."
         ) from missing
 
 
