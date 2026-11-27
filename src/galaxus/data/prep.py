@@ -19,7 +19,7 @@ import os
 
 import pandas as pd
 
-from galaxus.data.images import IMAGE_SIZE, fill_image_cache, image_cache_dir
+from galaxus.data.images import IMAGE_SIZE, PATCH_SIZE, fill_image_cache, image_cache_dir
 
 PARTS = ("train", "dev", "final")
 
@@ -63,6 +63,13 @@ def main(argv: list[str] | None = None) -> int:
         help="also write <image_id>.mirror.jpg. TODO(#29): once mirrored_rows() lands, narrow this to the rows "
         "whose perspective label actually changes and whose image carries no text",
     )
+    parser.add_argument(
+        "--patch-size",
+        type=int,
+        default=PATCH_SIZE,
+        help=f"patch size the pixels are prepared at (default {PATCH_SIZE}; Apertus' own is Q-0002). Each patch "
+        "size fills its own cache folder, so two never mix",
+    )
     parser.add_argument("--workers", type=int, default=default_workers())
     parser.add_argument("--limit", type=int, help="only the first N rows, for a quick check")
     parser.add_argument("--refresh", action="store_true", help="re-prepare images that are already cached")
@@ -80,9 +87,13 @@ def main(argv: list[str] | None = None) -> int:
     if arguments.limit:
         frame = frame.head(arguments.limit)
 
-    print(f"[prep] {arguments.part}: {len(frame)} rows at {arguments.size} px -> {image_cache_dir(arguments.size)}")
+    folder = image_cache_dir(arguments.size, arguments.patch_size)
+    print(
+        f"[prep] {arguments.part}: {len(frame)} rows at {arguments.size} px, patch {arguments.patch_size} -> {folder}"
+    )
     shared = {
         "image_size": arguments.size,
+        "patch_size": arguments.patch_size,
         "refresh": arguments.refresh,
         "skip_missing": arguments.skip_missing,
         "workers": arguments.workers,
