@@ -89,6 +89,10 @@ PRESETS: dict[str, dict[str, Any]] = {
     "zero-shot-macro-aware": {"macro_aware": True},  # EXP-0019: rare classes count as much
     "zero-shot-observe-first": {"observe_first": True},  # EXP-0021: one sentence, then the labels
     "zero-shot-image-first-crop": {"image_first": True, "image": "crop"},  # EXP-0022: the two together
+    # EXP-0023: the most vision tokens on the product. Apertus turns each 16 x 16 patch into one token (measured on
+    # #76: 448 x 608 px gave 28 x 38), so cropping and 768 px together give the product about 2.25 times the tokens
+    # of plain 512 px, at about that cost in speed.
+    "zero-shot-crop-768": {"image": "crop", "image_size": 768},
 }
 #: Every zero-shot setup by name: what the eval script scores and what the runner, submit and final_run can build.
 #: One table, so a variant that wins on the holdout can write its dev file and Saturday's file the same day.
