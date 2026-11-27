@@ -39,3 +39,7 @@ final_images/
 img_*.jpg
 img_*.png
 labeling_guideline.*
+
+# The lane folders are named data/ but hold code, not data: re-include them
+!src/galaxus/data/
+!tests/data/

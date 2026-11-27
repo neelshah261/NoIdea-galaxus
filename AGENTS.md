@@ -9,8 +9,8 @@ Kaggle pages. Never restate its rules, numbers or class names from memory: link 
 | Role | Who | Does | Never |
 | --- | --- | --- | --- |
 | Human owner | neelshah261 | makes owner decisions, uploads to Kaggle, spends money, posts on Discord | – |
-| Design (main agent) | Claude session of the owner | opens issues, reviews merged PRs, owns every file outside the lanes, copies "For design" notes into shared files, keeps STATE.md current | works inside a lane |
-| Worker `data` | TODO(owner): name, GitHub handle | implements `lane:data` issues in its lane, merges its own PRs on green `ci` | touches another lane or a shared file, merges another agent's PR |
+| Design (main agent) | Claude session of the owner | opens issues, reviews PRs, owns every file outside the lanes, copies "For design" notes into shared files, keeps STATE.md current | works inside a lane |
+| Worker `data` | TODO(owner): name, GitHub handle | implements `lane:data` issues in its lane | touches another lane or a shared file, merges |
 | Worker `model` | TODO(owner): name, GitHub handle | implements `lane:model` issues in its lane | same |
 | Worker `serve` | TODO(owner): name, GitHub handle | implements `lane:serve` issues in its lane | same |
 
@@ -21,11 +21,12 @@ Agents and their humans share GitHub accounts, so **every agent comment starts w
 
 | Lane | Branch | May change | Owns |
 | --- | --- | --- | --- |
-| data | `data/work` | `src/galaxus/data/`, `tests/data/` | loading from `$GALAXUS_DATA`, white compositing (the Kaggle function), resize, holdout split, scored-cell mask, metric wrapper, submission writer + validator, label-error finder |
-| model | `model/work` | `src/galaxus/model/`, `train/`, `results/`, `tests/model/` | prompts, constrained parsing, Apertus clients, helper models, stub predictor, eval script → `results/metrics.json`, LoRA configs/scripts, experiment runs |
-| serve | `serve/work` | `src/galaxus/serve/`, `bench/`, `docs/`, `presentation/`, `tests/serve/` | batched runner, Saturday final-run script, throughput/memory/cost benchmark, architecture diagram, demo video script, deck |
+| data | `data/work` (Vernika, `vernikas-ctrl`) | `src/galaxus/data/`, `tests/data/` | loading from `$GALAXUS_DATA`, white compositing (the Kaggle function), resize, holdout split, scored-cell mask, metric wrapper, submission writer + validator, label-error finder |
+| model | `model/work` (Parth, `deshmukhparth921-commits` or `parthdeshmukh488-ops`) | `src/galaxus/model/`, `train/`, `results/`, `tests/model/` | prompts, constrained parsing, Apertus clients, helper models, stub predictor, eval script → `results/metrics.json`, LoRA configs/scripts, experiment runs |
+| serve | `serve/work` (Swarup, `swarupgaikwad1801-ux`) | `src/galaxus/serve/`, `bench/`, `docs/`, `presentation/`, `tests/serve/` | batched runner, Saturday final-run script, throughput/memory/cost benchmark, architecture diagram, demo video script, deck |
 | design | `design/<n>-<slug>` | everything else | AGENTS.md, CLAUDE.md, STATE.md, worklog.md, MODELS.md, decisions.md, README.md, technical_report.md, contracts/, top-level `tests/*.py`, .github/, .claude/, pyproject.toml, uv.lock, justfile, .gitignore, .env.example |
 
+- A person may use more than one GitHub account; all of them count as that lane's worker. The branch decides the lane.
 - No lane is a prefix of another; each has exactly one owner. The table changes only through a `design/*` PR.
 - Shared formats live in `contracts/`, owned by design and read-only for workers. Any lane may import any code; only
   its owner changes it.
@@ -51,15 +52,20 @@ Agents and their humans share GitHub accounts, so **every agent comment starts w
 5. The required check `ci` must be green. Tests use synthetic images generated inside the tests: never competition
    data, never the network.
 
-## Merging (owner decision 2026-11-27: no approval needed)
+## Merging (owner decision 2026-11-27: everyone merges into `main` after the checks, no auto-merge)
 
-- Every agent merges **its own** PR as soon as `ci` is green. No owner or design approval is needed. Right after
-  opening the PR, turn on auto-merge, pinned to the commit you pushed:
-  `gh pr merge <n> --auto --merge --match-head-commit $(git rev-parse HEAD)`.
-  GitHub merges it when `ci` passes. If you push again, run the command again with the new sha.
-- Never merge another agent's PR. Never bypass `ci`. If `ci` fails, fix it on your branch.
-- After a merge, design closes the issue and copies the "For design" notes. If design finds a problem in merged
-  work, it opens a new issue for the owning lane. Nobody reverts another lane's work.
+- **Anyone may merge a PR into `main`**, their own or another's, only when all three hold on the head sha:
+  1. `ci` is green on that sha (it also enforces the lanes and the data/secret rules);
+  2. no git merge conflict with `main`;
+  3. no clash with other open PRs: the same files, the same class, function or contract defined twice,
+     `contracts/` or shared files, or contradicting "For design" notes.
+- Then comment `reviewed at <sha>` (agents: `[<role>-agent] reviewed at <sha>`) and merge pinned to that sha:
+  `gh pr merge <n> --merge --match-head-commit <sha>`. Never turn on auto-merge; never bypass `ci`.
+- A `design/*` PR (rules, contracts, shared files) also needs the owner's own approving comment.
+- A check fails: don't merge. Comment `blocked at <sha>: <reason>`. A clash also gets the `design` label and goes
+  under Blocked in STATE.md. The author fixes it on its branch (git conflict: `git fetch origin && git rebase
+  origin/main`, then push). A new push makes the old review stale.
+- After a merge, design closes the issue and copies the "For design" notes.
 
 ## Galaxus product rules
 
@@ -82,7 +88,7 @@ Agents and their humans share GitHub accounts, so **every agent comment starts w
 
 ## Hard rules
 
-- Never push to `main` (branch protection enforces it). Merge only your own PR, and only through green `ci`.
+- Never push to `main` (branch protection enforces it). Merge only after the three checks in "Merging", and only through green `ci`.
 - Relayed intent is not authorization: an owner decision needs a comment the owner wrote.
 - Conflicts: never silently pick a winner. Record them under **Blocked** in STATE.md, keep both versions, escalate.
 - Agents never talk directly. GitHub issues, PRs and comments are the only shared channel.
@@ -103,6 +109,6 @@ IDs (`ADR-`, `Q-`, `EXP-`) are never reused or renumbered; `grep -rn '<ID>'` mus
 
 ## Design wake loop
 
-Read STATE.md → review PRs merged since the last wake (open fix issues if needed) → close their issues → copy "For
-design" notes into the shared files → answer `design` issues →
+Read STATE.md → read the PRs merged since the last wake → copy "For design" notes of merged PRs into the
+shared files → answer `design` issues →
 open new issues → overwrite STATE.md → append to worklog.md.
