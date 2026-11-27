@@ -92,6 +92,45 @@ def _resolved() -> dict[str, list[str]]:
     )
 
 
+def _roles() -> dict[str, str]:
+    """The contract's ``roles`` block: the names whose *meaning* the code needs, not just their spelling."""
+    if not CONTRACTS_CLASSES.is_file():
+        raise ClassesUnavailable(
+            f"{CONTRACTS_CLASSES} is not there, so which dimension carries the text overlay, and which of its "
+            "classes means 'no text', are unknown. They are design's to publish (contracts/classes.json, "
+            '"roles"); pass them explicitly in the meantime.'
+        )
+    contract = json.loads(CONTRACTS_CLASSES.read_text(encoding="utf-8"))
+    block = contract.get("roles") if isinstance(contract, dict) else None
+    if not isinstance(block, dict):
+        raise ClassesUnavailable(f'{CONTRACTS_CLASSES} has no "roles" block naming the dimensions with a meaning')
+    return {str(name): str(value) for name, value in block.items() if isinstance(value, str)}
+
+
+def _role(name: str) -> str:
+    value = _roles().get(name)
+    if not value:
+        raise ClassesUnavailable(f'{CONTRACTS_CLASSES} "roles" does not name {name}')
+    return value
+
+
+def overlay_dimension() -> str:
+    """The dimension that says whether the image carries a text overlay.
+
+    From ``contracts/classes.json`` "roles", which quotes challenge_description.md "Classes". Never typed in lane
+    code (AGENTS.md "Hard rules").
+    """
+    return _role("overlay_dimension")
+
+
+def no_overlay_class() -> str:
+    """The class of :func:`overlay_dimension` meaning "this image carries no text".
+
+    A real class, scored like any other, per the quote the contract carries.
+    """
+    return _role("no_overlay_class")
+
+
 def dimensions() -> tuple[str, ...]:
     """The six dimensions, in the column order of the submission file."""
     return tuple(_resolved())

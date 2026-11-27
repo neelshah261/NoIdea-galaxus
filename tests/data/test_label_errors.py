@@ -14,6 +14,7 @@ from galaxus.data.label_errors import (
     PREDICTIONS_FILE,
     REPORT_COLUMNS,
     find_label_errors,
+    main,
     out_of_fold_frame,
     write_label_errors,
 )
@@ -216,3 +217,96 @@ def test_records_and_the_long_table_agree():
     from_records = out_of_fold_frame([record("img_1", "beta", 0.99)])
     from_table = out_of_fold_frame(predictions(("img_1", "subject", "beta", 0.99)))
     pd.testing.assert_frame_equal(from_records, from_table)
+
+
+# --- #7: the command line ------------------------------------------------------------------------------------
+#
+# The finder had a library API and no way to run it, unlike prep and validate. The bonus csv is due by 14:30 on
+# 28 November, so the moment a predictor emits confidences (#75) this has to be one command, not a script someone
+# writes under time pressure.
+
+
+@pytest.fixture
+def predictions_file(galaxus_data, train_table):
+    """Out-of-fold predictions on disk, in the model lane's jsonl shape, disagreeing with img_1's human label."""
+    train_table.to_csv(galaxy := galaxus_data / "train.csv", index=False)
+    assert galaxy.is_file()
+    folder = galaxus_data / "out" / "predictions" / "EXP-0099"
+    folder.mkdir(parents=True)
+    path = folder / PREDICTIONS_FILE
+    path.write_text(
+        "\n".join(
+            json.dumps({"image_id": image_id, "labels": {"subject": cls}, "confidence": {"subject": confidence}})
+            # img_1 is labelled alpha and img_2 beta, so both of these disagree with a human label; only the
+            # first is confident enough for the default threshold.
+            for image_id, cls, confidence in [("img_1", "beta", 0.99), ("img_2", "alpha", 0.4)]
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_the_cli_writes_the_csv_and_reports_counts(predictions_file, galaxus_data, capsys):
+    assert main(["--predictions", str(predictions_file), "--dimensions", "subject"]) == 0
+    printed = capsys.readouterr().out
+    assert "1 suspected error(s)" in printed
+    assert "subject 1" in printed
+    written = galaxus_data / "out" / "label_errors.csv"
+    assert written.is_file()
+    assert list(pd.read_csv(written).columns) == list(REPORT_COLUMNS)
+
+
+def test_the_cli_prints_no_image_id_and_no_label(predictions_file, capsys):
+    """Product rule 3: identifiers are masked in anything shown. Counts are safe, rows are not."""
+    main(["--predictions", str(predictions_file), "--dimensions", "subject"])
+    printed = capsys.readouterr().out
+    assert "img_1" not in printed
+    assert "alpha" not in printed and "beta" not in printed
+
+
+def test_the_cli_refuses_to_write_inside_a_git_work_tree(predictions_file, tmp_path, capsys):
+    """The one way this file could be committed by accident is a mistyped --out."""
+    repository = tmp_path / "checkout"
+    (repository / ".git").mkdir(parents=True)
+    assert main(["--predictions", str(predictions_file), "--out", str(repository / "errors.csv")]) == 1
+    assert "never enter git" in capsys.readouterr().err
+    assert not (repository / "errors.csv").exists()
+
+
+def test_the_cli_dry_run_writes_nothing(predictions_file, galaxus_data, capsys):
+    assert main(["--predictions", str(predictions_file), "--dimensions", "subject", "--dry-run"]) == 0
+    assert "nothing written" in capsys.readouterr().out
+    assert not (galaxus_data / "out" / "label_errors.csv").exists()
+
+
+def test_the_cli_threshold_is_a_confidence(predictions_file):
+    with pytest.raises(SystemExit):
+        main(["--predictions", str(predictions_file), "--threshold", "90"])
+
+
+def test_the_cli_threshold_changes_what_is_reported(predictions_file, capsys):
+    main(["--predictions", str(predictions_file), "--dimensions", "subject", "--threshold", "0.3", "--dry-run"])
+    assert "2 suspected error(s)" in capsys.readouterr().out
+
+
+def test_the_cli_top_keeps_only_the_most_confident(predictions_file, capsys):
+    main(
+        [
+            "--predictions",
+            str(predictions_file),
+            "--dimensions",
+            "subject",
+            "--threshold",
+            "0.3",
+            "--top",
+            "1",
+            "--dry-run",
+        ]
+    )
+    assert "1 suspected error(s)" in capsys.readouterr().out
+
+
+def test_the_cli_reports_a_missing_predictions_file_without_a_traceback(galaxus_data, train_table, capsys):
+    train_table.to_csv(galaxus_data / "train.csv", index=False)
+    assert main(["--predictions", str(galaxus_data / "nothing-here.jsonl")]) == 1
+    assert capsys.readouterr().err.startswith("cannot find label errors:")

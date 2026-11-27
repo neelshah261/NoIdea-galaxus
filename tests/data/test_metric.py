@@ -14,7 +14,7 @@ import pandas as pd
 import pytest
 
 from galaxus.data import metric as metric_module
-from galaxus.data.metric import METRIC_MODULE_NAME, evaluate, load_metric, score
+from galaxus.data.metric import METRIC_MODULE_NAME, clear_metric_cache, evaluate, load_metric, score
 from galaxus.data.paths import GALAXUS_DATA_ENV, MissingDataDir
 
 STUB = """
@@ -34,11 +34,9 @@ def evaluate(solution, submission, id_column):
 @pytest.fixture(autouse=True)
 def fresh_cache():
     """The module caches each loaded metric by path; every test starts with an empty cache."""
-    metric_module._loaded.clear()
-    sys.modules.pop(METRIC_MODULE_NAME, None)
+    clear_metric_cache()
     yield
-    metric_module._loaded.clear()
-    sys.modules.pop(METRIC_MODULE_NAME, None)
+    clear_metric_cache()
 
 
 def test_metric_py_is_not_in_the_repository():
@@ -272,3 +270,51 @@ def test_one_data_dir_still_reads_the_file_once(tmp_path, monkeypatch):
     monkeypatch.setenv(GALAXUS_DATA_ENV, str(folder))
     assert load_metric() is load_metric()
     assert (folder / "loads.txt").read_text(encoding="utf-8") == "x", "the module was executed more than once"
+
+
+# --- Emptying the cache -------------------------------------------------------------------------------------
+
+
+def test_clear_metric_cache_forces_a_re_read_of_the_same_file(tmp_path, monkeypatch):
+    folder = _stub_metric(tmp_path / "same", 0.25)
+    monkeypatch.setenv(GALAXUS_DATA_ENV, str(folder))
+    first = load_metric()
+    assert load_metric() is first
+    clear_metric_cache()
+    assert load_metric() is not first, "clearing the cache must make the next call read the file again"
+
+
+def test_clearing_an_already_empty_cache_is_harmless():
+    clear_metric_cache()
+    clear_metric_cache()
+    assert metric_module._loaded == {}
+
+
+def test_assigning_none_still_empties_the_cache(tmp_path, monkeypatch):
+    """``tests/serve/conftest.py`` empties the cache by assigning ``None`` to the private global (#68, #77).
+
+    That was how the single global was cleared. Since #73 the cache is a dict, so a bare ``.get`` on ``None``
+    would raise ``AttributeError`` -- and the fixture would silently stop isolating the serve tests from a real
+    ``$GALAXUS_DATA``, which is the one thing it exists to do. ``None`` therefore means "nothing cached".
+    """
+    first_folder = _stub_metric(tmp_path / "first", 0.25)
+    monkeypatch.setenv(GALAXUS_DATA_ENV, str(first_folder))
+    first = load_metric()
+
+    metric_module._loaded = None  # exactly what that fixture does
+
+    second_folder = _stub_metric(tmp_path / "second", 0.75)
+    monkeypatch.setenv(GALAXUS_DATA_ENV, str(second_folder))
+    reloaded = load_metric()
+    assert reloaded is not first
+    assert reloaded.score(None, None, "image_id") == 0.75
+    assert isinstance(metric_module._loaded, dict), "the cache is a dict again, not left as None"
+
+
+def test_assigning_none_then_loading_the_same_path_re_reads_it(tmp_path, monkeypatch):
+    """The isolation the serve fixture promises: after emptying, nothing is served from before."""
+    folder = _stub_metric(tmp_path / "only", 0.5)
+    monkeypatch.setenv(GALAXUS_DATA_ENV, str(folder))
+    first = load_metric()
+    metric_module._loaded = None
+    assert load_metric() is not first
