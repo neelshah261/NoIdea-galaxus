@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from typing import ClassVar
 
 import pandas as pd
 import pytest
@@ -90,7 +91,7 @@ def test_predictor_parses_answers_and_falls_back_on_garbage():
     replies = iter([json.dumps({d: "beta" for d in DIMS}), "I cannot tell"])
 
     class Backend:
-        def generate(self, messages, images, max_tokens, temperature):
+        def generate(self, messages, images, json_schema, max_tokens, temperature):
             assert messages[0]["role"] == "system" and images == [b"jpeg"] and temperature == 0.0
             return Generation(next(replies))
 
@@ -126,7 +127,7 @@ def test_the_eval_script_knows_the_lora_predictor_and_it_scores_through_a_fake_e
     class Backend:
         model = "apertus-lora"
 
-        def generate(self, messages, images, max_tokens, temperature):
+        def generate(self, messages, images, json_schema, max_tokens, temperature):
             return Generation(json.dumps({d: "alpha" for d in DIMS}))
 
     predictor = lora.eval_factory(backend=Backend())(rows, Data(), 0)
@@ -145,3 +146,98 @@ def test_the_eval_script_knows_the_lora_predictor_and_it_scores_through_a_fake_e
 def test_without_an_endpoint_the_lora_predictor_says_what_to_set():
     with pytest.raises(RuntimeError, match="LORA_BASE_URL"):
         lora.eval_factory(environ={})(pd.DataFrame(), None, 0)
+
+
+# ---------------------------------------------------------------- #100: from_env and the schema at inference
+
+
+class _FakeVllm:
+    """Stands in for VllmBackend: records how it was built and answers one valid class per dimension."""
+
+    built: ClassVar[list] = []
+
+    def __init__(self, base_url, model, **options):
+        self.base_url, self.model, self.options = base_url, model, options
+        self.schemas = []
+        _FakeVllm.built.append(self)
+
+    def generate(self, messages, images, json_schema=None, *, max_tokens, temperature):
+        self.schemas.append(json_schema)
+        return Generation(json.dumps({d: min(json_schema["properties"][d]["enum"]) for d in json_schema["required"]}))
+
+
+@pytest.fixture
+def fake_endpoint(monkeypatch):
+    """No network and no $GALAXUS_DATA: a fake vLLM backend, and a majority answer from the contract's classes."""
+    from galaxus.data.classes import allowed_classes
+
+    _FakeVllm.built = []
+    monkeypatch.setattr("galaxus.model.apertus.vllm.VllmBackend", _FakeVllm)
+    monkeypatch.setattr("galaxus.model.baselines.fit_from_data_lane",
+                        lambda: {d: min(names) for d, names in allowed_classes().items()})
+    return _FakeVllm
+
+
+@dataclass(frozen=True)
+class _Item:
+    image_id: str
+    path: str = ""
+    context: dict | None = None
+
+
+@pytest.mark.real_contract
+def test_from_env_builds_with_no_arguments_from_the_contract(fake_endpoint):
+    from galaxus.data.classes import allowed_classes, dimensions
+
+    predictor = lora.from_env({"LORA_BASE_URL": "http://gpu:8000/v1"})
+    backend = fake_endpoint.built[-1]
+    assert backend.base_url == "http://gpu:8000/v1" and backend.model == "apertus-lora"
+    assert backend.options["retries"] == lora.RETRIES and predictor.model == "apertus-lora"
+    assert list(predictor.classes) == list(dimensions())
+    assert predictor.classes == {d: sorted(allowed_classes()[d]) for d in dimensions()}
+    assert predictor.image_bytes is lora._cached_image  # the same 512 px pixels as eval_factory
+    assert set(predictor.fallback) == set(dimensions())
+
+
+@pytest.mark.real_contract
+def test_a_served_name_can_be_chosen(fake_endpoint):
+    lora.from_env({"LORA_BASE_URL": "http://gpu:8000/v1", "LORA_SERVED_MODEL": "run-7"})
+    assert fake_endpoint.built[-1].model == "run-7"
+
+
+def test_from_env_without_an_endpoint_stops_before_reading_anything(monkeypatch):
+    monkeypatch.setattr("galaxus.model.baselines.fit_from_data_lane", lambda: pytest.fail("read the data"))
+    with pytest.raises(RuntimeError, match="LORA_BASE_URL"):
+        lora.from_env({})
+
+
+@pytest.mark.real_contract
+def test_the_class_schema_reaches_generate_and_the_prompt_is_the_training_one(fake_endpoint):
+    predictor = lora.from_env({"LORA_BASE_URL": "http://gpu:8000/v1"})
+    predictor.image_bytes = lambda item: b"jpeg"
+    answer = predictor.predict([_Item("x")])[0]
+    schema = fake_endpoint.built[-1].schemas[-1]
+    assert schema["required"] == list(predictor.classes) and schema["additionalProperties"] is False
+    assert all(schema["properties"][d]["enum"] == sorted(predictor.classes[d]) for d in predictor.classes)
+    assert answer["labels"] == {d: min(predictor.classes[d]) for d in predictor.classes}
+    assert predictor.fallbacks == 0 and predictor.system == lora.system_prompt(predictor.classes)
+
+
+def test_an_answer_with_an_unknown_class_is_counted_as_a_fallback():
+    class Backend:
+        def generate(self, messages, images, json_schema=None, *, max_tokens, temperature):
+            return Generation(json.dumps({**{d: "alpha" for d in DIMS}, "subject": "not_a_class"}))
+
+    predictor = lora.LoraPredictor(Backend(), CLASSES, {d: "none" for d in DIMS}, lambda item: b"jpeg")
+    assert predictor.predict([_Item("a")])[0]["labels"] == {d: "none" for d in DIMS}
+    assert predictor.fallbacks == 1
+
+
+@pytest.mark.real_contract
+def test_submit_and_final_run_load_it_by_name(fake_endpoint, monkeypatch):
+    """``submit --run`` and ``final_run --predictor`` both build through ``load_predictor``."""
+    from galaxus.serve.items import load_predictor
+
+    monkeypatch.setenv("LORA_BASE_URL", "http://gpu:8000/v1")
+    predictor = load_predictor("galaxus.model.lora:from_env")
+    assert isinstance(predictor, lora.LoraPredictor) and fake_endpoint.built
