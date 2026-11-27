@@ -16,7 +16,7 @@ to close before the hand-in.** Status: `gap` | `partial` | `proven`.
 | Bonus: label errors | list of suspected errors in train.csv | CSV in `$GALAXUS_DATA/out/`, sent by a human on Discord, never committed | #7 | gap |
 | Hand-in: Kaggle | final file uploaded **and selected** in time | `final_run.py` dry run; owner uploads and selects | #15, #16 | gap |
 | Hand-in: repo | public, template layout kept | repo settings; layout check | #11 | gap |
-| Hand-in: technical report | PDF in the repo root, section 7 filled, commit + weights revision named | `technical_report.md` → `NoIdead_Report.pdf` (`just report`) | #54 | partial: draft PDF with section 7 generated; final EXP, Kaggle score, demo link and weights revision still TODO |
+| Hand-in: technical report | PDF in the repo root, section 7 filled, commit + weights revision named | `technical_report.md` → `NoIdea_Report.pdf` (`just report`) | #54 | partial: draft PDF with section 7 generated; final EXP, Kaggle score, demo link and weights revision still TODO |
 | Hand-in: demo video | link in the report's Demo field | video, STYLE.md title cards | serve | gap |
 | Hand-in: pitch deck | PDF within the slide limit | PITCH_DECK.md built in `presentation/`, printed to PDF | serve | gap |
 | Hand-in: weights | published with a revision | Hugging Face repo, revision in report section 7 | owner | gap |

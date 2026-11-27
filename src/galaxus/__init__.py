@@ -1,1 +1,1 @@
-"""Team NoIdead: Hack Apertus x Galaxus product image classification."""
+"""Team NoIdea: Hack Apertus x Galaxus product image classification."""

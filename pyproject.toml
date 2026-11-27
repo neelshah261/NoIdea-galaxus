@@ -1,7 +1,7 @@
 [project]
 name = "galaxus"
 version = "0.1.0"
-description = "Team NoIdead: Hack Apertus x Galaxus product image classification"
+description = "Team NoIdea: Hack Apertus x Galaxus product image classification"
 requires-python = ">=3.10"  # metric.py needs Python 3.10 and pandas 2.1 (challenge_description.md, Scoring locally)
 dependencies = [
     "numpy",
@@ -22,7 +22,7 @@ local = [
 ]
 # figures: the slide 8 perspective figure (bench/perspective_report.py, #34) and report charts.
 figures = ["matplotlib"]
-# report: technical_report.md rendered to HTML before a headless browser prints NoIdead_Report.pdf (scripts/build_report.py, #54).
+# report: technical_report.md rendered to HTML before a headless browser prints NoIdea_Report.pdf (scripts/build_report.py, #54).
 report = ["markdown"]
 # api: the Hack Apertus (Keera) gateway client is standard-library HTTP (galaxus.model.apertus.api): nothing to install.
 api = []
