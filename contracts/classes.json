@@ -1,0 +1,70 @@
+{
+  "_about": [
+    "The six dimensions and their classes, copied verbatim from challenge_description.md, section \"Classes\".",
+    "Dimension order = the column order of the submission file (challenge_description.md, \"Submission file\").",
+    "Generated from that file, never typed from memory; tests/test_contracts.py fails if the two ever differ.",
+    "Code reads this through galaxus.data.classes (dimensions(), allowed_classes()); no lane types a class name."
+  ],
+  "source": "challenge_description.md#classes",
+  "dimensions": {
+    "subject": [
+      "full_product",
+      "detail_closeup",
+      "accessories",
+      "packaging",
+      "package_and_product",
+      "multipack_trade_unit",
+      "delivery_scope",
+      "product_grouping",
+      "multiview",
+      "energy_label",
+      "infographic",
+      "logo",
+      "placeholder"
+    ],
+    "background": [
+      "white",
+      "color",
+      "scene_lifestyle"
+    ],
+    "perspective": [
+      "front_head_on",
+      "front_angle_left",
+      "front_angle_right",
+      "back_head_on",
+      "back_angle_left",
+      "back_angle_right",
+      "left_side",
+      "right_side",
+      "top_down",
+      "bottom_up"
+    ],
+    "individuals": [
+      "individual_present",
+      "none"
+    ],
+    "text_classification": [
+      "certification_seal",
+      "technical_specs",
+      "promotional_text",
+      "nutritional_info",
+      "other",
+      "none"
+    ],
+    "text_language": [
+      "German",
+      "English",
+      "French",
+      "Italian",
+      "Dutch",
+      "other",
+      "none"
+    ]
+  },
+  "roles": {
+    "_about": "Classes with a meaning the code needs, each quoted from challenge_description.md \"Classes\".",
+    "overlay_dimension": "text_classification",
+    "no_overlay_class": "none",
+    "source": "\"text_classification is the overlay dimension. none is a real class and is scored like any other.\""
+  }
+}
