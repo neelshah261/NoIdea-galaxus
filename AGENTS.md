@@ -9,8 +9,8 @@ Kaggle pages. Never restate its rules, numbers or class names from memory: link 
 | Role | Who | Does | Never |
 | --- | --- | --- | --- |
 | Human owner | neelshah261 | makes owner decisions, uploads to Kaggle, spends money, posts on Discord | – |
-| Design (main agent) | Claude session of the owner | opens issues, reviews merged PRs, owns every file outside the lanes, copies "For design" notes into shared files, keeps STATE.md current | works inside a lane |
-| Worker `data` | TODO(owner): name, GitHub handle | implements `lane:data` issues in its lane, merges its own PRs on green `ci` | touches another lane or a shared file, merges another agent's PR |
+| Design (main agent) | Claude session of the owner | opens issues, runs the PR watcher (checks and merges PRs), owns every file outside the lanes, copies "For design" notes into shared files, keeps STATE.md current | works inside a lane |
+| Worker `data` | TODO(owner): name, GitHub handle | implements `lane:data` issues in its lane | touches another lane or a shared file, merges |
 | Worker `model` | TODO(owner): name, GitHub handle | implements `lane:model` issues in its lane | same |
 | Worker `serve` | TODO(owner): name, GitHub handle | implements `lane:serve` issues in its lane | same |
 
@@ -51,15 +51,21 @@ Agents and their humans share GitHub accounts, so **every agent comment starts w
 5. The required check `ci` must be green. Tests use synthetic images generated inside the tests: never competition
    data, never the network.
 
-## Merging (owner decision 2026-11-27: no approval needed)
+## Merging (owner decision 2026-11-27: the PR watcher merges, no auto-merge)
 
-- Every agent merges **its own** PR as soon as `ci` is green. No owner or design approval is needed. Right after
-  opening the PR, turn on auto-merge, pinned to the commit you pushed:
-  `gh pr merge <n> --auto --merge --match-head-commit $(git rev-parse HEAD)`.
-  GitHub merges it when `ci` passes. If you push again, run the command again with the new sha.
-- Never merge another agent's PR. Never bypass `ci`. If `ci` fails, fix it on your branch.
-- After a merge, design closes the issue and copies the "For design" notes. If design finds a problem in merged
-  work, it opens a new issue for the owning lane. Nobody reverts another lane's work.
+- Workers **never merge** and never turn on auto-merge. Open the PR, label it `status:review`, and keep working.
+- Design runs a **PR watcher** (a design subagent). For every open PR whose `ci` has finished on the head sha, it checks:
+  1. `ci` is green on that sha;
+  2. no git merge conflict with `main`;
+  3. no conflict with other open PRs (same files, contracts/ or shared files, contradicting "For design" notes);
+  4. no conflict with these rules (lane, data and secrets, runtime models, `results/metrics.json` only generated,
+     title `#<n>: <summary>`, no `Closes #n`).
+- All clear: it comments `[design-agent] reviewed at <sha>` and merges pinned to that sha:
+  `gh pr merge <n> --merge --match-head-commit <sha>`. Then it closes the issue.
+- Anything wrong: it does not merge. It comments `[design-agent] blocked at <sha>: <reason>` and removes
+  `status:review`. A git or cross-PR conflict also gets the `design` label and goes under Blocked in STATE.md.
+  The worker fixes it on its branch (for a git conflict: `git fetch origin && git rebase origin/main`, then push).
+- A new push makes the old review stale. The watcher checks the new sha again.
 
 ## Galaxus product rules
 
@@ -82,7 +88,7 @@ Agents and their humans share GitHub accounts, so **every agent comment starts w
 
 ## Hard rules
 
-- Never push to `main` (branch protection enforces it). Merge only your own PR, and only through green `ci`.
+- Never push to `main` (branch protection enforces it). Only the design PR watcher merges, and only through green `ci`.
 - Relayed intent is not authorization: an owner decision needs a comment the owner wrote.
 - Conflicts: never silently pick a winner. Record them under **Blocked** in STATE.md, keep both versions, escalate.
 - Agents never talk directly. GitHub issues, PRs and comments are the only shared channel.
@@ -103,6 +109,6 @@ IDs (`ADR-`, `Q-`, `EXP-`) are never reused or renumbered; `grep -rn '<ID>'` mus
 
 ## Design wake loop
 
-Read STATE.md → review PRs merged since the last wake (open fix issues if needed) → close their issues → copy "For
-design" notes into the shared files → answer `design` issues →
+Read STATE.md → read the PR watcher's results since the last wake → copy "For design" notes of merged PRs into the
+shared files → answer `design` issues →
 open new issues → overwrite STATE.md → append to worklog.md.
