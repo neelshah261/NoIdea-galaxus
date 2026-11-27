@@ -41,7 +41,6 @@ from pathlib import Path
 from typing import Any
 
 ENCRYPTED_NAME = "final_encrypted.bin"
-FINAL_DIR = "final"
 FINAL_CSV = "final.csv"
 SEVEN_ZIP_NAMES = ("7zz", "7z", "7za")
 WINDOWS_SEVEN_ZIP = Path(r"C:\Program Files\7-Zip\7z.exe")
@@ -60,6 +59,11 @@ THROUGHPUT_FLOOR = 2.0
 
 class DecryptError(RuntimeError):
     """7-Zip is missing or could not extract the archive. The message never contains the passphrase."""
+
+
+class FinalFilesError(RuntimeError):
+    """The decrypted final folder is not usable as it is (two final.csv, or none after decrypting). Nothing is
+    decrypted again: a second decryption would hide the problem inside Saturday's window (#91)."""
 
 
 def find_seven_zip() -> str:
@@ -94,33 +98,37 @@ def decrypt(archive: Path, destination: Path, passphrase: str, seven_zip: str | 
         raise DecryptError(f"7-Zip exit code {result.returncode}: {' | '.join(detail)}. Wrong passphrase?")
 
 
-def find_final_csv(directory: Path) -> Path:
-    """The ``final.csv`` inside the decrypted folder, wherever the archive put it."""
-    candidates = sorted(directory.rglob(FINAL_CSV))
-    if len(candidates) == 1:
-        return candidates[0]
-    found = sorted(str(path.relative_to(directory)) for path in directory.rglob("*.csv"))
-    raise FileNotFoundError(f"expected one {FINAL_CSV} under {directory}, found csv files: {found[:10]}")
-
-
 def final_items(passphrase_prompt: Any = getpass.getpass) -> list[Any]:
-    """Decrypt the final images if needed (asking for the passphrase) and return their items."""
+    """Decrypt the final images if needed (asking for the passphrase) and return their items.
+
+    The data lane's ``locate_final_csv`` decides (#91): ``None`` means not decrypted yet, so decrypt; one file is
+    used as it is; more than one stops here with both named, before any passphrase prompt or decryption.
+    """
     from galaxus.data.load import read_part
-    from galaxus.data.paths import data_dir, data_file
+    from galaxus.data.paths import data_file, final_dir, locate_final_csv
     from galaxus.serve.items import items_from_frame
 
-    destination = data_dir() / FINAL_DIR
+    destination = final_dir()
     try:
-        csv = find_final_csv(destination)
+        csv = locate_final_csv()
+    except FileNotFoundError as several:  # its "more than one" case; never read as "not decrypted yet"
+        raise FinalFilesError(
+            f"{several}. Keep the one from tonight's decryption, move the other out of {destination}, and run again."
+            " Nothing was decrypted."
+        ) from several
+    if csv is not None:
         print(f"[final] reusing the decrypted files in {destination}")
-    except FileNotFoundError:
-        archive = data_file(ENCRYPTED_NAME)
-        passphrase = passphrase_prompt("Passphrase of the final images (not echoed, not stored): ").strip()
-        started = time.perf_counter()
-        decrypt(archive, destination, passphrase)
-        del passphrase
-        print(f"[final] decrypted into {destination} in {time.perf_counter() - started:.0f} s")
-        csv = find_final_csv(destination)
+        return items_from_frame(read_part(csv))
+
+    archive = data_file(ENCRYPTED_NAME)
+    passphrase = passphrase_prompt("Passphrase of the final images (not echoed, not stored): ").strip()
+    started = time.perf_counter()
+    decrypt(archive, destination, passphrase)
+    del passphrase
+    print(f"[final] decrypted into {destination} in {time.perf_counter() - started:.0f} s")
+    csv = locate_final_csv()
+    if csv is None:
+        raise FinalFilesError(f"decrypted into {destination}, but it holds no {FINAL_CSV}: check the archive")
     return items_from_frame(read_part(csv))
 
 
@@ -547,7 +555,11 @@ def main(argv: list[str] | None = None, passphrase_prompt: Any = getpass.getpass
     if arguments.dry_run:
         part, items = "dryrun-dev", items_for_part("dev", arguments.limit)
     else:
-        part, items = "final", final_items(passphrase_prompt)
+        try:
+            part, items = "final", final_items(passphrase_prompt)
+        except (FinalFilesError, DecryptError) as problem:
+            print(f"[final] stopped: {problem}", file=sys.stderr)
+            return 1
     if not arguments.best_file:
         print("[final] warning: no --best-file; the other rows keep sample_submission.csv's values", file=sys.stderr)
 

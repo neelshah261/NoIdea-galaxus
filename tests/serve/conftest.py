@@ -63,5 +63,5 @@ def _isolated_from_the_real_data(monkeypatch):
     except ImportError:
         yield
         return
-    monkeypatch.setattr(metric, "_loaded", None)
+    metric.clear_metric_cache()  # the public reset since #84 (#90)
     yield
