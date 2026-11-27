@@ -42,7 +42,7 @@ legend.
 | Body / bullets | Geist | 32–36 px | 400 |
 | Eyebrow line | Geist Mono | 24 px | uppercase, +0.08em, `muted` |
 | Key-figure row | Geist Mono | 26 px | `ink`, 2 px `ink` rule above |
-| Class names in text | Geist Mono | as body | e.g. `front_angle_left` |
+| Class names in text | Geist Mono | as body | any name from `contracts/classes.json`, never retyped |
 
 ## Slide anatomy
 
