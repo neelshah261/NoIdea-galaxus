@@ -16,7 +16,7 @@ Real run, on the GPU machine (AGENTS.md product rule 7: a human starts it, with 
         python train/lora_apertus.py --model swiss-ai/Apertus-v1.5-8B --epochs 2 --dollars-per-hour <price> --merge
 
 After about 50 optimizer steps it prints the **measured** examples/s and the projected total time and cost; stop it
-(Ctrl+C) if the projection is over budget. Adapters are saved every 200 steps and at the end under
+(Ctrl+C) if the projection is over budget. Adapters are saved every 100 steps (``--save-steps``) and at the end under
 ``$GALAXUS_DATA/out/lora/<run>/``; ``--resume`` continues from the last checkpoint. ``--merge`` writes merged bf16
 weights for vLLM (``MODEL=<dir> bash bench/vllm_apertus.sh``).
 
@@ -58,6 +58,8 @@ from galaxus.model.lora import (
 RANK, ALPHA, LEARNING_RATE, WARMUP, WEIGHT_DECAY, EPOCHS, SEED = 32, 32, 2e-4, 0.05, 0.01, 2, 3407
 #: One image per step: images of other aspect ratios give pixel tensors of other shapes; 1 x 16 = the recipe's 16.
 BATCH, ACCUMULATION = 1, 16
+#: Checkpoint interval (#76, Neel): 1 epoch is 851 steps, so a save about every 20-30 min on one L40S.
+SAVE_STEPS = 100
 #: Language-model linear layers of Apertus (attention + the xIELU MLP). The vision tokenizer is never adapted.
 TARGET_MODULES = r".*(?<!vision_tokenizer)\.(q_proj|k_proj|v_proj|o_proj|up_proj|down_proj|gate_proj)$"
 #: Reference throughput: the hosts' Qwen 3.5 9B recipe trained 3 epochs in 73 min on one H100 with ~700 tokens per
@@ -240,7 +242,7 @@ def train(arguments) -> int:
             output_dir=str(out), per_device_train_batch_size=BATCH, gradient_accumulation_steps=ACCUMULATION,
             num_train_epochs=arguments.epochs, max_steps=arguments.max_steps or -1, learning_rate=arguments.lr,
             lr_scheduler_type="cosine", warmup_ratio=WARMUP, weight_decay=WEIGHT_DECAY, bf16=torch.cuda.is_available(),
-            logging_steps=10, save_steps=200, save_total_limit=2, seed=SEED, report_to="none",
+            logging_steps=10, save_steps=arguments.save_steps, save_total_limit=2, seed=SEED, report_to="none",
             remove_unused_columns=False, dataloader_num_workers=4,
             optim="adamw_bnb_8bit" if _has("bitsandbytes") else "adamw_torch",
         ),
@@ -364,6 +366,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--merge", action="store_true", help="also write merged bf16 weights for vLLM")
     parser.add_argument("--gradient-checkpointing", action="store_true")
+    parser.add_argument("--save-steps", type=int, default=SAVE_STEPS,
+                        help=f"optimizer steps between checkpoints (default {SAVE_STEPS}; #76: a crash loses one interval)")
     parser.add_argument("--dollars-per-hour", type=float, default=None)
     arguments = parser.parse_args(argv)
     if arguments.smoke:
