@@ -45,10 +45,13 @@ def test_the_cache_folder_names_the_patch_size_not_only_the_image_size(galaxus_d
     assert image_cache_dir(SIZE) == galaxus_data / "cache" / "images" / f"{SIZE}-p{PATCH_SIZE}"
 
 
-def test_a_cache_labelled_with_another_patch_size_is_refused(galaxus_data):
-    """Rather than write p16 in the name and p32 pixels inside it. Making it real is #28."""
-    with pytest.raises(ValueError, match="#28"):
-        image_cache_dir(SIZE, patch_size=PATCH_SIZE * 2)
+def test_another_patch_size_gets_its_own_folder(galaxus_data):
+    """Since #28 the patch size is real, so a second one keeps a second cache instead of being refused.
+
+    What must never happen is two patch sizes sharing a folder; `test_patch_size.py` covers the pixels.
+    """
+    assert image_cache_dir(SIZE, patch_size=PATCH_SIZE * 2).name == f"{SIZE}-p{PATCH_SIZE * 2}"
+    assert image_cache_dir(SIZE, PATCH_SIZE) != image_cache_dir(SIZE, PATCH_SIZE * 2)
 
 
 def test_the_patch_size_we_do_use_is_accepted(galaxus_data):
