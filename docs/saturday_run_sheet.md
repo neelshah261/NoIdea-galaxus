@@ -29,12 +29,14 @@ python -m galaxus.serve.final_run --predictor <package.module:name> --exp <EXP-i
     --best-file $GALAXUS_DATA/out/submissions/<best dev file>.csv
 ```
 
-1. Paste the passphrase when asked (not echoed, never stored or logged).
-2. If anything stops it, run the same command again: the decrypted files are reused and the runner resumes where it
+1. If the method calls Apertus over HTTP (gateway, HF endpoint or a vLLM server), add `--workers N` with the N that
+   gave the best img/s in the dry run (`bench --workers N`). Keep the default of 1 for a model loaded in this process.
+2. Paste the passphrase when asked (not echoed, never stored or logged).
+3. If anything stops it, run the same command again: the decrypted files are reused and the runner resumes where it
    stopped, without duplicates.
-3. It ends with `valid: <file>` and the exact `kaggle competitions submit ...` command.
-4. A human runs that command, waits for the score, then **selects** that submission on Kaggle.
-5. If Kaggle is down: the fallback in challenge_description.md "Submission file" (the owner sends the validated file).
+4. It ends with `valid: <file>` and the exact `kaggle competitions submit ...` command.
+5. A human runs that command, waits for the score, then **selects** that submission on Kaggle.
+6. If Kaggle is down: the fallback in challenge_description.md "Submission file" (the owner sends the validated file).
 
 ## Where things land (never in git)
 

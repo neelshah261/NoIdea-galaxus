@@ -111,6 +111,7 @@ def main(argv: list[str] | None = None, passphrase_prompt: Any = getpass.getpass
     parser.add_argument("--exp", required=True, help="experiment id of the frozen method")
     parser.add_argument("--best-file", help="validated dev submission whose final rows get replaced")
     parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--workers", type=int, default=1, help="batches in flight (thread-safe predictors only)")
     parser.add_argument("--dry-run", action="store_true", help="rehearse on the dev images; no passphrase")
     parser.add_argument("--limit", type=int, default=None, help="dry run only: the first N dev images")
     arguments = parser.parse_args(argv)
@@ -127,7 +128,8 @@ def main(argv: list[str] | None = None, passphrase_prompt: Any = getpass.getpass
     if not arguments.best_file:
         print("[final] warning: no --best-file; the other rows keep sample_submission.csv's values", file=sys.stderr)
 
-    report = run(load_predictor(arguments.predictor), items, arguments.exp, part, arguments.batch_size)
+    predictor = load_predictor(arguments.predictor)
+    report = run(predictor, items, arguments.exp, part, arguments.batch_size, workers=arguments.workers)
     if not report.complete:
         print(f"[final] {report.already_done + report.predicted}/{report.requested} predicted; start again to resume")
         return 1

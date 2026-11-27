@@ -96,6 +96,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--part", action="append", choices=("dev", "final"), help="part(s) to include; default dev")
     parser.add_argument("--run", metavar="PREDICTOR", help="first run this predictor (package.module:name) on the part")
     parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--workers", type=int, default=1, help="batches in flight (thread-safe predictors only)")
     parser.add_argument("--base", help="file whose other rows are kept (default: sample_submission.csv)")
     parser.add_argument("--name", help="file name under $GALAXUS_DATA/out/submissions/ (default: <exp>_<parts>.csv)")
     arguments = parser.parse_args(argv)
@@ -107,7 +108,9 @@ def main(argv: list[str] | None = None) -> int:
 
         predictor = load_predictor(arguments.run)
         for part in parts:
-            report = run(predictor, items_for_part(part), arguments.exp, part, arguments.batch_size)
+            report = run(
+                predictor, items_for_part(part), arguments.exp, part, arguments.batch_size, workers=arguments.workers
+            )
             if not report.complete:
                 print(f"{arguments.exp}/{part} is incomplete; not writing a file", file=sys.stderr)
                 return 1

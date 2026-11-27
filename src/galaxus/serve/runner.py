@@ -9,6 +9,9 @@ It batches ``ImageItem``s through any ``Predictor`` and appends one JSON line pe
   duplicates. A line cut off by the crash is removed before the run continues.
 - **Safe writes.** A batch is checked against the contract before anything is written, then written and flushed
   (``fsync``) as a whole, so the file only ever holds complete batches plus at most one cut-off line.
+- **Parallel batches.** ``workers=N`` keeps up to N batches in flight on a thread pool (#36). Over an HTTP backend
+  most of the time is network wait, so this is what reaches the team's 5-10 images per second. Use it only with a
+  thread-safe predictor; the default (1) is sequential, as a local GPU model needs.
 - **Timing.** Every run appends one record (images, seconds, images per second, batch size) to
   ``<part>.runs.jsonl`` next to the predictions. The benchmark (:mod:`galaxus.serve.bench`) builds on the same numbers.
 
@@ -24,15 +27,18 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 PREDICTIONS_DIR = "predictions"
 DEFAULT_BATCH_SIZE = 16
+DEFAULT_WORKERS = 1
 PARTS = ("holdout", "dev", "final")
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
@@ -55,6 +61,7 @@ class RunReport:
     images_per_second: float | None
     batch_size: int
     finished_at: str
+    workers: int = DEFAULT_WORKERS
 
     @property
     def complete(self) -> bool:
@@ -173,15 +180,23 @@ def run(
     batch_size: int = DEFAULT_BATCH_SIZE,
     root: str | os.PathLike[str] | None = None,
     log: Callable[[str], None] | None = print,
+    workers: int = DEFAULT_WORKERS,
 ) -> RunReport:
     """Predict every item that has no line in the predictions file yet, and return what happened.
 
+    With ``workers`` above 1, up to that many batches run at the same time; the lines of the file then follow the
+    order in which batches finish, which nothing depends on (records are read back by ``image_id``).
+
     Raises:
-        ValueError: duplicate image ids among ``items``, a bad ``exp``/``part`` name or a bad ``batch_size``.
-        PredictorContractError: the predictor broke the contract; the lines of earlier batches stay valid.
+        ValueError: duplicate image ids among ``items``, or a bad ``exp``/``part``, ``batch_size`` or ``workers``.
+        PredictorContractError: the predictor broke the contract; the lines of batches already finished stay valid.
+        Exception: whatever the predictor raised. With several workers, the batches still in flight are finished and
+            written first, so a restart only redoes the batches that never ran.
     """
     if batch_size < 1:
         raise ValueError(f"batch_size must be at least 1, got {batch_size}")
+    if workers < 1:
+        raise ValueError(f"workers must be at least 1, got {workers}")
     ids = [str(item.image_id) for item in items]
     if len(set(ids)) != len(ids):
         repeated = sorted({image_id for image_id in ids if ids.count(image_id) > 1})
@@ -197,16 +212,28 @@ def run(
 
     predicted = 0
     started = time.perf_counter()
+    lock = threading.Lock()
     with path.open("a", encoding="utf-8", newline="\n") as handle:
-        for batch in _batches(todo, batch_size):
-            records = _check_batch(batch, list(predictor.predict(list(batch))))
-            handle.write("".join(json.dumps(record, ensure_ascii=False) + "\n" for record in records))
-            handle.flush()
-            os.fsync(handle.fileno())
-            predicted += len(records)
-            if log:
-                elapsed = time.perf_counter() - started
-                log(f"[runner] {exp}/{part}: {already + predicted}/{len(items)} ({predicted / elapsed:.2f} img/s)")
+
+        def write(records: list[dict[str, Any]]) -> None:
+            nonlocal predicted
+            with lock:
+                handle.write("".join(json.dumps(record, ensure_ascii=False) + "\n" for record in records))
+                handle.flush()
+                os.fsync(handle.fileno())
+                predicted += len(records)
+                if log:
+                    elapsed = time.perf_counter() - started
+                    log(f"[runner] {exp}/{part}: {already + predicted}/{len(items)} ({predicted / elapsed:.2f} img/s)")
+
+        def predict(batch: Sequence[Any]) -> list[dict[str, Any]]:
+            return _check_batch(batch, list(predictor.predict(list(batch))))
+
+        if workers == 1:
+            for batch in _batches(todo, batch_size):
+                write(predict(batch))
+        else:
+            _run_parallel(predict, write, list(_batches(todo, batch_size)), workers)
     seconds = time.perf_counter() - started
 
     report = RunReport(
@@ -219,11 +246,50 @@ def run(
         seconds=round(seconds, 3),
         images_per_second=round(predicted / seconds, 3) if predicted and seconds > 0 else None,
         batch_size=batch_size,
-        finished_at=datetime.now(UTC).isoformat(timespec="seconds"),
+        finished_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        workers=workers,
     )
     with runs_path(path).open("a", encoding="utf-8", newline="\n") as handle:
         handle.write(json.dumps(asdict(report)) + "\n")
     return report
+
+
+def _run_parallel(
+    predict: Callable[[Sequence[Any]], list[dict[str, Any]]],
+    write: Callable[[list[dict[str, Any]]], None],
+    batches: list[Sequence[Any]],
+    workers: int,
+) -> None:
+    """Keep up to ``workers`` batches in flight and write each as it finishes.
+
+    On a failure no new batch starts; the ones in flight are finished and written, then the first error is raised.
+    """
+    pending: set[Future[list[dict[str, Any]]]] = set()
+    queue = iter(batches)
+    failure: BaseException | None = None
+
+    def fill(pool: ThreadPoolExecutor) -> None:
+        while len(pending) < workers:
+            batch = next(queue, None)
+            if batch is None:
+                return
+            pending.add(pool.submit(predict, batch))
+
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="runner") as pool:
+        fill(pool)
+        while pending:
+            done, still_running = wait(pending, return_when=FIRST_COMPLETED)
+            pending.clear()
+            pending.update(still_running)
+            for future in done:
+                try:
+                    write(future.result())
+                except BaseException as error:  # noqa: BLE001 - re-raised below, after the other batches are saved
+                    failure = failure or error
+            if failure is None:
+                fill(pool)
+    if failure is not None:
+        raise failure
 
 
 def items_for_part(part: str, limit: int | None = None) -> list[Any]:
@@ -252,10 +318,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--part", required=True, choices=PARTS)
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
     parser.add_argument("--limit", type=int, default=None, help="only the first N images (smoke runs)")
+    parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS, help="batches in flight (thread-safe only)")
     arguments = parser.parse_args(argv)
 
     items = items_for_part(arguments.part, arguments.limit)
-    report = run(load_predictor(arguments.predictor), items, arguments.exp, arguments.part, arguments.batch_size)
+    predictor = load_predictor(arguments.predictor)
+    report = run(predictor, items, arguments.exp, arguments.part, arguments.batch_size, workers=arguments.workers)
     print(json.dumps(asdict(report), indent=2))
     return 0 if report.complete else 1
 
