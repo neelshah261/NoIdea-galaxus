@@ -1,6 +1,6 @@
 # AGENTS.md: rules for every agent and human working in this repo
 
-Team **NoIdead** · Hack Apertus Zurich · Digitec Galaxus challenge (Kaggle `hackapertus-galaxus`).
+Team **NoIdea** · Hack Apertus Zurich · Digitec Galaxus challenge (Kaggle `hackapertus-galaxus`).
 The challenge is defined only in [challenge_description.md](challenge_description.md), [FAQ.md](FAQ.md) and the
 Kaggle pages. Never restate its rules, numbers or class names from memory: link to them.
 
