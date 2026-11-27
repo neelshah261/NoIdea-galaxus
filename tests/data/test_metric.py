@@ -488,3 +488,18 @@ def test_the_cli_refuses_a_top_below_one(exp_folder):
 def test_the_cli_reports_missing_predictions_without_a_traceback(exp_folder, capsys):
     assert metric_module.main(["--predictions", str(exp_folder.parent / "EXP-9999")]) == 1
     assert capsys.readouterr().err.startswith("cannot work out the confusions:")
+
+
+def test_a_broken_metric_py_is_not_cached_so_the_next_call_fails_too(galaxus_data):
+    """``test_a_broken_metric_py_is_not_left_half_imported`` checks ``sys.modules``; this checks the cache.
+
+    ``_loaded[key] = module`` runs only after the file has executed. If a change ever moved it before, a broken
+    file would be cached: the ``sys.modules`` assertion in that other test would still pass, and the *second*
+    call would hand back a half-initialised module instead of raising. Verified by making that change - the
+    whole file passed without this test, and fails with it.
+    """
+    (galaxus_data / "metric.py").write_text("raise ValueError('broken')\n", encoding="utf-8")
+    for _ in range(2):
+        with pytest.raises(ValueError, match="broken"):
+            load_metric()
+    assert metric_module._loaded == {}

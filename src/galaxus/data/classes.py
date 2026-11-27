@@ -137,5 +137,14 @@ def dimensions() -> tuple[str, ...]:
 
 
 def allowed_classes() -> dict[str, frozenset[str]]:
-    """The class names allowed in each dimension."""
+    """The class names allowed in each dimension.
+
+    A ``frozenset`` per dimension, because the question this answers is membership: is this class allowed here.
+    It therefore has **no order**, and Python randomises string hashing per process, so iterating it twice in two
+    runs can yield two orders. Anything whose output depends on the order - a JSON enum, a prompt, a report
+    column - must sort it, or the bytes sent to the model change between runs and prefix caching stops hitting.
+    `galaxus.model.zero_shot.answer_schema` and `galaxus.model.lora.from_env` both do; do not simplify those
+    ``sorted()`` calls away. The contract's own class order is not preserved here: if a caller ever needs the
+    order as `challenge_description.md` lists it, ask for an accessor rather than typing the names.
+    """
     return {dimension: frozenset(names) for dimension, names in _resolved().items()}
