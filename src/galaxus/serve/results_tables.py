@@ -52,6 +52,19 @@ def _num(value: Any, digits: int = 3) -> str:
     return "-" if value is None else f"{value:.{digits}f}"
 
 
+def no_model(row: Mapping[str, Any]) -> bool:
+    """A run whose images/s measures no model (the majority baseline): never shown as a speed (#67 review)."""
+    return row.get("predictor") == "majority" or "not a product figure" in str(row.get("note", ""))
+
+
+def _speed(row: Mapping[str, Any]) -> str:
+    return "n/a (no model)" if no_model(row) else _num(row.get("images_per_second"), 1)
+
+
+def _gain(value: float) -> str:
+    return f"{0.0 if abs(value) < 0.0005 else value:+.3f}"
+
+
 def _sha(row: Mapping[str, Any]) -> str | None:
     return (row.get("holdout") or {}).get("sha256")
 
@@ -86,7 +99,7 @@ def all_runs_table(rows: Sequence[Mapping[str, Any]]) -> str:
         lines.append(
             f"| {row.get('id')} | {row.get('predictor', '')} | **{_num(row.get('score'))}** | "
             + " | ".join(_num(macro.get(d)) for d in dims)
-            + f" | {_num(row.get('overall_weighted_f1'))} | {_num(row.get('images_per_second'), 1)} | "
+            + f" | {_num(row.get('overall_weighted_f1'))} | {_speed(row)} | "
             f"{_num(row.get('cost_per_100k_usd'), 2)} | `{str(row.get('commit') or '-')[:8]}` |"
         )
     return "\n".join(lines)
@@ -103,9 +116,9 @@ def ablation_table(rows: Sequence[Mapping[str, Any]]) -> str:
             continue
         gains = [(row.get("macro_f1") or {}).get(d) for d in dims]
         bases = [(parent.get("macro_f1") or {}).get(d) for d in dims]
-        cells = [("-" if g is None or b is None else f"{g - b:+.3f}") for g, b in zip(gains, bases)]
+        cells = [("-" if g is None or b is None else _gain(g - b)) for g, b in zip(gains, bases)]
         mean = (None if row.get("score") is None or parent.get("score") is None
-                else f"{row['score'] - parent['score']:+.3f}")
+                else _gain(row["score"] - parent["score"]))
         lines.append(f"| {row.get('id')} | {parent.get('id')} | {why} | **{mean or '-'}** | " + " | ".join(cells) + " |")
     return "\n".join(lines)
 
@@ -159,11 +172,12 @@ def chart_svg(rows: Sequence[Mapping[str, Any]], title: str = "Macro F1 per dime
                        f'{value:.2f}</text>')
         label_x = left + i * group + group / 2
         out.append(f'<text x="{label_x:.1f}" y="{top + plot_h + 28}" class="m" text-anchor="middle">{escape(dim)}</text>')
-    for j, row in enumerate(rows):
-        x = left + j * 260
-        out.append(f'<rect x="{x}" y="{height - 46}" width="16" height="16" fill="{palette[j]}"/>')
+    x = left
+    for j, row in enumerate(rows):  # each entry as wide as its text: 13 px Geist Mono is about 8 px per character
         label = f"{row.get('id')} {row.get('predictor', '')} (mean {_num(row.get('score'))})"
+        out.append(f'<rect x="{x}" y="{height - 46}" width="16" height="16" fill="{palette[j]}"/>')
         out.append(f'<text x="{x + 24}" y="{height - 33}" class="m">{escape(label)}</text>')
+        x += 24 + 8 * len(label) + 36
     out.append("</svg>")
     return "\n".join(out) + "\n"
 

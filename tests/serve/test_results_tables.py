@@ -68,3 +68,11 @@ def test_cli_writes_markdown_and_chart(tmp_path):
 def test_only_the_best_run_is_orange_and_the_baseline_is_grey():
     palette = rt.colours([ROWS[0], ROWS[1], ROWS[2]])
     assert palette[2] == rt.ACCENT and palette[0] == rt.RULE2 and palette[1] not in (rt.ACCENT, rt.RULE2)
+
+
+def test_a_run_without_a_model_never_shows_a_speed_and_zero_gains_have_no_sign_noise():
+    baseline = dict(row("EXP-0001", 0.2, 0.05, predictor="majority"), images_per_second=1_800_000.0)
+    noted = dict(row("EXP-0002", 0.3, 0.1), note="baseline, no model: images/s is not a product figure")
+    table = rt.all_runs_table([baseline, noted, row("EXP-0003", 0.4, 0.2)])
+    assert "1800000" not in table and table.count("n/a (no model)") == 2 and "| 6.0 |" in table
+    assert rt._gain(-0.0000001) == "+0.000" and rt._gain(-0.0123) == "-0.012"
