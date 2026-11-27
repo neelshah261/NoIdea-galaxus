@@ -15,27 +15,19 @@ from collections.abc import Iterable, Mapping
 
 import pandas as pd
 
-from galaxus.data.classes import allowed_classes, dimensions
+from galaxus.data.classes import allowed_classes, dimensions, no_overlay_class, overlay_dimension
 
 #: The column that says a row is served from the mirrored copy of its image (``prepared_jpeg(..., mirrored=True)``).
 MIRRORED_COLUMN = "mirrored"
 
-#: The dimension whose classes change when an image is flipped.
-PERSPECTIVE_DIMENSION = "perspective"
-
-#: The dimension that says whether the image carries a text overlay.
-TEXT_DIMENSION = "text_classification"
-
 #: ``<dimension>_source`` holds this when a person labelled the cell; anything else is a model prelabel.
 HUMAN_SOURCE = "human"
 
-#: The ``text_classification`` class meaning "this image carries no text".
-#:
-#: Named in challenge_description.md "Classes per dimension", which also notes that it "is a real class and is
-#: scored like any other". It is validated against the classes source before use and can be overridden, so a rename
-#: in the data becomes an error here rather than silently mirroring images that carry text.
-NO_TEXT_CLASS = "none"
-
+#: The two orientation words the swap works on. **Not class names**: the classes are names like ``angle_left``,
+#: and these are the substrings inside them that a flip exchanges. A swapped name is used only when it is itself a
+#: class of that dimension, so a classes source whose names do not contain them simply mirrors nothing. Which
+#: dimension carries the text overlay, and which of its classes means "no text", are *names* and so come from
+#: ``contracts/classes.json`` through :mod:`galaxus.data.classes` (#81, AGENTS.md "Hard rules").
 LEFT = "left"
 RIGHT = "right"
 #: A character no class name contains, so the two words swap in one pass instead of overwriting each other.
@@ -100,12 +92,30 @@ def _check_dimension(dimension: str, allowed: Mapping[str, Iterable[str]]) -> No
         raise KeyError(f"{dimension!r} is not a dimension of the classes source; it has {sorted(allowed)}")
 
 
+def _the_mirrorable_dimension(allowed: Mapping[str, Iterable[str]]) -> str:
+    """The one dimension whose classes change under a flip, worked out from the names rather than typed.
+
+    Mirroring applies to whichever dimension has left/right classes; :func:`mirrorable_dimensions` finds it. That
+    keeps the dimension's name out of this module (#81) and makes a classes source that has no such dimension an
+    explicit error instead of a silent no-op on a name that happens not to be there.
+    """
+    found = mirrorable_dimensions(allowed)
+    if not found:
+        raise ValueError(
+            "no dimension of the classes source has left/right classes, so there is nothing to mirror; "
+            f"it has {sorted(allowed)}. Pass dimension= to say which one to use"
+        )
+    if len(found) > 1:
+        raise ValueError(f"more than one dimension could be mirrored ({list(found)}); pass dimension= to choose")
+    return found[0]
+
+
 def mirrored_rows(
     frame: pd.DataFrame,
     allowed: Mapping[str, Iterable[str]] | None = None,
     no_text_class: str | None = None,
-    dimension: str = PERSPECTIVE_DIMENSION,
-    text_dimension: str = TEXT_DIMENSION,
+    dimension: str | None = None,
+    text_dimension: str | None = None,
 ) -> pd.DataFrame:
     """The training rows worth adding a second time, mirrored, with the swapped label.
 
@@ -123,10 +133,14 @@ def mirrored_rows(
         ``pd.concat([frame.assign(mirrored=False), mirrored_rows(frame)], ignore_index=True)``.
     """
     resolved = dict(allowed) if allowed is not None else allowed_classes()
+    # Resolved lazily, never at import: a caller that passes its own names (every test here does) must not need
+    # the contract to be present at all.
+    dimension = dimension if dimension is not None else _the_mirrorable_dimension(resolved)
+    text_dimension = text_dimension if text_dimension is not None else overlay_dimension()
     _check_dimension(dimension, resolved)
     _check_dimension(text_dimension, resolved)
 
-    no_text = no_text_class if no_text_class is not None else NO_TEXT_CLASS
+    no_text = no_text_class if no_text_class is not None else no_overlay_class()
     if no_text not in frozenset(resolved[text_dimension]):
         raise ValueError(
             f"{no_text!r} is not a class of {text_dimension}, so 'carries no text' cannot be decided; "
@@ -153,12 +167,19 @@ def with_mirrored_rows(
     frame: pd.DataFrame,
     allowed: Mapping[str, Iterable[str]] | None = None,
     no_text_class: str | None = None,
-    dimension: str = PERSPECTIVE_DIMENSION,
+    dimension: str | None = None,
+    text_dimension: str | None = None,
 ) -> pd.DataFrame:
     """The training frame plus its mirrored rows, with ``mirrored`` saying which copy of the image to serve."""
     original = frame.copy()
     original[MIRRORED_COLUMN] = False
-    extra = mirrored_rows(frame, allowed=allowed, no_text_class=no_text_class, dimension=dimension)
+    extra = mirrored_rows(
+        frame,
+        allowed=allowed,
+        no_text_class=no_text_class,
+        dimension=dimension,
+        text_dimension=text_dimension,
+    )
     return pd.concat([original, extra], ignore_index=True)
 
 

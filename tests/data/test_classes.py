@@ -12,8 +12,14 @@ from galaxus.data.classes import ClassesUnavailable, allowed_classes, dimensions
 
 
 @pytest.fixture(autouse=True)
-def no_contract(tmp_path, monkeypatch):
-    """By default no contract file exists, as on main today."""
+def no_contract(request, tmp_path, monkeypatch):
+    """By default this file runs as if no contract existed, so the fallback chain stays covered.
+
+    Since #80 ``contracts/classes.json`` is on ``main``, so "no contract" has to be arranged rather than assumed.
+    A test that wants the real one says ``@pytest.mark.real_contract``, as ``tests/conftest.py`` defines it.
+    """
+    if request.node.get_closest_marker("real_contract"):
+        return
     monkeypatch.setattr(classes_module, "CONTRACTS_CLASSES", tmp_path / "contracts" / "classes.json")
 
 
@@ -57,3 +63,25 @@ def test_with_no_source_at_all_the_error_says_what_to_do(monkeypatch):
     monkeypatch.delenv(GALAXUS_DATA_ENV, raising=False)
     with pytest.raises(ClassesUnavailable, match="contracts/classes.json"):
         dimensions()
+
+
+# --- #81: the two roles --------------------------------------------------------------------------------------
+
+
+@pytest.mark.real_contract
+def test_the_roles_come_from_the_contract_and_name_real_things():
+    """``contracts/classes.json`` "roles" is the only source for these two names (AGENTS.md "Hard rules")."""
+    from galaxus.data.classes import allowed_classes, dimensions, no_overlay_class, overlay_dimension
+
+    dimension, cls = overlay_dimension(), no_overlay_class()
+    assert dimension in dimensions(), f"{dimension!r} is not one of {dimensions()}"
+    assert cls in allowed_classes()[dimension], f"{cls!r} is not a class of {dimension}"
+
+
+def test_without_the_contract_the_roles_raise_and_name_the_file():
+    """The contract is hidden for every test that does not ask for it, so this is the default path."""
+    from galaxus.data.classes import ClassesUnavailable, no_overlay_class, overlay_dimension
+
+    for accessor in (overlay_dimension, no_overlay_class):
+        with pytest.raises(ClassesUnavailable, match="classes.json"):
+            accessor()
