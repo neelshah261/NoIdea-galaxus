@@ -6,7 +6,9 @@
 #   LORA_BASE_URL=<exposed url>/v1 LORA_API_KEY=$HF_TOKEN python -m galaxus.model.eval lora      (EXP-0004 holdout)
 #   ... python -m galaxus.serve.final_run --predictor galaxus.model.lora:from_env ...           (Saturday)
 # In order:
-#   1. download the adapter $RUN/adapter from the private repo $CKPT_REPO (LoRA weights only; no data ever here);
+#   1. download the adapter $ADAPTER_PATH (default $RUN/adapter; or a checkpoint such as $RUN/checkpoint-500, of which
+#      only adapter_config.json and adapter_model.* are fetched, not the optimizer state) from the private repo
+#      $CKPT_REPO (LoRA weights only; no data ever here);
 #   2. merge it into Apertus in a clean venv with the training's own library versions (transformers 5.24.x, peft),
 #      weights saved in the dtypes Apertus ships, and every non-weight file (config, tokenizer, processor, chat
 #      template) copied from the base model, so vLLM sees exactly the base model's layout;
@@ -19,17 +21,18 @@ set -euo pipefail
 : "${HF_TOKEN:?the HF_TOKEN secret is missing}"
 : "${CKPT_REPO:?CKPT_REPO (the private checkpoint repo) is missing}"
 RUN="${RUN:-exp0004-e1}"
+export ADAPTER_PATH="${ADAPTER_PATH:-$RUN/adapter}"   # which save to serve: the final adapter or a checkpoint-N
 MODEL="${MODEL:-swiss-ai/Apertus-v1.5-8B}"
 SERVED="${SERVED:-apertus-lora}"
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-64}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-8192}"
 WORK=/tmp/serve
-ADAPTER="$WORK/pulled/$RUN/adapter"
+ADAPTER="$WORK/pulled/$ADAPTER_PATH"
 MERGED="$WORK/merged"
 log() { echo "[serve $(date -u +%H:%M:%S)] $*"; }
 
 mkdir -p "$WORK"
-log "run=$RUN model=$MODEL served as $SERVED, adapter from $CKPT_REPO (private)"
+log "run=$RUN adapter=$ADAPTER_PATH model=$MODEL served as $SERVED, from $CKPT_REPO (private)"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || true
 python3 -c "import vllm; print('vllm', vllm.__version__)" || true
 
@@ -37,8 +40,10 @@ log "1/3 download the adapter"
 python3 - <<'PY'
 import os
 from huggingface_hub import snapshot_download
-snapshot_download(os.environ["CKPT_REPO"], repo_type="model", allow_patterns=[f"{os.environ.get('RUN', 'exp0004-e1')}/adapter/*"],
-                  local_dir="/tmp/serve/pulled", token=os.environ["HF_TOKEN"])
+path = os.environ["ADAPTER_PATH"]
+# A checkpoint-N folder also holds the optimizer and RNG state (hundreds of MB): only the adapter files are needed.
+snapshot_download(os.environ["CKPT_REPO"], repo_type="model", token=os.environ["HF_TOKEN"], local_dir="/tmp/serve/pulled",
+                  allow_patterns=[f"{path}/adapter_config.json", f"{path}/adapter_model.safetensors", f"{path}/adapter_model.bin"])
 PY
 ls "$ADAPTER/adapter_config.json" >/dev/null
 log "adapter: $(du -sh "$ADAPTER" | cut -f1)"
@@ -46,7 +51,9 @@ log "adapter: $(du -sh "$ADAPTER" | cut -f1)"
 log "2/3 merge it into $MODEL (clean venv, the training's versions)"
 python3 -m pip install --quiet uv
 python3 -m uv venv --quiet --python 3.12 "$WORK/mergeenv"
-python3 -m uv pip install --quiet --python "$WORK/mergeenv/bin/python" torch "transformers==5.24.*" peft accelerate safetensors
+# The training job's versions (torch 2.15, torchvision 0.29.2 for Apertus' image classes, transformers 5.24.x).
+python3 -m uv pip install --quiet --python "$WORK/mergeenv/bin/python" "torch==2.15.*" "torchvision==0.29.2" \
+  "transformers==5.24.*" peft accelerate safetensors
 "$WORK/mergeenv/bin/python" - <<'PY'
 import json, os, shutil
 from pathlib import Path
@@ -54,7 +61,7 @@ import torch, transformers
 from huggingface_hub import snapshot_download
 from peft import PeftModel
 
-model_id, adapter, merged = os.environ.get("MODEL", "swiss-ai/Apertus-v1.5-8B"), "/tmp/serve/pulled/" + os.environ.get("RUN", "exp0004-e1") + "/adapter", Path("/tmp/serve/merged")
+model_id, adapter, merged = os.environ.get("MODEL", "swiss-ai/Apertus-v1.5-8B"), "/tmp/serve/pulled/" + os.environ["ADAPTER_PATH"], Path("/tmp/serve/merged")
 base_dir = Path(snapshot_download(model_id, token=os.environ["HF_TOKEN"]))
 cls = next(getattr(transformers, n) for n in ("AutoModelForMultimodalLM", "AutoModelForImageTextToText", "AutoModelForCausalLM") if hasattr(transformers, n))
 print("[merge] transformers", transformers.__version__, "| class", cls.__name__, flush=True)

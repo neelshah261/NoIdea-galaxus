@@ -3,6 +3,7 @@
 #
 #   bash bench/hf_job_serve_start.sh --dry-run    # print the job, start nothing (free)
 #   bash bench/hf_job_serve_start.sh              # start it: one L40S ($1.80/h), stops itself after $TIMEOUT
+#   ADAPTER_PATH=exp0004-e1/checkpoint-500 bash bench/hf_job_serve_start.sh   # serve an earlier checkpoint
 #   bash bench/hf_job_serve_start.sh url <id>     # once it runs: print the two lines to export on this laptop
 #
 # Then, with those exported (the token is read from .env, never printed):
@@ -44,10 +45,11 @@ DRY=()
 USER_NAME="$(python -c "import os; from huggingface_hub import whoami; print(whoami(token=os.environ['HF_TOKEN'])['name'])")"
 CKPT_REPO="${CKPT_REPO:-$USER_NAME/noidea-lora-checkpoints}"
 RUN="${RUN:-exp0004-e1}"
+ADAPTER_PATH="${ADAPTER_PATH:-$RUN/adapter}"   # or $RUN/checkpoint-N to serve an earlier save
 TIMEOUT="${TIMEOUT:-90m}"     # one unit only; 90 min x $1.80 = $2.70 at most
 IMAGE="${IMAGE:-ghcr.io/swiss-ai/vllm_apertus_1.5_release:latest-amd64}"
 
-echo "serve: $RUN from $CKPT_REPO on l40sx1, timeout $TIMEOUT, port 8000 behind the HF jobs proxy (token needed)"
+echo "serve: $ADAPTER_PATH from $CKPT_REPO on l40sx1, timeout $TIMEOUT, port 8000 behind the HF jobs proxy (token needed)"
 exec hf jobs run "${DRY[@]}" --detach --flavor l40sx1 --timeout "$TIMEOUT" --name "noidea-lora-serve" \
-  --expose 8000 --secrets HF_TOKEN -e CKPT_REPO="$CKPT_REPO" -e RUN="$RUN" \
+  --expose 8000 --secrets HF_TOKEN -e CKPT_REPO="$CKPT_REPO" -e RUN="$RUN" -e ADAPTER_PATH="$ADAPTER_PATH" \
   "$IMAGE" bash -c "$(tr -d '\r' < bench/hf_job_serve.sh)"
