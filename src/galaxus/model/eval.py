@@ -128,6 +128,21 @@ def _ensemble(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
     )
 
 
+def _recalibrated(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """#42: $RECAL_BASE's saved holdout answers with confidence-gated recalibration, cross-fitted on product halves."""
+    import os
+
+    from galaxus.model import recalibrate
+
+    base = os.environ.get(recalibrate.BASE_ENV)
+    if not base:
+        raise RuntimeError(f"set ${recalibrate.BASE_ENV} to the EXP whose holdout answers carry confidences, e.g. EXP-0004")
+    holdout = data.split_holdout(data.read_train())[1]
+    allowed = {d: sorted(v) for d, v in data.allowed_classes().items()}
+    return recalibrate.from_saved(base, holdout, data.dimensions(), allowed, data.solution_frame, data.evaluate,
+                                  data.out_dir(), read_rows(RESULTS_FILE), seed)
+
+
 def _mirror_tta(inner: str) -> PredictorFactory:
     """EXP-0006 (#48): the predictor registered as ``inner``, with mirror TTA for perspective."""
 
@@ -142,6 +157,7 @@ def _mirror_tta(inner: str) -> PredictorFactory:
 #: The predictors this script runs, by name. A new method registers its factory here and changes nothing else.
 PREDICTORS: dict[str, PredictorFactory] = {
     "ensemble": _ensemble,
+    "recalibrated": _recalibrated,  # #42: confidence-gated recalibration of $RECAL_BASE (e.g. EXP-0004)
     "majority": _majority,
     # Every zero-shot variant (zero_shot.VARIANTS): EXP-0002, EXP-0009, EXP-0014 and the score sprint's (#106).
     **{name: _zero_shot(**options) for name, options in ZERO_SHOT_VARIANTS.items()},
