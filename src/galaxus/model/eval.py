@@ -42,8 +42,8 @@ from galaxus.model.results import (
     next_exp_id,
     read_rows,
 )
-from galaxus.model.zero_shot import PRESETS as ZERO_SHOT_PRESETS
-from galaxus.model.zero_shot import ZeroShotPredictor
+from galaxus.model.zero_shot import VARIANTS as ZERO_SHOT_VARIANTS
+from galaxus.model.zero_shot import ZeroShotPredictor, mirror_tta_can_wrap
 
 ID_COLUMN = "image_id"
 IMAGE_FILE_COLUMN = "image_file"
@@ -143,13 +143,11 @@ def _mirror_tta(inner: str) -> PredictorFactory:
 PREDICTORS: dict[str, PredictorFactory] = {
     "ensemble": _ensemble,
     "majority": _majority,
-    "zero-shot": _zero_shot(use_context=True),
-    "zero-shot-no-context": _zero_shot(use_context=False),
-    "zero-shot-image-first": _zero_shot(use_context=True, image_first=True),  # EXP-0014 (#106)
-    # The score sprint's prompt and image variants (#106), one holdout run each; ids reserved on #106.
-    **{name: _zero_shot(**options) for name, options in ZERO_SHOT_PRESETS.items()},
+    # Every zero-shot variant (zero_shot.VARIANTS): EXP-0002, EXP-0009, EXP-0014 and the score sprint's (#106).
+    **{name: _zero_shot(**options) for name, options in ZERO_SHOT_VARIANTS.items()},
     "lora": _lora(),  # EXP-0004 (#49): the merged LoRA served by vLLM at $LORA_BASE_URL
-    "mirror-tta:zero-shot": _mirror_tta("zero-shot"),  # EXP-0006 (#48)
+    # Mirror TTA (#48) around every variant it can wrap; mirror-tta:zero-shot is EXP-0006.
+    **{f"mirror-tta:{name}": _mirror_tta(name) for name in ZERO_SHOT_VARIANTS if mirror_tta_can_wrap(name)},
 }
 
 

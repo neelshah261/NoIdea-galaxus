@@ -27,6 +27,7 @@ import hashlib
 import itertools
 import json
 import math
+import os
 import re
 import threading
 from collections.abc import Mapping, Sequence
@@ -89,6 +90,16 @@ PRESETS: dict[str, dict[str, Any]] = {
     "zero-shot-observe-first": {"observe_first": True},  # EXP-0021: one sentence, then the labels
     "zero-shot-image-first-crop": {"image_first": True, "image": "crop"},  # EXP-0022: the two together
 }
+#: Every zero-shot setup by name: what the eval script scores and what the runner, submit and final_run can build.
+#: One table, so a variant that wins on the holdout can write its dev file and Saturday's file the same day.
+VARIANTS: dict[str, dict[str, Any]] = {
+    "zero-shot": {},  # EXP-0002
+    "zero-shot-no-context": {"use_context": False},  # EXP-0009
+    "zero-shot-image-first": {"image_first": True},  # EXP-0014
+    **PRESETS,
+}
+#: Which entry of ``VARIANTS`` :func:`from_preset` builds, for the runner, submit and final_run.
+PRESET_ENV = "ZERO_SHOT_PRESET"
 
 
 def read_guideline() -> str:
@@ -393,3 +404,35 @@ def no_context() -> ZeroShotPredictor:
 def image_first() -> ZeroShotPredictor:
     """For the serve runner: ``--predictor galaxus.model.zero_shot:image_first`` (EXP-0014, #106)."""
     return ZeroShotPredictor(image_first=True)
+
+
+def preset_name(environment: Mapping[str, str] | None = None) -> str:
+    """The variant ``$ZERO_SHOT_PRESET`` names, ``zero-shot`` when unset.
+
+    Raises:
+        ValueError: for a name that is not in ``VARIANTS``, listing the ones that are.
+    """
+    environment = os.environ if environment is None else environment
+    name = environment.get(PRESET_ENV, "").strip() or "zero-shot"
+    if name not in VARIANTS:
+        raise ValueError(f"${PRESET_ENV}={name!r} is not a zero-shot variant; choose one of {', '.join(VARIANTS)}")
+    return name
+
+
+def mirror_tta_can_wrap(name: str) -> bool:
+    """Whether mirror TTA (#48) can wrap this variant.
+
+    Not a crop variant: its mirror would be cut from the 512 px cached mirror, not from the original as the crop is.
+    """
+    return VARIANTS[name].get("image", "plain") != "crop"
+
+
+def from_preset() -> ZeroShotPredictor:
+    """Any zero-shot variant for the runner, submit and final_run (#106), chosen by ``$ZERO_SHOT_PRESET``.
+
+        ZERO_SHOT_PRESET=zero-shot-crop python -m galaxus.serve.submit --exp EXP-0016 --part dev \\
+            --run galaxus.model.zero_shot:from_preset
+
+    The model is the gateway's ``$LLM_NAME``, so ``LLM_NAME=<70B name>`` runs the same variant on the 70B.
+    """
+    return ZeroShotPredictor(**VARIANTS[preset_name()])
