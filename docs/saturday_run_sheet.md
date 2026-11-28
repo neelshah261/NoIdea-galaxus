@@ -71,6 +71,49 @@ decryption or the resume. It prints the total time and the images per second; th
 memory and the cost per 100,000 images to `$GALAXUS_DATA/out/bench/<label>.jsonl`, for section 7 of the technical
 report.
 
+## Saturday 28 Nov: the frozen method EXP-0049 (Apertus only)
+
+**The rules changed at about 11:15 CET** (`decisions.md`, "The answer to the follow-up"; #137): only Apertus may pick a
+class. No helper model predicts a class, there is no weighted vote between Apertus and a helper, and the product-type
+prior is out because it overrules Apertus. So EXP-0056 and EXP-0061 below are **outside the rules**. The frozen
+method is **EXP-0049: Apertus v1.5 70B, observe first, no product text, 0.461 on the holdout**: the best compliant
+row on `main`. `TODO(neelshah261)`: confirm on #137.
+
+**Upgrade, only if all three hold before the run:** EXP-0092 (heads on Apertus hidden states with a per-class bias)
+has its row on `main`, beats 0.461, and its final features exist. Then use the predictor its row names, with
+`--exp EXP-0092`. Otherwise EXP-0049.
+
+### Before 13:00 (once)
+
+- [ ] The 70B is the model the gateway client will use. This must print `apertus-v1-5-70b`:
+      `LLM_NAME=apertus-v1-5-70b uv run --env-file .env python -c "from galaxus.model.apertus.api import gateway_settings as g; print(g()['LLM_NAME'])"`
+- [ ] **An Apertus-only dev file.** The dev rows of the submitted file come from the same method. EXP-0049's dev answers
+      fed EXP-0051's dev file, so `predictions/EXP-0049/dev.jsonl` should exist on Neel's laptop. Then, with no
+      gateway call:
+      `uv run --env-file .env python -m galaxus.serve.submit --exp EXP-0049 --part dev`
+      If it doesn't exist, the same command with `--run galaxus.model.zero_shot:from_preset --workers 2` and the two
+      variables of the command below makes it (5,261 dev images at the 70B's measured 2.42 img/s).
+- [ ] `shasum -a 256 $GALAXUS_DATA/final_encrypted.bin` matches the SHA-256 in the hosts' README.
+
+### At 13:00: one command
+
+```bash
+ZERO_SHOT_PRESET=zero-shot-observe-first-no-context \
+LLM_NAME=apertus-v1-5-70b \
+uv run --extra local --env-file .env python -m galaxus.serve.final_run --predictor galaxus.model.zero_shot:from_preset \
+    --exp EXP-0049 --best-file $GALAXUS_DATA/out/submissions/EXP-0049_dev.csv --workers 2
+```
+
+- It asks for the passphrase (not echoed), decrypts, classifies the 5,292 final images with the 70B (measured 2.42
+  img/s on EXP-0049), merges them into the dev file, validates, and prints the `kaggle competitions submit …` command.
+- A person runs that command, then **selects this file on Kaggle**. Without a selection Kaggle takes the best public
+  score, which is a SigLIP file outside the rules (#137).
+- A 429 from the gateway: rerun the same command; finished batches are kept.
+
+## Superseded: the EXP-0056 plan (outside the rules since about 11:15 CET)
+
+Kept for the record only. Do not run it: it routes dimensions to SigLIP heads and uses the type prior.
+
 ## Saturday 28 Nov: the frozen method EXP-0056
 
 EXP-0056 is the SigLIP heads and Apertus v1.5 70B, combined per dimension: 0.733 on the holdout, **0.73546 public**
