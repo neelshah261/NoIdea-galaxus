@@ -56,6 +56,13 @@ if TYPE_CHECKING:  # pragma: no cover - for type checkers and editors only
         locate_final_csv,
         out_dir,
     )
+    from galaxus.data.row_weights import (
+        build_row_weights,
+        judge_cells,
+        per_image_weights,
+        suggested_relabels,
+        write_row_weights,
+    )
     from galaxus.data.split import iter_product_folds, product_folds, scored_mask, solution_frame, split_holdout
     from galaxus.data.submission import write_submission
     from galaxus.data.validate import SubmissionInvalid, validate_submission
@@ -78,6 +85,7 @@ _EXPORTS = {
     "fill_image_cache": "images",
     "final_dir": "paths",
     "find_label_errors": "label_errors",
+    "judge_cells": "row_weights",
     "iter_product_folds": "split",
     "image_cache_dir": "images",
     "kaggle_dir": "paths",
@@ -91,6 +99,7 @@ _EXPORTS = {
     "prepare_image": "images",
     "prepared_jpeg": "images",
     "product_folds": "split",
+    "per_image_weights": "row_weights",
     "read_dev": "load",
     "read_final": "load",
     "read_part": "load",
@@ -103,6 +112,9 @@ _EXPORTS = {
     "validate_submission": "validate",
     "vision_tokens": "images",
     "write_label_errors": "label_errors",
+    "build_row_weights": "row_weights",
+    "suggested_relabels": "row_weights",
+    "write_row_weights": "row_weights",
     "write_submission": "submission",
     "Encoder": "neighbours",
     "Index": "neighbours",
@@ -132,6 +144,7 @@ __all__ = [
     "SubmissionInvalid",
     "allowed_classes",
     "build_index",
+    "build_row_weights",
     "cache_dir",
     "cached_image",
     "cached_jpeg",
@@ -148,6 +161,7 @@ __all__ = [
     "find_label_errors",
     "image_cache_dir",
     "iter_product_folds",
+    "judge_cells",
     "kaggle_dir",
     "load_encoder",
     "load_metric",
@@ -162,6 +176,7 @@ __all__ = [
     "opaque_rgb_on_white",
     "out_dir",
     "overlay_dimension",
+    "per_image_weights",
     "prepare_image",
     "prepared_jpeg",
     "product_folds",
@@ -174,11 +189,13 @@ __all__ = [
     "scored_mask",
     "solution_frame",
     "split_holdout",
+    "suggested_relabels",
     "swap_mirrored_confidence",
     "validate_submission",
     "vision_tokens",
     "with_mirrored_rows",
     "write_label_errors",
+    "write_row_weights",
     "write_submission",
 ]
 
