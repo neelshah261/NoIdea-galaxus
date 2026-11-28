@@ -62,6 +62,8 @@ class FakeGateway:
     requests: int = 0
     statuses: Counter = field(default_factory=Counter)
     keys_used: Counter = field(default_factory=Counter)
+    in_flight: int = 0            # calls being answered right now
+    max_in_flight: int = 0        # the most calls answered at the same time (#140: overlap, not wall time)
     _burst_left: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock)
     _answer: str = ""
@@ -93,8 +95,14 @@ class FakeGateway:
                     self.key_budget[key] -= 1
                 self.keys_used[key] += 1
             self.statuses[status] += 1
-        if self.latency:
-            time.sleep(self.latency)
+            self.in_flight += 1
+            self.max_in_flight = max(self.max_in_flight, self.in_flight)
+        try:
+            if self.latency:
+                time.sleep(self.latency)
+        finally:
+            with self._lock:
+                self.in_flight -= 1
         if status != 200:
             return status, json.dumps({"error": {"code": status}}).encode()
         reply = {"choices": [{"message": {"content": self._answer}, "finish_reason": "stop"}],
