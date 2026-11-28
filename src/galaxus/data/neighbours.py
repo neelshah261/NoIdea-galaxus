@@ -24,6 +24,7 @@ import io
 import json
 import os
 import sys
+import warnings
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -104,7 +105,7 @@ def pooled_features(output: Any) -> Any:
     ``pooler_output`` is preferred over a mean of ``last_hidden_state`` deliberately: a mean over the patch grid is
     permutation-invariant, so an image and its mirror come out bit-identical (measured on #127). The pooled head is
     not, and left-from-right is exactly what the perspective dimension needs. The mean is only a last resort for a
-    model that offers nothing else.
+    model that offers nothing else, and it warns when it is reached so the loss cannot pass unnoticed.
     """
     for attribute in ("image_embeds", "pooler_output"):
         value = getattr(output, attribute, None)
@@ -112,6 +113,15 @@ def pooled_features(output: Any) -> Any:
             return value
     hidden = getattr(output, "last_hidden_state", None)
     if hidden is not None:
+        warnings.warn(
+            f"{type(output).__name__} offers neither image_embeds nor pooler_output, so the patch grid is being "
+            "mean-pooled. A mean is permutation-invariant, so an image and its mirror become bit-identical "
+            "(measured on #127) and left-from-right is gone. The perspective dimension and the mirror-aware head "
+            "(#189) both depend on that information, and they degrade silently without it. Check the encoder and "
+            "the transformers version before trusting any perspective number computed from these features.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
         return hidden.mean(dim=1)
     return output
 
