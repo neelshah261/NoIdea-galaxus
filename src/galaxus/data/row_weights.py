@@ -133,7 +133,7 @@ def judge_cells(
     return merged
 
 
-def row_weights(judged: pd.DataFrame) -> pd.DataFrame:
+def build_row_weights(judged: pd.DataFrame) -> pd.DataFrame:
     """``judge_cells`` output as the weight file: one row per cell, ``weight`` and ``reason``."""
     weights = {SUSPECT_REASON: SUSPECT_WEIGHT, DROP_REASON: DROP_WEIGHT, HARD_REASON: HARD_WEIGHT}
     frame = judged[[ID_COLUMN, "dimension"]].copy()
@@ -231,7 +231,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"cannot work out the row weights: {failure}", file=sys.stderr)
         return 1
 
-    weights = row_weights(judged)
+    weights = build_row_weights(judged)
     relabels = suggested_relabels(judged)
     print(f"[row-weights] {len(weights):,} scored cell(s): {_summarise(weights)}")
     print(f"[row-weights] {len(relabels):,} cell(s) both signals dispute, for the bonus csv (#7)")
