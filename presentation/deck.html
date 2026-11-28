@@ -146,6 +146,19 @@
   <p class="foot">Baselines: the hosts' dev scores (challenge_description.md "Baselines"). Ours: mean macro F1 on our official holdout of {best.holdout.images} train images; a different image set.</p>
 </section>
 
+<section data-label="From 0.19 to 0.78" data-speaker-notes="The climb, every bar a row of results/metrics.json on our official holdout: the majority baseline, the Apertus 70B zero-shot with the observe-first prompt, the same 70B with the labels of similar training images in its prompt (Apertus still makes every call), and the final per-dimension ensemble {best.id}. The Apertus-only file is EXP-0101; its Kaggle public score is 0.664.">
+  <div class="eyebrow"><span>Hack Apertus Zurich · Digitec Galaxus</span><span>Evidence</span></div>
+  <h1>From 0.19 to 0.78, one measured step at a time</h1>
+  <div class="bars">
+    <span>Majority baseline · EXP-0001</span><div class="track"><div class="fill" style="width:calc({raw EXP-0001.score} * 100%)"></div></div><span class=num>{EXP-0001.score}</span>
+    <span>Apertus 70B · EXP-0049</span><div class="track"><div class="fill" style="width:calc({raw EXP-0049.score} * 100%)"></div></div><span class=num>{EXP-0049.score}</span>
+    <span>+ similar-image hints · EXP-0098</span><div class="track"><div class="fill" style="width:calc({raw EXP-0098.score} * 100%)"></div></div><span class=num>{EXP-0098.score}</span>
+    <span class="accent">Full ensemble · {best.id}</span><div class="track"><div class="fill ours" style="width:calc({raw best.score} * 100%)"></div></div><span class="num accent">{best.score}</span>
+  </div>
+  <p class="lead" style="margin-top:56px">The Apertus-only file, EXP-0101, scores <b>0.664</b> on the Kaggle public leaderboard.</p>
+  <p class="foot">Mean macro F1 on our official holdout of {best.holdout.images} train images (results/metrics.json). 0.664: Kaggle public score of EXP-0101_devfinal.csv.</p>
+</section>
+
 <section data-label="Speed and deployment" data-speaker-notes="Speed is the row's images per second, measured by the eval script ({best.config.workers} requests in flight). 100,000 images a day is 1.2 per second (challenge_description.md, Why this matters); the final run plans for at least 2 per second (Timeline). Cost and peak memory come from a GPU benchmark row and stay pending until one exists.">
   <div class="eyebrow"><span>Hack Apertus Zurich · Digitec Galaxus</span><span>Evidence</span></div>
   <h1>Open weights end to end, fast enough for a day of images</h1>
