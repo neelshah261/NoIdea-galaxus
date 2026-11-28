@@ -1,13 +1,16 @@
 """S1 (#200, umbrella #214): stack the members per dimension from their saved answers, then per-class biases for
 macro F1.
 
-``ensemble`` hands a whole dimension to one member (or a vote). Here every class learns which members to trust: the
-fine-tuned SigLIP may be right on most subjects, the 70B on German and French text, ``apertus-core`` on the classes
-where the catalog decides. It runs on saved answers in seconds, with no model and no GPU.
+``ensemble`` hands a whole dimension to one member (or a vote). Here every class learns which members to trust:
+the 70B on the text dimensions, the heads on Apertus' hidden states (``apertus-core``) where they read the image
+better. It runs on saved answers in seconds, with no model and no GPU.
 
+* **Apertus runs only** (the hosts' answer, ``decisions.md``, #232): combining Apertus runs is fine, a vote with a
+  helper model's answers is not. :func:`check_apertus_only` refuses any member whose EXP row is not a single Apertus
+  run: another model, a helper, or the product-type prior (an override).
 * **Features, per dimension:** for every member and every allowed class, two numbers: did the member answer this
-  class (one-hot), and with which confidence (one-hot x confidence). Any member that wrote
-  ``predictions/<EXP>/<part>.jsonl`` works: heads, the fine-tuned SigLIP, the 70B, ``apertus-core``.
+  class (one-hot), and with which confidence (one-hot x confidence). Any Apertus run that wrote
+  ``predictions/<EXP>/<part>.jsonl`` works: the 8B and 70B zero-shot runs, the LoRA, ``apertus-core``.
 * **The stacker:** #51's softmax head (``heads.fit_head``: tempered class weights, L2, deterministic) on the scored
   human cells, then a per-class bias (``calibration.fit_bias``) for macro F1 on out-of-fold answers.
 * **Honest:** cross-fitted on the holdout's two product halves (``ensemble.holdout_halves``). A half's stacker
@@ -15,11 +18,11 @@ where the catalog decides. It runs on saved answers in seconds, with no model an
   cross-fitted set is what the EXP row scores.
 * **Dev and final:** the stacker fitted on the whole holdout, with its bias from the halves' cross-fitted answers.
 
-    STACK_MEMBERS="ft=EXP-0090 ft12=EXP-0091 fused=EXP-0059 70b=EXP-0051" \\
-        uv run --env-file .env python -m galaxus.model.stack eval --exp-id EXP-0097
-    uv run --env-file .env python -m galaxus.model.stack fit --members ft=EXP-0090 ft12=EXP-0091 fused=EXP-0059 \\
-        70b=EXP-0051 --out $GALAXUS_DATA/out/stack/stack-EXP-0097.json
-    uv run --env-file .env python -m galaxus.model.stack apply --stack <that json> --part dev --exp EXP-0097
+    STACK_MEMBERS="core=EXP-0092 70b=EXP-0049" uv run --env-file .env python -m galaxus.model.stack eval \\
+        --exp-id EXP-0098
+    uv run --env-file .env python -m galaxus.model.stack fit --members core=EXP-0092 70b=EXP-0049 \\
+        --out $GALAXUS_DATA/out/stack/stack-EXP-0098.json
+    uv run --env-file .env python -m galaxus.model.stack apply --stack <that json> --part dev --exp EXP-0098
 
 **Live, for the final run:** ``final_run --predictor galaxus.model.stack:from_env``, with ``$STACK_FILE`` (the json
 ``fit`` saved) and ``$ENSEMBLE_PREDICTORS`` / ``$ENSEMBLE_CACHE`` as for the live ensemble (one live predictor per
@@ -50,9 +53,31 @@ from galaxus.types import ImageItem, Prediction
 MEMBERS_ENV = "STACK_MEMBERS"
 FILE_ENV = "STACK_FILE"
 QUARTERS = 2
+#: Never a member: the product-type prior overrules Apertus (``decisions.md``, #232).
+EXCLUDED_PREDICTORS = ("type-prior",)
 ID_COLUMN = ensemble.ID_COLUMN
 PRODUCT_COLUMN = "product_id"
 Records = ensemble.Records
+
+
+def check_apertus_only(member_exps: Mapping[str, str], result_rows: Sequence[Mapping[str, Any]]) -> None:
+    """Refuse every member that is not a single Apertus run, from its EXP row: each model it names is Apertus, it
+    lists no helper, and it is not the product-type prior. A member without a row cannot be checked, so it is refused
+    too. A combination of Apertus runs (an ensemble row) is refused as well: give the stack its members directly."""
+    rows = {str(row.get("id")): row for row in result_rows}
+    refused = []
+    for name, exp in member_exps.items():
+        row = rows.get(exp)
+        if row is None:
+            refused.append(f"{name}={exp} (no row in results/metrics.json to check)")
+            continue
+        models = [part.strip() for part in str(row.get("model") or "").split(",") if part.strip()]
+        predictor = str(row.get("predictor") or "")
+        apertus = bool(models) and all("apertus" in model.lower() for model in models)
+        if not apertus or row.get("helpers") or predictor.startswith("helper") or predictor in EXCLUDED_PREDICTORS:
+            refused.append(f"{name}={exp} (predictor {predictor or 'unknown'}, model {', '.join(models) or 'none'})")
+    if refused:
+        raise ValueError("the stack combines Apertus runs only (decisions.md, #232); refused: " + "; ".join(refused))
 
 
 def features(members: Mapping[str, Records], names: Sequence[str], ids: Sequence[str], dimension: str,
@@ -87,7 +112,7 @@ def fit_dimension(x: np.ndarray, truth: Sequence[str], groups: pd.DataFrame, see
 
     truth = [str(t) for t in truth]
     head = heads.fit_head(x, truth, seed=seed)
-    if len(head.classes) < 2 or len(groups) < 2 * QUARTERS:
+    if len(head.classes) < 2 or groups[PRODUCT_COLUMN].nunique() < QUARTERS:
         return head
     fold = product_folds(groups, n_folds=QUARTERS, random_state=seed).to_numpy()
     oof = np.full((len(x), len(head.classes)), -1e9)
@@ -212,7 +237,9 @@ class StackPredictor:
 def from_saved(member_exps: Mapping[str, str], holdout: pd.DataFrame, dimensions: Sequence[str], solution_frame: Any,
                allowed: Mapping[str, Any], out_dir: Path, result_rows: Sequence[Mapping[str, Any]] = (),
                seed: int = 0) -> StackPredictor:
-    """The predictor from the members' saved holdout answers; speed and models from their EXP rows."""
+    """The predictor from the members' saved holdout answers; speed and models from their EXP rows, which must show
+    Apertus runs only (:func:`check_apertus_only`)."""
+    check_apertus_only(member_exps, result_rows)
     members = ensemble.load_members(member_exps, out_dir)
     ensemble.check_coverage(members, holdout[ID_COLUMN].astype(str).tolist())
     solution = solution_frame(holdout, tuple(dimensions))
@@ -231,13 +258,13 @@ def members_from_env(environ: Mapping[str, str] | None = None) -> dict[str, str]
     environ = os.environ if environ is None else environ
     spec = environ.get(MEMBERS_ENV, "")
     if not spec:
-        raise RuntimeError(f"set ${MEMBERS_ENV}, e.g. \"ft=EXP-0090 ft12=EXP-0091 fused=EXP-0059 70b=EXP-0051\"")
+        raise RuntimeError(f"set ${MEMBERS_ENV} to Apertus runs, e.g. \"core=EXP-0092 70b=EXP-0049\"")
     return ensemble.parse_members(spec)
 
 
 def eval_factory(rows: pd.DataFrame, data: Any, seed: int) -> StackPredictor:
     """For the eval script: ``$STACK_MEMBERS``' saved holdout answers, cross-fitted (the training rows are unused)."""
-    from galaxus.model.eval import RESULTS_FILE, read_rows
+    from galaxus.model.results import RESULTS_FILE, read_rows
 
     holdout = data.split_holdout(data.read_train())[1]
     return from_saved(members_from_env(), holdout, data.dimensions(), data.solution_frame, data.allowed_classes(),
@@ -333,10 +360,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     from galaxus.data.paths import out_dir
 
     if arguments.command == "fit":
+        from galaxus.model.results import RESULTS_FILE, read_rows
+
         member_exps = ensemble.parse_members(arguments.members)
         holdout = split.split_holdout(load.read_train())[1]
         predictor = from_saved(member_exps, holdout, classes.dimensions(), split.solution_frame,
-                               classes.allowed_classes(), out_dir(), seed=arguments.seed)
+                               classes.allowed_classes(), out_dir(), read_rows(RESULTS_FILE), seed=arguments.seed)
         target = arguments.out or out_dir() / "stack" / ("stack-" + "-".join(member_exps) + ".json")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps({**predictor.fitted["full"].to_json(), "member_exps": member_exps}),
@@ -347,7 +376,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     data = json.loads(arguments.stack.read_text(encoding="utf-8"))
     stack = Stack.from_json(data)
     members = ensemble.load_members(data["member_exps"], out_dir(), arguments.part)
-    ids = sorted(set.intersection(*(set(records) for records in members.values())))
+    ids = sorted(set().union(*(set(records) for records in members.values())))
+    ensemble.check_coverage(members, ids)  # a member missing an image would silently drop its row from the file
     combined = stack.predict(members, ids)
     from galaxus.serve.runner import predictions_path
 
