@@ -112,3 +112,14 @@ def from_env() -> MirrorTTA:
     if not zero_shot.mirror_tta_can_wrap(name):
         raise ValueError(f"mirror TTA cannot wrap {name!r} yet: a crop variant's mirror would not be cropped the same way")
     return MirrorTTA(zero_shot.from_preset())
+
+
+def lora_from_env() -> MirrorTTA:
+    """Mirror TTA around the served LoRA (``galaxus.model.lora.from_env``), for the runner, submit and final_run.
+
+    ``python -m galaxus.model.eval mirror-tta:lora`` scores this wrapper on the holdout (#161). By reference
+    (``galaxus.model.mirror_tta:lora_from_env``), the same wrapper writes the dev and final files.
+    """
+    from galaxus.model import lora
+
+    return MirrorTTA(lora.from_env())
