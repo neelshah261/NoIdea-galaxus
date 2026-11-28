@@ -59,3 +59,22 @@ named.
 | Q-0006 | Which transformers loads Apertus 1.5? | **assumed `>=5.24`** (the vLLM guide; the `local` extra); confirmed by the GPU check in #76 | PLAN.md, PR #71 |
 | Q-0007 | Do small heads on Apertus v1.5 hidden states count as "Apertus classifying"? Are they fine as a development-time label-error tool? | **(a) answered: yes.** The hosts, in a one-to-one talk with Neel; recorded by Neel on 2026-11-28. Heads on Apertus hidden states count as "Apertus classifying" and may be the final method (#51, #129 step 5). (b) development-time use: yes (#121). | BASE_ARCHITECTURE.md, #40, #88, #121 |
 | Q-0008 | May an open-weights image model other than Apertus (SigLIP base with class-balanced heads, `helper-siglip`, #174) pick the class at runtime, for the dimensions the ensemble routes to it? (challenge_description.md:47: Apertus "performs the classification".) | **answered: yes.** The hosts, one-to-one with Neel; recorded by Neel on 2026-11-28. The helper and its revision go in `MODELS.md` and the report (rule 6). | #172, #174, #175 |
+| Q-0009 | May an open-weights image encoder fine-tuned on train (SigLIP 2 base, EXP-0090, #202) pick the class at runtime, routed per dimension like the Q-0008 helpers, or feed the `apertus-core` heads as an input block (EXP-0094)? | **open.** Q-0008 covers frozen SigLIP base heads, not a fine-tuned encoder (Neel on #202). Neel decides between asking the hosts and an Apertus-decides variant, with the fine-tune's classes as hints in the 70B prompt (the Q-0003 pattern). Until an answer the fine-tune stays an experiment and EXP-0061 the method. | #202, #221, `design/ft_siglip2/README.md` |
+| Q-0010 | May OCR text go to Apertus as a hint? | **answered: yes, as a hint only; OCR must not pick the label.** The hosts' written reply, point 4 (below). Not built. | the written reply (below) |
+| Q-0011 | May one learned head combine Apertus with the Q-0008 helpers: (a) at its input, Apertus v1.5's hidden state concatenated with frozen open-weights image embeddings trained on train only (`apertus-core` with a base, EXP-0093, EXP-0096); (b) at its output, a per-dimension stack over the members' answers (#200, PR #227)? | **open: in the follow-up drafted for the hosts.** Point 1 of the written reply names hidden states only. Q-0008 lets a head on the frozen embeddings alone pick the class, and the ensemble's weighted vote already mixes members' answers. Until an answer, separate heads routed per dimension by the ensemble are the variant covered word for word. TODO(neelshah261): send the follow-up and record the answer. | #200, #214, #219, #220 |
+
+### The hosts' written reply (2026-11-28)
+
+- **Source:** the hosts' written reply to Neel's questions, as the design agent summarised it; relayed by Parth on
+  2026-11-28. TODO(neelshah261): link or quote the reply.
+- **Point 1:** a small linear head on Apertus' hidden states counts as adapted Apertus. Confirms Q-0007(a).
+- **Point 2:** one bias per class, fitted on train only, added to Apertus' scores. Confirms Q-0005 for the per-class
+  bias. It does not name the product-type prior (#133), which Q-0005's one-to-one record covers.
+- **Point 3:** labels of similar training images may go in the prompt as a hint, and Apertus decides; only training
+  images go in the index. Confirms Q-0003, with that limit on the index.
+- **Point 4:** OCR text may go to Apertus as a hint; OCR must not pick the label. Recorded as Q-0010.
+- **Q-0008 stands.** The reply does not address it. The design agent read the four points together as "other models
+  may only give Apertus hints", which would put EXP-0061 and any routing to a helper outside the rules. Parth,
+  2026-11-28, after the reply: Q-0008 is answered yes. So EXP-0061 and the helpers routed per dimension stay within
+  the rules; each helper and its revision go in `MODELS.md` and the report. TODO(neelshah261): confirm in a comment
+  on #137.
