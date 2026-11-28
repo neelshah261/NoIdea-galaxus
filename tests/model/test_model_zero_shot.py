@@ -271,6 +271,11 @@ def test_every_preset_runs_through_the_eval_script_and_records_its_options(tmp_p
     train = train_table()
     train["image_file"] = [str(image_file(data_dir, image_id)) for image_id in train["image_id"]]
     data = fake_data_lane(train, tmp_path / "out", FakeMetric())
+    if options.get("hints"):  # #237: the hints file this variant reads, one line per image
+        hints = tmp_path / "hints.jsonl"
+        hints.write_text("".join(json.dumps({"image_id": i, "hint": "Similar catalog images were labelled: x"}) + "\n"
+                                 for i in train["image_id"]), encoding="utf-8")
+        monkeypatch.setenv("ZERO_SHOT_HINTS", str(hints))
     row = model_eval.run_eval(name, data, results_path=tmp_path / "results" / "metrics.json", exp_id="EXP-0016")
     config = row["config"]
     assert row["predictor"] == name
