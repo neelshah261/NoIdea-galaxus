@@ -136,6 +136,13 @@ def _ensemble(rule: str = "best") -> PredictorFactory:
     return factory
 
 
+def _helper(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """A helper image model picks the class (``galaxus.model.helper``): heads on SigLIP embeddings."""
+    from galaxus.model import helper
+
+    return helper.factory()(rows, data, seed)
+
+
 def _recalibrated(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
     """#42: $RECAL_BASE's saved holdout answers with confidence-gated recalibration, cross-fitted on product halves."""
     import os
@@ -181,6 +188,7 @@ def _mirror_tta(inner: str) -> PredictorFactory:
 PREDICTORS: dict[str, PredictorFactory] = {
     "ensemble": _ensemble(),
     "ensemble-agree": _ensemble("agree"),  # #106: the first member unless both product halves agree on another
+    "helper-siglip": _helper,  # heads on SigLIP embeddings; see galaxus.model.helper for the rule it touches
     "recalibrated": _recalibrated,  # #42: confidence-gated recalibration of $RECAL_BASE (e.g. EXP-0004)
     "type-prior": _type_prior,  # #133: the product-type prior on $TYPE_PRIOR_BASE's answers (e.g. EXP-0002)
     "majority": _majority,
