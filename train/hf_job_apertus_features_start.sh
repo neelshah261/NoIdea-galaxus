@@ -48,8 +48,14 @@ PY
   exit 0
 fi
 
+# macOS ships bash 3.2, where expanding an EMPTY array under `set -u` is an "unbound variable" error (Neel's run on
+# #218). So every array below is expanded as ${A[@]+"${A[@]}"}, and the dry-run test reads a plain flag.
+DRY_RUN=0
 DRY=()
-[[ "${2:-}" == "--dry-run" ]] && DRY=(--dry-run)
+if [[ "${2:-}" == "--dry-run" ]]; then
+  DRY_RUN=1
+  DRY=(--dry-run)
+fi
 KAGGLE_API_TOKEN="${KAGGLE_API_TOKEN:-$(tr -d '\r\n' < "$HOME/.kaggle/access_token" 2>/dev/null || true)}"
 : "${KAGGLE_API_TOKEN:?no Kaggle token in ~/.kaggle/access_token}"
 export KAGGLE_API_TOKEN
@@ -78,7 +84,7 @@ case "$MODE" in
   rehearse) TIMEOUT="${TIMEOUT:-45m}" ;;
   final)
     TIMEOUT="${TIMEOUT:-75m}"
-    if [[ ${#DRY[@]} -eq 0 ]]; then
+    if [[ "$DRY_RUN" == 0 ]]; then
       : "${PASSPHRASE:?type it first, never into a file: read -rs PASSPHRASE && export PASSPHRASE}"
       export PASSPHRASE
     fi
@@ -89,7 +95,7 @@ esac
 
 echo "job: $MODE on $FLAVOR, timeout $TIMEOUT, ref $REF; the features are served on port 8000 behind the HF jobs proxy"
 # The script goes with Unix line endings: a Windows checkout adds \r, which bash in the job rejects (#76).
-exec "${HF[@]}" jobs run "${DRY[@]}" --detach --flavor "$FLAVOR" --timeout "$TIMEOUT" --name "noidea-apertus-$MODE" \
-  --expose 8000 "${SECRETS[@]}" "${ENV[@]}" \
+exec ${HF[@]+"${HF[@]}"} jobs run ${DRY[@]+"${DRY[@]}"} --detach --flavor "$FLAVOR" --timeout "$TIMEOUT" \
+  --name "noidea-apertus-$MODE" --expose 8000 ${SECRETS[@]+"${SECRETS[@]}"} ${ENV[@]+"${ENV[@]}"} \
   ghcr.io/astral-sh/uv:python3.12-bookworm \
   bash -c "$(tr -d '\r' < train/hf_job_apertus_features.sh)"
