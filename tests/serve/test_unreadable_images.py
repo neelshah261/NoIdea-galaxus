@@ -65,13 +65,47 @@ def test_one_broken_image_in_a_batch_of_16_gives_15_predictions_and_1_constant_r
     assert "img_x5" not in text  # counted, never named (product rule 3)
 
 
-def test_a_restart_does_not_retry_the_constant_row(tmp_path):
+def test_a_restart_retries_the_constant_row_and_a_truly_broken_file_falls_back_again(tmp_path):
     items = pictures(tmp_path / "img", 4, broken={0})
     fallback = runner.constant_fallback(sample_for(i.image_id for i in items))
     runner.run(OpensEveryImage(), items, "EXP-0001", "dev", batch_size=4, root=tmp_path, log=None, fallback=fallback)
-    again = runner.run(OpensEveryImage(), items, "EXP-0001", "dev", batch_size=4, root=tmp_path, log=None,
+    lines = []
+    again = runner.run(OpensEveryImage(), items, "EXP-0001", "dev", batch_size=4, root=tmp_path, log=lines.append,
                        fallback=fallback)
-    assert again.already_done == 4 and again.predicted == 0
+    assert again.already_done == 3 and again.predicted == 1 and again.fallbacks == 1 and again.complete
+    assert any("retrying 1 image(s)" in line for line in lines)
+    records = runner.read_predictions(runner.predictions_path("EXP-0001", "dev", tmp_path))
+    assert len(records) == 4  # no repeated line
+
+
+class SystemicBug:
+    """A method bug that raises ValueError for every image until it is fixed."""
+
+    def __init__(self) -> None:
+        self.fixed = False
+
+    def predict(self, items):
+        if not self.fixed:
+            raise ValueError("a bug in the method, not a broken file")
+        return [Pred(item.image_id, {d: FAKE_CLASSES[d][1] for d in DIMENSIONS}) for item in items]
+
+
+def test_after_a_systemic_error_hits_the_cap_the_fixed_method_predicts_every_image_on_restart(tmp_path):
+    items = pictures(tmp_path / "img", 12)
+    fallback = runner.constant_fallback(sample_for(i.image_id for i in items))
+    method = SystemicBug()
+    with pytest.raises(runner.TooManyFallbacks):
+        runner.run(method, items, "EXP-0001", "dev", batch_size=3, root=tmp_path, log=None, fallback=fallback,
+                   max_fallbacks=5)
+    path = runner.predictions_path("EXP-0001", "dev", tmp_path)
+    assert any(r.get("fallback") for r in runner.read_predictions(path).values())  # constant rows were written
+    method.fixed = True
+    report = runner.run(method, items, "EXP-0001", "dev", batch_size=3, root=tmp_path, log=None, fallback=fallback,
+                        max_fallbacks=5)
+    records = runner.read_predictions(path)
+    assert report.complete and report.fallbacks == 0 and len(records) == 12
+    assert not any(r.get("fallback") for r in records.values())
+    assert all(r["labels"]["subject"] == FAKE_CLASSES["subject"][1] for r in records.values())
 
 
 def test_any_other_error_still_stops_the_run(tmp_path):
