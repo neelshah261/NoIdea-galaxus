@@ -73,6 +73,24 @@ def _numpy(tensor: Any) -> np.ndarray:
     return np.asarray(tensor, dtype=np.float32)
 
 
+#: Where Apertus 1.5 keeps its VQ image tokenizer. It stays in float32 when the rest of the model runs in bf16 or fp16:
+#: the training path does the same (``train/lora_apertus.py``, ``keep_vision_tokenizer_fp32``, from the vllm#50496
+#: review), so the image codes here are the ones the LoRA run and the gateway see (#214).
+VISION_TOKENIZER_NAMES = ("vision_tokenizer", "image_tokenizer")
+
+
+def keep_vision_tokenizer_fp32(network: Any) -> int:
+    """Cast every vision-tokenizer module of ``network`` to float32; returns how many there were (0 for a model
+    without one, or a stand-in without ``named_modules``)."""
+    named_modules = getattr(network, "named_modules", None)
+    if not callable(named_modules):
+        return 0
+    found = [module for name, module in named_modules() if name.endswith(VISION_TOKENIZER_NAMES)]
+    for module in found:
+        module.float()
+    return len(found)
+
+
 def chat_with_images(messages: Sequence[Message], image_count: int) -> list[dict[str, Any]]:
     """``messages`` in the transformers chat format, with ``image_count`` image slots before the last user text."""
     chat = [{"role": message["role"], "content": [{"type": "text", "text": message["content"]}]} for message in messages]
@@ -122,6 +140,7 @@ class LocalBackend:
                 f"local: transformers {self.transformers_version} could not load {model} with "
                 f"{self.model_class.__name__}: {type(error).__name__}: {error}"
             ) from error
+        self.vision_tokenizers_fp32 = keep_vision_tokenizer_fp32(self.network)
         self.network.to(self.device)
         self.network.eval()
         self.load_seconds = time.perf_counter() - started

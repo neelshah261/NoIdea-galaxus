@@ -164,6 +164,14 @@ def _helper_fused_mirror(rows: pd.DataFrame, data: DataLane, seed: int) -> Predi
     return helper.fused_factory(mirror=True)(rows, data, seed)
 
 
+def _apertus_core(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """#214: heads on Apertus v1.5 8B hidden states (the core) and helper-fused's frozen encoders (the base), plus
+    ``$APERTUS_CORE_BASE_SCORES`` when set."""
+    from galaxus.model import apertus_core
+
+    return apertus_core.factory()(rows, data, seed)
+
+
 def _recalibrated(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
     """#42: $RECAL_BASE's saved holdout answers with confidence-gated recalibration, cross-fitted on product halves."""
     import os
@@ -213,6 +221,7 @@ PREDICTORS: dict[str, PredictorFactory] = {
     "helper-siglip-mirror": _helper_mirror,  # the same, perspective trained on mirrored copies and averaged with the mirror
     "helper-fused": _helper_fused,  # EXP-0059: SigLIP base + DINOv2 base + SigLIP 2 base, unit length, concatenated
     "helper-fused-mirror": _helper_fused_mirror,  # helper-fused with the mirror-aware perspective head
+    "apertus-core": _apertus_core,  # #214: Apertus hidden states + the frozen encoders (+ optional base scores)
     "recalibrated": _recalibrated,  # #42: confidence-gated recalibration of $RECAL_BASE (e.g. EXP-0004)
     "type-prior": _type_prior,  # #133: the product-type prior on $TYPE_PRIOR_BASE's answers (e.g. EXP-0002)
     "majority": _majority,
