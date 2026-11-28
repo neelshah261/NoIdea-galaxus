@@ -33,10 +33,23 @@ def test_many_workers_give_every_line_once(tmp_path, galaxus_data):
 
 
 def test_429_bursts_and_5xx_are_absorbed_with_four_retries(tmp_path, galaxus_data):
-    gateway = load.FakeGateway(burst_429_every=10, burst_429_length=2, error_5xx_every=13)
+    """Deterministic with six workers: each burst or 503 hits one request's own retries (``per_request``), so no
+    request fails more than twice in a row. On the shared counter, one request's five attempts could each land on
+    another request's error slot (~27% of slots), and the run failed about one time in seven on ci."""
+    gateway = load.FakeGateway(burst_429_every=10, burst_429_length=2, error_5xx_every=13, per_request=True)
     report = load.run_load(gateway, 100, workers=6, batch_size=2, root=tmp_path, keys=KEYS, retries=4)
     assert report.complete and len(set(lines(tmp_path))) == 100
-    assert gateway.statuses[429] > 0 and gateway.statuses[503] > 0
+    assert gateway.distinct_requests == 100                       # one request per image, retries not counted
+    assert gateway.statuses[429] == 2 * 10                        # requests 10, 20, ... 100: two 429s each
+    assert gateway.statuses[503] == 7                             # 13, 26, ... 91 (none of them a multiple of 10)
+
+
+def test_per_request_failures_never_exceed_the_burst_on_one_thread(galaxus_data):
+    gateway = load.FakeGateway(burst_429_every=2, burst_429_length=3, per_request=True)
+    first = [gateway("u", {}, b"", 1.0)[0]]                         # request 1: served
+    second = [gateway("u", {}, b"", 1.0)[0] for _ in range(4)]      # request 2: three 429s, then served
+    assert first == [200] and second == [429, 429, 429, 200]
+    assert gateway.distinct_requests == 2 and gateway.requests == 5
 
 
 def test_finding_a_burst_longer_than_the_retries_stops_the_run_and_the_restart_finishes(tmp_path, galaxus_data):
