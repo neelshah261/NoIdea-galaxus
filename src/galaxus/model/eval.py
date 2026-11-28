@@ -187,8 +187,8 @@ def _mirror_tta(inner: str) -> PredictorFactory:
 #: The predictors this script runs, by name. A new method registers its factory here and changes nothing else.
 PREDICTORS: dict[str, PredictorFactory] = {
     "ensemble": _ensemble(),
-    "ensemble-agree": _ensemble("agree"),
-    "helper-siglip": _helper,  # heads on SigLIP embeddings; see galaxus.model.helper for the rule it touches  # #106: the first member unless both product halves agree on another
+    "ensemble-agree": _ensemble("agree"),  # #106: the first member unless both product halves agree on another
+    "helper-siglip": _helper,  # heads on SigLIP embeddings; see galaxus.model.helper for the rule it touches
     "recalibrated": _recalibrated,  # #42: confidence-gated recalibration of $RECAL_BASE (e.g. EXP-0004)
     "type-prior": _type_prior,  # #133: the product-type prior on $TYPE_PRIOR_BASE's answers (e.g. EXP-0002)
     "majority": _majority,
