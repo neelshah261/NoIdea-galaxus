@@ -46,7 +46,7 @@ def test_fused_features_follow_exp_0059s_recipe_bit_for_bit():
 def test_the_three_encoders_are_pinned_in_exp_0059s_order():
     assert helper.FUSED_ENCODERS == (
         "google/siglip-base-patch16-224", "facebook/dinov2-base", "google/siglip2-base-patch16-224")
-    assert helper.REVISIONS == {
+    assert {name: helper.REVISIONS[name] for name in helper.FUSED_ENCODERS} == {
         "google/siglip-base-patch16-224": "7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed",
         "facebook/dinov2-base": "f9e44c814b77203eaa57a6bdbbd535f21ede1415",
         "google/siglip2-base-patch16-224": "75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2",
@@ -153,3 +153,15 @@ def test_fit_all_uses_every_labelled_row_only_when_asked(monkeypatch):
     assert seen == [10, 7]
     assert "holdout included" in everything.heads_model.meta["fitted_on"]
     assert default.heads_model.meta["fitted_on"] == "train minus the official holdout"
+
+
+# ---------------------------------------------------------------- C (#207): the larger encoder set
+
+
+def test_every_encoder_set_is_pinned_and_named_like_its_fused_helper():
+    assert helper.ENCODER_SETS["base"] == helper.FUSED_ENCODERS
+    for encoders in helper.ENCODER_SETS.values():
+        assert all(name in helper.REVISIONS for name in encoders)
+        assert helper.COMPONENTS["fused:" + "+".join(encoders)] == encoders
+    assert helper.REVISIONS["facebook/dinov2-large"] == "47b73eefe95e8d44ec3623f8890bd894b6ea2d6c"
+    assert helper.REVISIONS["google/siglip2-large-patch16-256"] == "787800c8990e6f058423089178e718139608408c"

@@ -46,13 +46,24 @@ REVISIONS = {
     DEFAULT_ENCODER: "7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed",
     "facebook/dinov2-base": "f9e44c814b77203eaa57a6bdbbd535f21ede1415",
     "google/siglip2-base-patch16-224": "75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2",
+    # C (#207): the larger encoders, today's Hugging Face main, verified on the HF API (apache-2.0 both).
+    "facebook/dinov2-large": "47b73eefe95e8d44ec3623f8890bd894b6ea2d6c",
+    "google/siglip2-large-patch16-256": "787800c8990e6f058423089178e718139608408c",
 }
 #: EXP-0059's encoders, **in this order**: each image's three embeddings, each divided by its own L2 norm, are
 #: concatenated in this order before the heads (#182). Changing the order changes the features.
 FUSED_ENCODERS = ("google/siglip-base-patch16-224", "facebook/dinov2-base", "google/siglip2-base-patch16-224")
 FUSED_NAME = "fused:" + "+".join(FUSED_ENCODERS)
-#: The encoders behind a helper name: one for a single encoder, three for the fused helper.
-COMPONENTS = {FUSED_NAME: FUSED_ENCODERS}
+#: C (#207): the encoder sets a fused helper can use. ``base`` is EXP-0059's; ``large`` keeps SigLIP base (fast, the
+#: best on individuals and text_classification) and swaps DINOv2 and SigLIP 2 for their large versions. System S
+#: measures it and may change the ``large`` tuple on this branch; ``HELPER_ENCODER_SET`` picks one in ``from_env``.
+ENCODER_SETS = {
+    "base": FUSED_ENCODERS,
+    "large": ("google/siglip-base-patch16-224", "facebook/dinov2-large", "google/siglip2-large-patch16-256"),
+}
+ENCODER_SET_ENV = "HELPER_ENCODER_SET"
+#: The encoders behind a helper name: one for a single encoder, three for each fused set.
+COMPONENTS = {"fused:" + "+".join(encoders): encoders for encoders in ENCODER_SETS.values()}
 #: ``HELPER_FIT_ALL=1``: the dev and final heads are fitted on every labelled row, the official holdout included
 #: (#176). EXP rows never use it: the eval script fits on train minus the holdout and scores the holdout.
 FIT_ALL_ENV = "HELPER_FIT_ALL"
