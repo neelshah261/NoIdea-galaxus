@@ -20,7 +20,7 @@ set -euo pipefail
 : "${HF_TOKEN:?the HF_TOKEN secret is missing}"
 : "${KAGGLE_API_TOKEN:?the KAGGLE_API_TOKEN secret is missing}"
 : "${CKPT_REPO:?CKPT_REPO (namespace/name of the private model repo) is missing}"
-STAGE="${STAGE:-train}"            # setup | train
+STAGE="${STAGE:-train}"            # setup | train | parity (score an adapter with the training code, #145)
 REF="${REF:-main}"
 RUN="${RUN:-exp0004}"
 EPOCHS="${EPOCHS:-1}"
@@ -59,6 +59,19 @@ uv run --quiet python -c "import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extr
   "$GALAXUS_DATA/$COMPETITION.zip" "$GALAXUS_DATA"
 rm -f "$GALAXUS_DATA/$COMPETITION.zip"
 log "data unpacked: $(find "$GALAXUS_DATA" -maxdepth 1 -name '*.csv' | wc -l) csv files"
+
+if [[ "$STAGE" == "parity" ]]; then
+  # Is EXP-0004's 0.343 the adapter or the vLLM serving? Score the adapter through the training code's own path
+  # (bench/lora_parity.py) on a fixed holdout sample. Only the adapter files are fetched; only aggregates are printed.
+  ADAPTER_PATH="${ADAPTER_PATH:-$RUN/adapter}"
+  log "parity: $ADAPTER_PATH on ${LIMIT:-200} holdout images, transformers + PEFT, with and without product context"
+  hfcli download "$CKPT_REPO" --repo-type model --local-dir "$WORK/pulled" \
+    --include "$ADAPTER_PATH/adapter_config.json" "$ADAPTER_PATH/adapter_model.safetensors" >/dev/null
+  uv run --quiet "${WITH[@]}" python bench/lora_parity.py --adapter "$WORK/pulled/$ADAPTER_PATH" --model "$MODEL" \
+    --limit "${LIMIT:-200}" --both
+  log "parity done: nothing was trained or uploaded"
+  exit 0
+fi
 
 log "3/5 prepare 512 px training images, original and mirrored"
 uv run --quiet python -m galaxus.data.prep --part train --size 512 --workers 8
