@@ -183,7 +183,9 @@ def from_env() -> RecalibratedPredictor:
         raise RuntimeError(f"set ${RULES_ENV} (a rules json from `recalibrate learn`) and ${INNER_ENV} "
                            "(the live predictor, e.g. galaxus.model.lora:from_env)")
     saved = json.loads(Path(rules_path).read_text(encoding="utf-8"))
-    return RecalibratedPredictor(rules=saved["rules"], inner=load_predictor(inner_spec), base_exp=saved.get("base"))
+    inner = load_predictor(inner_spec)
+    return RecalibratedPredictor(rules=saved["rules"], inner=inner, base_exp=saved.get("base"),
+                                 model=getattr(inner, "model", None), model_revision=getattr(inner, "model_revision", None))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
