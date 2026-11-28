@@ -46,6 +46,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from galaxus.model.lora import (
     CLASS_WEIGHTINGS,
+    CONTEXT_DROPOUT,
     IMAGE_SIZE,
     MAX_REPEATS,
     RARE_CLASS_TARGET,
@@ -79,9 +80,10 @@ TARGET_MODULES = r".*(?<!vision_tokenizer)\.(q_proj|k_proj|v_proj|o_proj|up_proj
 REFERENCE_TOKENS_PER_SECOND_L40S = 14_000 * 700 * 3 / (73 * 60) / 2.5
 
 
-def training_set(teacher_path: str | None = None, teacher_min_confidence: float = TEACHER_MIN_CONFIDENCE):
-    """Train minus the official holdout, with the data lane's mirrored rows (#29) and, with ``teacher_path``, a teacher's
-    labels on the masked prelabel cells (#132)."""
+def training_set(teacher_path: str | None = None, teacher_min_confidence: float = TEACHER_MIN_CONFIDENCE,
+                 context_dropout: float = CONTEXT_DROPOUT):
+    """Train minus the official holdout, with the data lane's mirrored rows (#29), context dropout (#101 item 2) and,
+    with ``teacher_path``, a teacher's labels on the masked prelabel cells (#132)."""
     from galaxus.data import classes, load, mirror, split
     from galaxus.model.ensemble import load_records
 
@@ -94,12 +96,14 @@ def training_set(teacher_path: str | None = None, teacher_min_confidence: float 
         leaked = set(teacher) & set(holdout["image_id"].astype(str))
         if leaked:
             raise ValueError(f"the teacher file has {len(leaked)} holdout images: it must cover train minus the holdout")
-    data = build_training_set(rows, dimensions, mirrored, teacher=teacher, teacher_min_confidence=teacher_min_confidence)
+    data = build_training_set(rows, dimensions, mirrored, context_dropout=context_dropout, teacher=teacher,
+                              teacher_min_confidence=teacher_min_confidence)
     return dimensions, data, classes.allowed_classes()
 
 
 def plan(arguments) -> int:
-    _, data, _ = training_set(arguments.teacher, arguments.teacher_min_confidence)
+    _, data, _ = training_set(arguments.teacher, arguments.teacher_min_confidence,
+                              context_dropout=arguments.context_dropout)
     p = Plan(data.stats["examples_per_epoch"], arguments.epochs, BATCH, ACCUMULATION, tokens_per_example(),
              REFERENCE_TOKENS_PER_SECOND_L40S, arguments.dollars_per_hour or 1.8)
     print(json.dumps(data.stats, indent=2))
@@ -108,7 +112,8 @@ def plan(arguments) -> int:
     print(f"ESTIMATE on one L40S: {p.hours:.1f} h, ${p.dollars:.2f} at ${p.dollars_per_hour}/h "
           "(from the hosts' Qwen timing scaled by tokens; the run prints the measured rate after 50 steps)")
     print(f"recipe: LoRA r{RANK}/a{ALPHA}, lr {LEARNING_RATE}, cosine, warmup {WARMUP}, rare classes towards "
-          f"{RARE_CLASS_TARGET} (max {MAX_REPEATS}x), mirrored rows, human labels only, holdout left out")
+          f"{RARE_CLASS_TARGET} (max {MAX_REPEATS}x), mirrored rows, human labels only, holdout left out, "
+          f"context dropout {arguments.context_dropout:.0%} ({data.stats['context_dropped']} examples)")
     options = loss_options(data.examples, arguments.class_weighting, arguments.focal_gamma)
     print(f"loss: {options.describe()}")
     if options.class_weights:
@@ -302,7 +307,8 @@ def train(arguments) -> int:
     import transformers
     from transformers import Trainer, TrainingArguments
 
-    _dimensions, data, classes = training_set(arguments.teacher, arguments.teacher_min_confidence)
+    _dimensions, data, classes = training_set(arguments.teacher, arguments.teacher_min_confidence,
+                                              context_dropout=arguments.context_dropout)
     options = loss_options(data.examples, arguments.class_weighting, arguments.focal_gamma)
     out = Path(arguments.output or _out_dir() / f"lora-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}")
     print(f"[lora] {data.stats['examples_per_epoch']} examples per epoch; output {out}; transformers "
@@ -477,6 +483,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--merge", action="store_true", help="also write merged bf16 weights for vLLM")
     parser.add_argument("--gradient-checkpointing", action="store_true")
+    parser.add_argument("--context-dropout", type=float, default=CONTEXT_DROPOUT,
+                        help=f"share of examples without product context (default {CONTEXT_DROPOUT}; 0 turns it off)")
     parser.add_argument("--save-steps", type=int, default=SAVE_STEPS,
                         help=f"optimizer steps between checkpoints (default {SAVE_STEPS}; #76: a crash loses one interval)")
     parser.add_argument("--dollars-per-hour", type=float, default=None)
