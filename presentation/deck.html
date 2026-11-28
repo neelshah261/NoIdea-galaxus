@@ -1,0 +1,171 @@
+<!doctype html>
+<!-- #52: the pitch deck. Source for `python -m galaxus.serve.deck`, which fills every {…} from results/metrics.json
+     (design/PITCH_DECK.md) and prints the PDF. Look: design/STYLE.md. Max 10 slides (README.md "Pitch deck").
+     The only typed numbers are the hosts' baselines, quoted from challenge_description.md "Baselines". -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NoIdea · Hack Apertus Zurich · Digitec Galaxus</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@100..900&family=Geist+Mono:wght@400..700&display=swap" rel="stylesheet">
+<style>
+  :root { --paper:#f2efe9; --paper-2:#f8f6f1; --ink:#141414; --ink-2:#2e2b27; --muted:#55524c; --muted-2:#6e6a63;
+          --rule:#dcd6cc; --rule-2:#c4bcae; --accent:#c93c05; --blue:#1d6bb3; --blue-2:#5a93c9; --amber:#e3a008;
+          --sans:"Geist","Helvetica Neue",Arial,sans-serif; --mono:"Geist Mono",ui-monospace,Menlo,monospace; }
+  @page { size: 1920px 1080px; margin: 0; }
+  html, body { margin: 0; background: var(--ink); }
+  section { width: 1920px; height: 1080px; box-sizing: border-box; padding: 96px 110px 84px; background: var(--paper);
+            color: var(--ink); font-family: var(--sans); display: flex; flex-direction: column; overflow: hidden;
+            break-after: page; page-break-after: always; }
+  .eyebrow { display: flex; justify-content: space-between; font: 24px var(--mono); letter-spacing: .08em;
+             text-transform: uppercase; color: var(--muted); }
+  h1 { font-size: 104px; font-weight: 700; letter-spacing: -.04em; line-height: 1.02; margin: 48px 0 24px; max-width: 1650px; }
+  .lead { font-size: 44px; line-height: 1.25; max-width: 1450px; color: var(--ink-2); margin: 0 0 40px; }
+  .mono { font-family: var(--mono); }
+  .num { font-family: var(--mono); text-align: right; }
+  .pending { color: var(--amber); font-family: var(--mono); }
+  .accent { color: var(--accent); }
+  .figures { margin-top: auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: 48px;
+             border-top: 2px solid var(--ink); padding-top: 20px; font: 26px var(--mono); color: var(--muted); }
+  .figures b { display: block; font-size: 80px; font-weight: 600; color: var(--accent); letter-spacing: -.02em; }
+  .foot { margin-top: auto; font-size: 24px; color: var(--muted-2); max-width: 1700px; line-height: 1.35; }
+  .wordmark { font-size: 260px; font-weight: 760; letter-spacing: -.06em; line-height: .85; margin: 150px 0 40px; }
+  .section-slide { justify-content: center; }
+  .section-slide h1 { font-size: 200px; margin: auto 0; }
+  table { border-collapse: collapse; font-size: 32px; width: 100%; }
+  th { font: 22px var(--mono); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); text-align: left; }
+  th, td { border-bottom: 1px solid var(--rule); padding: 14px 18px; vertical-align: top; }
+  tr.best td { color: var(--accent); font-weight: 600; }
+  .compact td, .compact th { font-size: 24px; padding: 9px 14px; }
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 40px; margin-top: 16px; }
+  .card { background: var(--paper-2); border-top: 2px solid var(--ink); padding: 32px; font-size: 32px; line-height: 1.35; }
+  .card h3 { font-size: 40px; margin: 0 0 16px; letter-spacing: -.02em; }
+  .pipe { display: grid; grid-template-columns: repeat(4, 1fr); gap: 28px; margin-top: 24px; }
+  .step { background: var(--paper-2); border-top: 2px solid var(--ink); padding: 28px; font-size: 30px; line-height: 1.35; }
+  .step b { display: block; font: 600 22px var(--mono); color: var(--muted); letter-spacing: .08em; margin-bottom: 12px; }
+  .step.ours { border-top-color: var(--accent); }
+  .bars { display: grid; grid-template-columns: 460px 1fr 140px; gap: 14px 24px; align-items: center; font-size: 30px; }
+  .track { background: #fff; height: 44px; }
+  .fill { height: 44px; background: var(--blue-2); }
+  .fill.qwen { background: var(--blue); }
+  .fill.ours { background: var(--accent); }
+  .chart svg { width: 100%; height: auto; max-height: 420px; margin-top: 24px; }
+</style>
+</head>
+<body>
+
+<section data-label="Title" data-speaker-notes="One sentence: what we built and the score of the method we submit ({best.id}). The three numbers come from its row in results/metrics.json; the score is the mean macro F1 on our official holdout.">
+  <div class="eyebrow"><span>Hack Apertus Zurich · Digitec Galaxus</span><span>Team NoIdea</span></div>
+  <div class="wordmark">No<span class="accent">Idea</span></div>
+  <p class="lead">Apertus reads every Galaxus product image: six answers per image, on hardware Galaxus can own.</p>
+  <div class="figures">
+    <div><b>{best.score}</b>holdout mean macro F1 · {best.id}</div>
+    <div><b>{best.macro_f1.perspective}</b>perspective macro F1</div>
+    <div><b>{best.images_per_second}</b>images per second</div>
+  </div>
+</section>
+
+<section data-label="The job" data-speaker-notes="Source: challenge_description.md, Why this matters and The task. Six questions, 41 classes. Today a finetuned Qwen 3.5 9B answers them; the brief is an Apertus v1.5 method that can replace it.">
+  <div class="eyebrow"><span>Hack Apertus Zurich · Digitec Galaxus</span><span>The job</span></div>
+  <h1>Six questions for every product image</h1>
+  <p class="lead">What an image shows decides gallery order, hidden images and where text overlays belong. Today a finetuned Qwen 3.5 9B answers. We answer with Apertus v1.5.</p>
+  <table>
+    <tr><th>Dimension</th><th>Question</th></tr>
+    <tr><td class=mono>subject</td><td>What does the image show?</td></tr>
+    <tr><td class=mono>background</td><td>What is behind the product?</td></tr>
+    <tr><td class=mono>perspective</td><td>From where is the product seen?</td></tr>
+    <tr><td class=mono>individuals</td><td>Is a real person or animal in the photo?</td></tr>
+    <tr><td class=mono>text_classification</td><td>Which kind of text overlay does the image carry?</td></tr>
+    <tr><td class=mono>text_language</td><td>Which language dominates the text?</td></tr>
+  </table>
+</section>
+
+<section data-label="Why it is hard" data-speaker-notes="Three traps. Macro F1: challenge_description.md, The score. Context: our rows EXP-0001 (always the majority class), EXP-0002 (8B with context) and EXP-0009 (8B without). Perspective: the hosts' business priority and a bonus (challenge_description.md, How we assess); left/right pairs are their own worst confusions (#17).">
+  <div class="eyebrow"><span>Hack Apertus Zurich · Digitec Galaxus</span><span>The problem</span></div>
+  <h1>Three traps in the score</h1>
+  <div class="cards">
+    <div class="card"><h3>Rare classes count</h3>Macro F1 weighs a rare class as much as a common one, so answering the usual class is punished.</div>
+    <div class="card"><h3>Context misleads</h3>With the catalog context, the 8B scores <span class=mono>{EXP-0002.macro_f1.subject}</span> on subject, the same as always answering the majority class (<span class=mono>{EXP-0001.macro_f1.subject}</span>). Without it: <span class="mono accent">{EXP-0009.macro_f1.subject}</span>. And in production the context can be missing.</div>
+    <div class="card"><h3>Left is not right</h3>Perspective is the business priority and earns a bonus. The 8B zero-shot starts at <span class=mono>{EXP-0002.macro_f1.perspective}</span> macro F1, and left/right pairs are the hosts' own worst confusions.</div>
+  </div>
+  <p class="foot">Macro F1 on our official holdout ({EXP-0002.holdout.images} train images, {EXP-0002.holdout.products} products), results/metrics.json.</p>
+</section>
+
+<section class="section-slide" data-label="Section: approach" data-speaker-notes="Section break.">
+  <div class="eyebrow"><span>Hack Apertus Zurich · Digitec Galaxus</span><span>02</span></div>
+  <h1>Approach</h1>
+</section>
+
+<section data-label="Method" data-speaker-notes="The method we submit (#137) and its row {best.id}. Everything at runtime is Apertus v1.5 plus open-weights helpers (AGENTS.md product rule 4). The validator runs before any file goes to Kaggle (rule 2).">
+  <div class="eyebrow"><span>Hack Apertus Zurich · Digitec Galaxus</span><span>Approach</span></div>
+  <h1>{method}</h1>
+  <p class="lead">At runtime only Apertus v1.5 and open-weights helpers: no closed model, no external call.</p>
+  <div class="pipe">
+    <div class="step"><b>01 · PREPARE</b>Composite on white, about 512 × 512 pixels of area, as the hosts' Qwen recipe does.</div>
+    <div class="step ours"><b>02 · APERTUS V1.5</b>One sentence about the image, then six labels as JSON, held to the 41 allowed classes.</div>
+    <div class="step ours"><b>03 · OUR SMALL PARTS</b>Where Apertus is unsure, the product type's usual class; mirror checks for left and right.</div>
+    <div class="step"><b>04 · VALIDATE</b>The submission validator checks every row and class before a file goes to Kaggle.</div>
+  </div>
+  <div class="figures">
+    <div><b>{best.score}</b>holdout mean macro F1</div>
+    <div><b>{best.macro_f1.subject}</b>subject macro F1</div>
+    <div><b>{best.macro_f1.text_language}</b>text language macro F1</div>
+  </div>
+</section>
+
+<section data-label="Innovation" data-speaker-notes="Each line is one change and its gain against the run it changes, both rows in results/metrics.json. Describing first and dropping the context are prompt changes; the type prior is the hosts' never-tried idea 3 (#17), learned on train minus the holdout and cross-fitted on the holdout's product halves.">
+  <div class="eyebrow"><span>Hack Apertus Zurich · Digitec Galaxus</span><span>Approach</span></div>
+  <h1>What moved the score, beyond a bigger model</h1>
+  <table>
+    <tr><th>Idea</th><th>Runs</th><th class=num>Overall</th><th>Dimension it targets</th></tr>
+    <tr><td>Describe the image first, then label</td><td class=mono>EXP-0021 vs 0002</td><td class=num>{delta EXP-0021.score EXP-0002.score}</td><td>perspective <span class=mono>{delta EXP-0021.macro_f1.perspective EXP-0002.macro_f1.perspective}</span></td></tr>
+    <tr><td>Leave the catalog context out</td><td class=mono>EXP-0025 vs 0021</td><td class=num>{delta EXP-0025.score EXP-0021.score}</td><td>subject <span class=mono>{delta EXP-0025.macro_f1.subject EXP-0021.macro_f1.subject}</span></td></tr>
+    <tr><td>Product type as a prior (hosts' idea 3)</td><td class=mono>EXP-0027 vs 0021</td><td class=num>{delta EXP-0027.score EXP-0021.score}</td><td>individuals <span class=mono>{delta EXP-0027.macro_f1.individuals EXP-0021.macro_f1.individuals}</span></td></tr>
+    <tr><td>One question per dimension</td><td class=mono>EXP-0041 vs 0025</td><td class=num>{delta EXP-0041.score EXP-0025.score}</td><td>subject <span class=mono>{delta EXP-0041.macro_f1.subject EXP-0025.macro_f1.subject}</span></td></tr>
+    <tr><td>Mirror the image for left and right</td><td class=mono>EXP-0006 vs 0002</td><td class=num>{delta EXP-0006.score EXP-0002.score}</td><td>perspective <span class=mono>{delta EXP-0006.macro_f1.perspective EXP-0002.macro_f1.perspective}</span></td></tr>
+    <tr><td>For comparison: the 70B, zero-shot</td><td class=mono>EXP-0015 vs 0002</td><td class=num>{delta EXP-0015.score EXP-0002.score}</td><td>individuals <span class=mono>{delta EXP-0015.macro_f1.individuals EXP-0002.macro_f1.individuals}</span></td></tr>
+  </table>
+  <p class="foot">Gain in mean macro F1 on the official holdout; "pending" means the run has no row yet.</p>
+</section>
+
+<section class="section-slide" data-label="Section: evidence" data-speaker-notes="Section break.">
+  <div class="eyebrow"><span>Hack Apertus Zurich · Digitec Galaxus</span><span>03</span></div>
+  <h1>Evidence</h1>
+</section>
+
+<section data-label="Results" data-speaker-notes="Baselines are the hosts' dev scores (challenge_description.md, Baselines). Ours is the holdout score of {best.id}; the two image sets differ, so the bars are a guide, not a ranking. The Kaggle dev score of our file is the comparable number.">
+  <div class="eyebrow"><span>Hack Apertus Zurich · Digitec Galaxus</span><span>Evidence</span></div>
+  <h1>Where we stand against the Galaxus baselines</h1>
+  <div class="bars">
+    <span>Qwen 3.5 9B, finetuned</span><div class="track"><div class="fill qwen" style="width:91.7%"></div></div><span class=num>0.917</span>
+    <span>Gemini 4 Argon, zero-shot</span><div class="track"><div class="fill" style="width:83.4%"></div></div><span class=num>0.834</span>
+    <span>Gemini 3.8 Flash, zero-shot</span><div class="track"><div class="fill" style="width:80.6%"></div></div><span class=num>0.806</span>
+    <span class="accent">NoIdea · {best.id}</span><div class="track"><div class="fill ours" style="width:calc({raw best.score} * 100%)"></div></div><span class="num accent">{best.score}</span>
+  </div>
+  <div class="chart">{chart EXP-0002 best}</div>
+  <p class="foot">Baselines: the hosts' dev scores (challenge_description.md "Baselines"). Ours: mean macro F1 on our official holdout of {best.holdout.images} train images; a different image set.</p>
+</section>
+
+<section data-label="Speed and deployment" data-speaker-notes="Speed is the row's images per second, measured by the eval script ({best.config.workers} requests in flight). 100,000 images a day is 1.2 per second (challenge_description.md, Why this matters); the final run plans for at least 2 per second (Timeline). Cost and peak memory come from a GPU benchmark row and stay pending until one exists.">
+  <div class="eyebrow"><span>Hack Apertus Zurich · Digitec Galaxus</span><span>Evidence</span></div>
+  <h1>Open weights end to end, fast enough for a day of images</h1>
+  <p class="lead">100,000 images a day is 1.2 per second; the final images ask for at least 2. Apertus is open weights, so the same pipeline runs on-premises or air-gapped.</p>
+  <div class="figures">
+    <div><b>{best.images_per_second}</b>images per second</div>
+    <div><b>{best.cost_per_100k_usd}</b>USD per 100,000 images</div>
+    <div><b>{best.hardware.peak_gpu_memory_gb}</b>peak GPU memory, GB</div>
+  </div>
+</section>
+
+<section data-label="What mattered" data-speaker-notes="The ablation, straight from results/metrics.json, against the plain 8B zero-shot (EXP-0002). Label errors: only the count of our suspected-error list, which goes to the hosts and is never shown. Close with the one insight: let Apertus look before it labels, and do not let the catalog answer for the image.">
+  <div class="eyebrow"><span>Hack Apertus Zurich · Digitec Galaxus</span><span>Insights</span></div>
+  <h1>What mattered, and what did not</h1>
+  <table class="compact">
+    <tr><th>EXP</th><th>Predictor</th><th>Model</th><th class=num>Score</th><th class=num>vs EXP-0002</th><th class=num>img/s</th></tr>
+    {rows EXP-0002 EXP-0001 EXP-0009 EXP-0006 EXP-0017 EXP-0021 EXP-0025 EXP-0027 EXP-0029 EXP-0043 EXP-0015 EXP-0041 EXP-0004}
+  </table>
+  <p class="foot">Suspected label errors found in train.csv: <span class=mono>{label_errors}</span>. Reproducible from commit <span class=mono>{best.commit}</span>. Thank you.</p>
+</section>
+
+</body>
+</html>

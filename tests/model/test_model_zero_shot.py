@@ -277,9 +277,10 @@ def test_every_preset_runs_through_the_eval_script_and_records_its_options(tmp_p
     assert config["image"] == options.get("image", "plain")
     assert config["image_size"] == options.get("image_size", 512)
     assert config["drop_context"] == list(options.get("drop_context", ()))
-    for flag in ("image_first", "macro_aware", "observe_first"):
+    for flag in ("image_first", "macro_aware", "observe_first", "per_dimension"):
         assert config[flag] is options.get(flag, False)
-    assert config["images"] == row["holdout"]["images"] == len(backend.calls)
+    calls_per_image = len(DIMENSIONS) if options.get("per_dimension") else 1  # #156: one request per dimension
+    assert config["images"] == row["holdout"]["images"] == len(backend.calls) // calls_per_image
 
 
 def test_a_bad_answer_is_asked_once_more(data_dir):

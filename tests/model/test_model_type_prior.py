@@ -92,7 +92,12 @@ def test_a_cell_changes_only_when_unsure_and_the_type_is_pure_enough():
     rules = {"subject": {"below": 0.5, "share": 0.8}}
     assert type_prior.apply_rules({"subject": "a"}, {"subject": 0.3}, "gadget", table, rules) == {"subject": "b"}
     assert type_prior.apply_rules({"subject": "a"}, {"subject": 0.7}, "gadget", table, rules) == {"subject": "a"}
-    assert type_prior.apply_rules({"subject": "a"}, None, "gadget", table, rules) == {"subject": "a"}
+    # no confidence = a default answer, the least sure: it changes too (+0.015 on EXP-0041, #176)
+    assert type_prior.apply_rules({"subject": "a"}, None, "gadget", table, rules) == {"subject": "b"}
+    assert type_prior.apply_rules({"subject": "a"}, {"perspective": 0.9}, "gadget", table, rules) == {"subject": "b"}
+    loose = {"subject": {"gadget": {"class": "b", "share": 0.35, "cells": 50}}}
+    assert type_prior.apply_rules({"subject": "a"}, {"subject": 0.3}, "gadget", loose,
+                                  {"subject": {"below": 0.5, "share": min(type_prior.SHARES)}}) == {"subject": "b"}
     assert type_prior.apply_rules({"subject": "a"}, {"subject": 0.3}, None, table, rules) == {"subject": "a"}
     assert type_prior.apply_rules({"subject": "a"}, {"subject": 0.3}, "thing", table, rules) == {"subject": "a"}
     strict = {"subject": {"below": 0.5, "share": 0.95}}

@@ -59,6 +59,12 @@ class FakeGateway:
     error_5xx_every: int = 0      # every n-th request answers 503 once
     key_budget: dict[str, int] = field(default_factory=dict)  # key -> successful calls before it answers 402
     dead_after: int | None = None  # every request after this many answers 503 (a gateway that went down)
+    #: Bursts and 503s hit the attempts of ONE client request (its retries), not whichever call comes next. With
+    #: several workers the global counter can land one request's every retry on someone else's error slot, so a run
+    #: with enough retries still failed now and then on ci; per request, a request fails at most a burst's length.
+    #: A call on a thread whose last call failed is that request's retry (the client retries on the same thread).
+    per_request: bool = False
+    distinct_requests: int = 0    # first attempts only, when per_request
     requests: int = 0
     statuses: Counter = field(default_factory=Counter)
     keys_used: Counter = field(default_factory=Counter)
@@ -66,6 +72,7 @@ class FakeGateway:
     max_in_flight: int = 0        # the most calls answered at the same time (#140: overlap, not wall time)
     _burst_left: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock)
+    _thread: threading.local = field(default_factory=threading.local)
     _answer: str = ""
 
     def __post_init__(self) -> None:
@@ -77,8 +84,11 @@ class FakeGateway:
         with self._lock:
             self.requests += 1
             number = self.requests
+            planned = self._planned_failure() if self.per_request else None
             if self.dead_after is not None and number > self.dead_after:
                 status = 503
+            elif self.per_request:
+                status = planned or self._served(key)
             elif self._burst_left > 0:
                 self._burst_left -= 1
                 status = 429
@@ -87,13 +97,8 @@ class FakeGateway:
                 status = 429
             elif self.error_5xx_every and number % self.error_5xx_every == 0:
                 status = 503
-            elif key in self.key_budget and self.key_budget[key] <= 0:
-                status = 402
             else:
-                status = 200
-                if key in self.key_budget:
-                    self.key_budget[key] -= 1
-                self.keys_used[key] += 1
+                status = self._served(key)
             self.statuses[status] += 1
             self.in_flight += 1
             self.max_in_flight = max(self.max_in_flight, self.in_flight)
@@ -108,6 +113,36 @@ class FakeGateway:
         reply = {"choices": [{"message": {"content": self._answer}, "finish_reason": "stop"}],
                  "usage": {"prompt_tokens": 1100, "completion_tokens": 40}, "model": "fake-apertus"}
         return 200, json.dumps(reply).encode()
+
+    def _served(self, key: str) -> int:
+        """402 for a spent key, else 200 (and the key's budget goes down). Called with the lock held."""
+        if key in self.key_budget and self.key_budget[key] <= 0:
+            return 402
+        if key in self.key_budget:
+            self.key_budget[key] -= 1
+        self.keys_used[key] += 1
+        return 200
+
+    def _planned_failure(self) -> int | None:
+        """``per_request``: the next planned error of this thread's request, or None when it is to be served.
+
+        A new request (this thread's last call was served, or there was none) gets its plan from its number among the
+        distinct requests: every ``burst_429_every``-th a burst of ``burst_429_length`` 429s, every
+        ``error_5xx_every``-th one 503. Called with the lock held.
+        """
+        plan = getattr(self._thread, "plan", None)
+        if plan is None:
+            self.distinct_requests += 1
+            n = self.distinct_requests
+            if self.burst_429_every and n % self.burst_429_every == 0:
+                plan = [429] * max(1, self.burst_429_length)
+            elif self.error_5xx_every and n % self.error_5xx_every == 0:
+                plan = [503]
+            else:
+                plan = []
+        status = plan.pop(0) if plan else None
+        self._thread.plan = plan if status is not None else None  # served: the next call is a new request
+        return status
 
 
 class GatewayPredictor:

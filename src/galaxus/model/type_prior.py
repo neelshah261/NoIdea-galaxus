@@ -19,6 +19,9 @@ a top class with at least ``share`` of its cells, answer that class.**
 * **For dev and final:** ``python -m galaxus.model.type_prior learn --base EXP-0002`` saves the table and the rules
   learned on the whole holdout. :func:`from_env` wraps the live predictor with them (``$TYPE_PRIOR_RULES``,
   ``$TYPE_PRIOR_INNER``).
+* **On saved answers (#182):** a combination of several runs (``ensemble apply``) has no live predictor to wrap, only
+  its dev or final answers on disk. ``python -m galaxus.model.type_prior apply --rules <json> --base <EXP> --part dev
+  --exp <new EXP>`` applies the saved table and rules to those answers (:func:`apply_saved`), for ``submit``.
 
 Dimensions and classes come from ``galaxus.data.classes``; no class name is typed here.
 """
@@ -47,7 +50,9 @@ INNER_ENV = "TYPE_PRIOR_INNER"
 #: Confidence gates tried; 1.01 means every cell that has a confidence.
 THRESHOLDS = (0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.01)
 #: Minimum share of the type's top class tried.
-SHARES = (0.6, 0.7, 0.8, 0.9, 0.95)
+SHARES = (0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95)  # 0.3-0.5 added (#176): +0.015 on EXP-0041, on both halves
+#: A cell without a confidence is a default answer (zero_shot: no usable reply), the least sure of all.
+UNKNOWN_CONFIDENCE = 0.0
 MIN_TYPE_CELLS = 20      # scored cells a type needs in train before its top class is trusted
 MIN_CHANGED = 5          # a rule must move at least this many cells on the half it is learned on
 Records = dict[str, dict[str, Any]]
@@ -89,18 +94,28 @@ def type_table(rows: pd.DataFrame, dims: Sequence[str], scored_mask: ScoredMask,
 
 def apply_rules(labels: Mapping[str, str], confidence: Mapping[str, float] | None, kind: Any, table: Table,
                 rules: Rules) -> dict[str, str]:
-    """One answer with the rules applied. A cell changes only when its confidence is known and below the rule's gate,
-    and the product type ``kind`` is in the table with a top-class share of at least the rule's."""
+    """One answer with the rules applied. A cell changes only when its confidence is below the rule's gate (a missing
+    one counts as ``UNKNOWN_CONFIDENCE``), and the product type ``kind`` is in the table with a top-class share of at
+    least the rule's."""
     out = dict(labels)
     name = product_type(kind)
     if name is None:
         return out
     for dimension, rule in rules.items():
         entry = table.get(dimension, {}).get(name)
-        value = (confidence or {}).get(dimension)
-        if entry and value is not None and entry["share"] >= rule["share"] and float(value) < rule["below"]:
+        value = (confidence or {}).get(dimension, UNKNOWN_CONFIDENCE)
+        if entry and entry["share"] >= rule["share"] and float(value) < rule["below"]:
             out[dimension] = entry["class"]
     return out
+
+
+def with_prior(image_id: str, labels: Mapping[str, str], confidence: Mapping[str, float], kind: Any, table: Table,
+               rules: Rules) -> Prediction:
+    """One answer as a Prediction with the rules applied. A changed cell's confidence was about the old class, so it
+    is dropped, never carried over."""
+    answer = apply_rules(labels, confidence, kind, table, rules)
+    kept = {d: v for d, v in confidence.items() if answer.get(d) == labels.get(d)}
+    return Prediction(image_id=image_id, labels=answer, confidence=kept or None)
 
 
 def learn(records: Records, part: pd.DataFrame, table: Table, dims: Sequence[str], solution_frame: SolutionFrame,
@@ -119,14 +134,14 @@ def learn(records: Records, part: pd.DataFrame, table: Table, dims: Sequence[str
     gains: dict[str, dict[str, float]] = {}
     for dimension in dims:
         answers = {i: records[i]["labels"][dimension] for i in ids}
-        conf = {i: (records[i].get("confidence") or {}).get(dimension) for i in ids}
+        conf = {i: (records[i].get("confidence") or {}).get(dimension, UNKNOWN_CONFIDENCE) for i in ids}
         entries = {i: table.get(dimension, {}).get(kinds.get(i)) for i in ids}
         base = best = dimension_f1(answers, part, dimension, fill, dims, solution_frame, evaluate)
         chosen = None
         for share in SHARES:
             for below in THRESHOLDS:
                 moved = {i: entry["class"] for i, entry in entries.items()
-                         if entry and conf[i] is not None and entry["share"] >= share and float(conf[i]) < below
+                         if entry and entry["share"] >= share and float(conf[i]) < below
                          and answers[i] != entry["class"]}
                 if len(moved) < MIN_CHANGED:
                     continue
@@ -150,6 +165,9 @@ class TypePriorPredictor:
     rules_by_image: dict[str, Rules] | None = None      # holdout image -> rules learned on the other half
     base_exp: str | None = None
     images_per_second: float | None = None
+    #: The base run's model and revision (#175), so the EXP row, compare and the report name it.
+    model: str | None = None
+    model_revision: str | None = None
 
     def predict(self, batch: Sequence[ImageItem]) -> list[Prediction]:
         if self.inner is not None:
@@ -161,14 +179,11 @@ class TypePriorPredictor:
             raw = [(str(item.image_id), dict(self.saved[str(item.image_id)]["labels"]),
                     dict(self.saved[str(item.image_id)].get("confidence") or {})) for item in batch]
         kinds = {str(item.image_id): (item.context or {}).get(TYPE_FIELD) for item in batch}
-        out = []
-        for image_id, labels, confidence in raw:
-            rules = (self.rules_by_image or {}).get(image_id, self.rules)
-            answer = apply_rules(labels, confidence, kinds.get(image_id), self.table, rules)
-            # a changed cell's confidence was about the old class: it is dropped, never carried over
-            kept = {d: v for d, v in confidence.items() if answer.get(d) == labels.get(d)}
-            out.append(Prediction(image_id=image_id, labels=answer, confidence=kept or None))
-        return out
+        return [
+            with_prior(image_id, labels, confidence, kinds.get(image_id), self.table,
+                       (self.rules_by_image or {}).get(image_id, self.rules))
+            for image_id, labels, confidence in raw
+        ]
 
     def config(self) -> dict[str, Any]:
         return {"method": "product-type prior, gated by confidence, learned on one product half and applied to the "
@@ -204,9 +219,11 @@ def from_saved(base_exp: str, rows: pd.DataFrame, holdout: pd.DataFrame, dims: S
     records = load_records(path)
     table = type_table(rows, dims, scored_mask)
     _, by_image, full = crossfit(records, holdout, table, dims, solution_frame, evaluate, seed)
-    speed = {str(r.get("id")): r.get("images_per_second") for r in result_rows}.get(base_exp)
+    base_row = {str(r.get("id")): r for r in result_rows}.get(base_exp, {})
+    speed = base_row.get("images_per_second")
     return TypePriorPredictor(table=table, rules=full["rules"], saved=records, rules_by_image=by_image,
-                              base_exp=base_exp, images_per_second=speed)
+                              base_exp=base_exp, images_per_second=speed,
+                              model=base_row.get("model"), model_revision=base_row.get("model_revision"))
 
 
 def from_env() -> TypePriorPredictor:
@@ -224,17 +241,73 @@ def from_env() -> TypePriorPredictor:
                               base_exp=saved.get("base"))
 
 
+def apply_saved(saved_rules: Mapping[str, Any], records: Records, part: pd.DataFrame) -> list[Prediction]:
+    """Saved dev or final answers (any run's, e.g. an ensemble's) with ``learn``'s table and rules applied (#182).
+
+    ``part`` is that part's table (dev.csv or final.csv as the data lane reads it), which carries the product type.
+    Every image of ``part`` needs an answer, since the submission needs every row; the answers come back in the order
+    of ``part``.
+    """
+    ids = part[ID_COLUMN].astype(str).tolist()
+    missing = [i for i in ids if i not in records]
+    if missing:
+        raise KeyError(f"{len(missing)} images of this part have no saved answer, e.g. {missing[:3]}")
+    kinds = part[TYPE_FIELD].tolist() if TYPE_FIELD in part.columns else [None] * len(ids)
+    table, rules = saved_rules["table"], saved_rules["rules"]
+    return [
+        with_prior(i, dict(records[i]["labels"]), dict(records[i].get("confidence") or {}), kind, table, rules)
+        for i, kind in zip(ids, kinds, strict=True)
+    ]
+
+
+def write_records(predictions: Sequence[Prediction], target: Path) -> Path:
+    """Answers as jsonl in the eval script's record format (``image_id``, ``labels``, ``confidence``)."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("w", encoding="utf-8", newline="\n") as handle:
+        for p in predictions:
+            record = {ID_COLUMN: p.image_id, "labels": dict(p.labels),
+                      "confidence": None if p.confidence is None else dict(p.confidence)}
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    return target
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m galaxus.model.type_prior", description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
     learn_cmd = sub.add_parser("learn", help="the type table (train) and rules (whole holdout) from a base EXP")
     learn_cmd.add_argument("--base", required=True, help="EXP id whose holdout.jsonl has confidences, e.g. EXP-0002")
     learn_cmd.add_argument("--out", type=Path, default=None)
+    apply_cmd = sub.add_parser("apply", help="learn's table and rules applied to a base EXP's saved dev or final "
+                                             "answers, e.g. an ensemble's (#182)")
+    apply_cmd.add_argument("--rules", type=Path, required=True, help="the json that `learn` wrote")
+    apply_cmd.add_argument("--base", required=True, help="EXP id whose <part>.jsonl holds the answers")
+    apply_cmd.add_argument("--part", required=True, choices=("dev", "final"))
+    apply_cmd.add_argument("--exp", required=True, help="EXP id for the answers with the prior")
+    apply_cmd.add_argument("--rules-from-other-base", action="store_true",
+                           help="allow rules learned on another EXP's holdout answers (their confidence gates were "
+                                "chosen for that EXP, so this is usually a mistake)")
     arguments = parser.parse_args(argv)
 
     from galaxus.data import classes, load, metric, split
     from galaxus.data.paths import out_dir
     from galaxus.model.ensemble import load_records
+
+    if arguments.command == "apply":
+        from galaxus.serve.runner import predictions_path
+
+        saved_rules = json.loads(arguments.rules.read_text(encoding="utf-8"))
+        learned_on = saved_rules.get("base")
+        if learned_on and learned_on != arguments.base and not arguments.rules_from_other_base:
+            raise SystemExit(f"{arguments.rules} was learned on {learned_on}'s holdout answers, not {arguments.base}'s: "
+                             f"run `learn --base {arguments.base}` first (or pass --rules-from-other-base)")
+        part = load.read_dev() if arguments.part == "dev" else load.read_final()
+        records = load_records(predictions_path(arguments.base, arguments.part))
+        answers = apply_saved(saved_rules, records, part)
+        moved = sum(a.labels.get(d) != records[a.image_id]["labels"].get(d) for a in answers for d in a.labels)
+        target = write_records(answers, predictions_path(arguments.exp, arguments.part))
+        print(f"{len(answers)} answers, {moved} cells moved by the type prior -> {target}")
+        print(f"next: python -m galaxus.serve.submit --exp {arguments.exp} --part {arguments.part}")
+        return 0
 
     rows, holdout = split.split_holdout(load.read_train())
     dims = tuple(classes.dimensions())

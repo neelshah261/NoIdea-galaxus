@@ -279,7 +279,8 @@ def test_the_choose_printout_names_the_rule_and_its_honest_row():
     agreed = "\n".join(ensemble.summary(
         ensemble.crossfit(members, frame, DIMS, solution_frame, evaluate, halves, rule=ensemble.AGREE),
         exps, ensemble.AGREE))
-    assert "noctx / noctx -> noctx" in agreed and "noctx / ctx -> ctx" in agreed and "(base: ctx)" in agreed
+    assert "noctx: yes / yes -> noctx" in agreed and ": no -> ctx" in agreed.replace("yes / no", "no") \
+        and "(base: ctx)" in agreed
     assert 'ENSEMBLE_MEMBERS="ctx=EXP-0021 noctx=EXP-0025" python -m galaxus.model.eval ensemble-agree' in agreed
     best = "\n".join(ensemble.summary(ensemble.crossfit(members, frame, DIMS, solution_frame, evaluate, halves), exps))
     assert "chosen: whole / half 0 / half 1" in best and best.rstrip().endswith("python -m galaxus.model.eval ensemble")
@@ -309,3 +310,29 @@ def test_the_eval_script_writes_an_agree_row_with_its_rule_and_base(tmp_path, mo
     assert row["predictor"] == "ensemble-agree" and row["images_per_second"] == pytest.approx(2.3)
     assert row["config"]["rule"] == "agree" and row["config"]["base"] == "observe"
     assert row["config"]["members"] == {"observe": "EXP-0021", "observe_noctx": "EXP-0025"}
+
+
+def test_agree_is_not_split_by_two_alternatives_that_both_beat_the_base(monkeypatch):
+    # Vernika's run on #106: on subject the vote and the no-context member score alike and each fold named a different
+    # one best, so "the folds pick the same option" kept the base although both folds wanted to leave it.
+    scores = {
+        "whole": {"subject": {"ctx": 0.056, "noctx": 0.168, "vote": 0.169},
+                  "perspective": {"ctx": 0.097, "noctx": 0.104, "vote": 0.105}},
+        0: {"subject": {"ctx": 0.05, "noctx": 0.16, "vote": 0.17}, "perspective": {"ctx": 0.09, "noctx": 0.11, "vote": 0.12}},
+        1: {"subject": {"ctx": 0.06, "noctx": 0.17, "vote": 0.16}, "perspective": {"ctx": 0.10, "noctx": 0.11, "vote": 0.095}},
+    }
+    frame = holdout()
+    halves = ensemble.holdout_halves(frame)
+    half_of = dict(zip(frame["image_id"], halves.to_numpy(), strict=True))
+
+    def canned(members, part, dimensions, solution_frame, evaluate):
+        per = scores["whole"] if len(part) == len(frame) else scores[int(half_of[part["image_id"].iloc[0]])]
+        routing = {d: max(per[d], key=per[d].get) for d in per}
+        return {"dimensions": list(per), "routing": routing, "weights": {}, "scores": per, "images": len(part)}
+
+    monkeypatch.setattr(ensemble, "choose", canned)
+    choice = ensemble.agree({"ctx": {}, "noctx": {}}, frame, DIMS, solution_frame, evaluate, halves, base="ctx")
+    assert choice["routing_on_folds"] == [{"subject": "vote", "perspective": "vote"},
+                                          {"subject": "noctx", "perspective": "noctx"}]
+    assert choice["routing"] == {"subject": "vote", "perspective": "ctx"}  # vote loses to ctx on fold 1's perspective
+    assert choice["beats_base_on_folds"] == {"subject": [True, True], "perspective": [True, False]}

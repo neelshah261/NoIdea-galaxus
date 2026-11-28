@@ -92,6 +92,30 @@ def embedding_dir(encoder: str = DEFAULT_ENCODER) -> Path:
     return cache_dir("embeddings", encoder_slug(encoder))
 
 
+def pooled_features(output: Any) -> Any:
+    """The one image vector per row out of whatever an encoder returned.
+
+    Needed because the shape is not stable across ``transformers`` versions: on 5.24 SigLIP's
+    ``get_image_features`` returns a ``BaseModelOutputWithPooling`` (``last_hidden_state`` (n, patches, width) and
+    ``pooler_output`` (n, width)), while older versions returned the pooled tensor directly. Calling ``.detach()``
+    on the output object raises ``AttributeError``, so the unwrapping happens here, in a function tests can reach
+    without downloading a model.
+
+    ``pooler_output`` is preferred over a mean of ``last_hidden_state`` deliberately: a mean over the patch grid is
+    permutation-invariant, so an image and its mirror come out bit-identical (measured on #127). The pooled head is
+    not, and left-from-right is exactly what the perspective dimension needs. The mean is only a last resort for a
+    model that offers nothing else.
+    """
+    for attribute in ("image_embeds", "pooler_output"):
+        value = getattr(output, attribute, None)
+        if value is not None:
+            return value
+    hidden = getattr(output, "last_hidden_state", None)
+    if hidden is not None:
+        return hidden.mean(dim=1)
+    return output
+
+
 def load_encoder(name: str = DEFAULT_ENCODER) -> Encoder:
     """The default image encoder, imported only when it is actually wanted.
 
@@ -118,11 +142,8 @@ def load_encoder(name: str = DEFAULT_ENCODER) -> Encoder:
         def encode(self, images: Sequence[PillowImage.Image]) -> np.ndarray:
             batch = processor(images=list(images), return_tensors="pt")
             with torch.no_grad():
-                if hasattr(model, "get_image_features"):
-                    features = model.get_image_features(**batch)
-                else:  # pragma: no cover - model-shape dependent
-                    features = model(**batch).last_hidden_state.mean(dim=1)
-            return features.detach().cpu().numpy()
+                raw = model.get_image_features(**batch) if hasattr(model, "get_image_features") else model(**batch)
+            return pooled_features(raw).detach().cpu().numpy()
 
     return _Transformers()
 

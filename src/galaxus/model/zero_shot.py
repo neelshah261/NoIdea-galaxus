@@ -89,6 +89,9 @@ CROP_MARGIN = 0.06
 CROP_MAX_FRACTION = 0.9
 CROP_MIN_FRACTION = 0.01
 IMAGE_MODES = ("plain", "crop")
+#: #156: one question per dimension sends six requests per image, so it keeps more in flight to stay near 2 img/s.
+#: The gateway took 32 in flight on #106 (the runner's --workers 4, 8 each, 9.5 img/s); lower it if it refuses.
+PER_DIMENSION_WORKERS = 24
 #: The score sprint's variants (#106): one holdout run each, ``python -m galaxus.model.eval <name> --exp-id <id>``.
 #: The ids are reserved on #106; a variant that wins a dimension becomes an ensemble member there.
 PRESETS: dict[str, dict[str, Any]] = {
@@ -107,6 +110,15 @@ PRESETS: dict[str, dict[str, Any]] = {
     "zero-shot-observe-first-768": {"observe_first": True, "image_size": 768},  # EXP-0024
     "zero-shot-observe-first-no-context": {"observe_first": True, "use_context": False},  # EXP-0025
     "zero-shot-type-first": {"type_first": True},  # #133: the product type first; the EXP id is the next free one
+    # #156: one request per dimension, each asking only that dimension with only its classes. BYMO (#145) measured
+    # 0.229 -> 0.528 for the 8B on their own set with separate questions. No context is EXP-0025's best (0.360).
+    "zero-shot-per-dimension": {"per_dimension": True, "workers": PER_DIMENSION_WORKERS},
+    "zero-shot-per-dimension-observe-first": {
+        "per_dimension": True, "observe_first": True, "workers": PER_DIMENSION_WORKERS,
+    },
+    "zero-shot-per-dimension-observe-first-no-context": {
+        "per_dimension": True, "observe_first": True, "use_context": False, "workers": PER_DIMENSION_WORKERS,
+    },
 }
 #: Every zero-shot setup by name: what the eval script scores and what the runner, submit and final_run can build.
 #: One table, so a variant that wins on the holdout can write its dev file and Saturday's file the same day.
@@ -307,6 +319,7 @@ class ZeroShotPredictor:
         macro_aware: bool = False,
         observe_first: bool = False,
         type_first: bool = False,
+        per_dimension: bool = False,
         image: str = "plain",
         drop_context: Sequence[str] = (),
         defaults: Mapping[str, str] | None = None,
@@ -337,6 +350,7 @@ class ZeroShotPredictor:
         self.macro_aware = macro_aware
         self.observe_first = observe_first
         self.type_first = type_first
+        self.per_dimension = per_dimension
         self.image = image
         self.drop_context = tuple(drop_context)
         self.max_tokens = OBSERVE_MAX_TOKENS if observe_first else MAX_TOKENS
@@ -348,15 +362,16 @@ class ZeroShotPredictor:
             raise ValueError(f"the defaults must be allowed classes, not for {bad}")
         self.image_size = image_size
         self.workers = workers
+        guideline = guideline if guideline is not None else read_guideline()
+        lines = {"image_first": image_first, "macro_aware": macro_aware, "observe_first": observe_first,
+                 "type_first": type_first}
         self.schema = answer_schema(self.dimensions, self.allowed, observe_first=observe_first)
-        self.system = system_prompt(
-            guideline if guideline is not None else read_guideline(),
-            self.dimensions,
-            image_first=image_first,
-            macro_aware=macro_aware,
-            observe_first=observe_first,
-            type_first=type_first,
-        )
+        self.system = system_prompt(guideline, self.dimensions, **lines)
+        #: #156: per dimension, the system prompt that names only it and the schema with only its classes.
+        self.questions = {
+            d: (system_prompt(guideline, (d,), **lines), answer_schema((d,), self.allowed, observe_first=observe_first))
+            for d in self.dimensions
+        } if per_dimension else {}
         self._lock = threading.Lock()
         self.stats = {
             "images": 0,
@@ -386,15 +401,22 @@ class ZeroShotPredictor:
             context = {TYPE_FIELD: context[TYPE_FIELD], **{k: v for k, v in context.items() if k != TYPE_FIELD}}
         return context or None
 
-    def _ask(self, messages: list[dict[str, str]], image: bytes) -> dict[str, tuple[str, float | None]]:
-        """``{dimension: (class, confidence or None)}`` for the dimensions the answer names validly."""
+    def _ask(
+        self, messages: list[dict[str, str]], image: bytes, schema: Mapping[str, Any] | None = None,
+        dimensions: Sequence[str] | None = None,
+    ) -> dict[str, tuple[str, float | None]]:
+        """``{dimension: (class, confidence or None)}`` for the dimensions the answer names validly.
+
+        ``schema`` and ``dimensions`` default to all six; one question per dimension (#156) passes one.
+        """
+        dimensions = self.dimensions if dimensions is None else dimensions
         generation = self.backend.generate(
-            messages, [image], self.schema, max_tokens=self.max_tokens, temperature=0.0
+            messages, [image], self.schema if schema is None else schema, max_tokens=self.max_tokens, temperature=0.0
         )
         with self._lock:
             self.stats["prompt_tokens"] += generation.prompt_tokens or 0
             self.stats["completion_tokens"] += generation.completion_tokens or 0
-        labels = parse_answer(generation.text, self.dimensions, self.allowed)
+        labels = parse_answer(generation.text, dimensions, self.allowed)
         confidence = value_confidence(generation.logprobs, labels)
         return {dimension: (label, confidence.get(dimension)) for dimension, label in labels.items()}
 
@@ -408,11 +430,38 @@ class ZeroShotPredictor:
         retried = len(answers) < len(self.dimensions)
         if retried:
             answers = {**self._ask(messages, image), **answers}
+        return self._prediction(item, answers, int(retried))
+
+    def _ask_dimension(self, item: ImageItem, image: bytes, dimension: str) -> tuple[dict[str, Any], int]:
+        """#156: one dimension's question, asked once more if its answer is unusable; returns (answers, retries)."""
+        system, schema = self.questions[dimension]
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": user_prompt(self._context(item))}]
+        answer = self._ask(messages, image, schema, (dimension,))
+        if answer:
+            return answer, 0
+        return self._ask(messages, image, schema, (dimension,)), 1
+
+    def _predict_per_dimension(self, batch: Sequence[ImageItem]) -> list[Prediction]:
+        """#156: one request per image and dimension, up to ``workers`` in flight; each image's answers are joined."""
+        pairs = [(index, dimension) for index in range(len(batch)) for dimension in self.dimensions]
+        with ThreadPoolExecutor(max_workers=max(1, self.workers), thread_name_prefix="zero-shot") as pool:
+            images = list(pool.map(self._image, batch))
+            asked = list(pool.map(lambda pair: self._ask_dimension(batch[pair[0]], images[pair[0]], pair[1]), pairs))
+        size = len(self.dimensions)
+        predictions = []
+        for index, item in enumerate(batch):
+            mine = asked[index * size:(index + 1) * size]
+            answers = {dimension: value for answer, _ in mine for dimension, value in answer.items()}
+            predictions.append(self._prediction(item, answers, sum(retries for _, retries in mine)))
+        return predictions
+
+    def _prediction(self, item: ImageItem, answers: Mapping[str, tuple[str, float | None]], retries: int) -> Prediction:
+        """The answers as a ``Prediction``: missing dimensions get their default, and the counts go into ``stats``."""
         missing = [dimension for dimension in self.dimensions if dimension not in answers]
         confidence = {dimension: value for dimension, (_, value) in answers.items() if value is not None}
         with self._lock:
             self.stats["images"] += 1
-            self.stats["retries"] += retried
+            self.stats["retries"] += retries
             self.stats["defaulted_cells"] += len(missing)
             self.stats["no_confidence_cells"] += len(answers) - len(confidence)
         labels = {dimension: label for dimension, (label, _) in answers.items()}
@@ -423,6 +472,8 @@ class ZeroShotPredictor:
 
     def predict(self, batch: Sequence[ImageItem]) -> list[Prediction]:
         """One prediction per item, in order. Up to ``workers`` requests are in flight at once."""
+        if self.per_dimension:
+            return self._predict_per_dimension(batch)
         if self.workers <= 1 or len(batch) <= 1:
             return [self._predict_one(item) for item in batch]
         with ThreadPoolExecutor(max_workers=self.workers, thread_name_prefix="zero-shot") as pool:
@@ -431,6 +482,8 @@ class ZeroShotPredictor:
     def prompt_sha256(self) -> str:
         """A short hash of the system prompt and the schema: equal hashes, equal prompts."""
         text = self.system + json.dumps(self.schema, sort_keys=True)
+        for system, schema in self.questions.values():  # #156; empty otherwise, so the earlier hashes hold
+            text += system + json.dumps(schema, sort_keys=True)
         return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
     def config(self) -> dict[str, Any]:
@@ -445,6 +498,7 @@ class ZeroShotPredictor:
             "macro_aware": self.macro_aware,
             "observe_first": self.observe_first,
             "type_first": self.type_first,
+            "per_dimension": self.per_dimension,
             "image": self.image,
             "drop_context": list(self.drop_context),
             "temperature": 0.0,

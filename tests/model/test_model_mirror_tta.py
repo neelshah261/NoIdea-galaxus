@@ -199,3 +199,17 @@ def test_the_lora_reads_the_mirror_from_the_cache_by_its_mirror_id(monkeypatch):
                         lambda image_id, path, image_size: seen.append((image_id, path, image_size)) or b"jpeg")
     lora._cached_image(ImageItem(image_id="img_1.mirror", path="/cache/img_1.mirror.jpg"))
     assert seen == [("img_1.mirror", "/cache/img_1.mirror.jpg", lora.IMAGE_SIZE)]
+
+
+def test_submit_and_final_run_reach_mirror_tta_around_the_lora_by_reference(monkeypatch):
+    """``submit --run`` and ``final_run --predictor`` take a ``package.module:name``; the LoRA's TTA needs one too."""
+    from galaxus.model import lora
+    from galaxus.serve.items import load_predictor
+
+    inner = FakeInner()
+    monkeypatch.setattr(lora, "from_env", lambda: inner)
+
+    built = load_predictor("galaxus.model.mirror_tta:lora_from_env")
+
+    assert isinstance(built, MirrorTTA)
+    assert built.inner is inner
