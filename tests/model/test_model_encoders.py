@@ -23,10 +23,13 @@ PIN = {encoders.REVISION_ENV: SHA}
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_the_pin_is_required_and_must_be_a_full_sha():
+def test_the_pin_comes_from_the_code_and_an_override_must_be_a_full_sha():
+    assert encoders.so400m_revision({}) == encoders.PINS[encoders.SO400M_512]
+    assert encoders.so400m_revision({encoders.NAME_ENV: encoders.SO400M_384}) == encoders.PINS[encoders.SO400M_384]
+    assert all(encoders.SHA.match(pin) for pin in encoders.PINS.values()) and set(encoders.PINS) == set(encoders.CHOICES)
     assert encoders.so400m_revision(PIN) == SHA
-    for bad in ({}, {encoders.REVISION_ENV: "main"}, {encoders.REVISION_ENV: SHA[:12]}):
-        with pytest.raises(ValueError, match="galaxus.model.encoders pin"):
+    for bad in ({encoders.REVISION_ENV: "main"}, {encoders.REVISION_ENV: SHA[:12]}):
+        with pytest.raises(ValueError, match="full commit sha"):
             encoders.so400m_revision(bad)
     assert encoders.so400m_name({}) == encoders.SO400M_512
     assert encoders.so400m_name({encoders.NAME_ENV: encoders.SO400M_384}) == encoders.SO400M_384
@@ -148,9 +151,10 @@ def test_the_so400m_variants_are_registered_for_the_eval_script():
     assert {"helper-so400m", "helper-fused-so400m", "apertus-core"} <= set(PREDICTORS)
 
 
-def test_the_cli_refuses_to_embed_without_the_pin(monkeypatch):
-    monkeypatch.delenv(encoders.REVISION_ENV, raising=False)
-    with pytest.raises(ValueError, match="pin"):
+def test_the_cli_refuses_a_malformed_pin_before_reading_any_data(monkeypatch):
+    monkeypatch.setenv(encoders.REVISION_ENV, "main")
+    monkeypatch.delenv("GALAXUS_DATA", raising=False)  # it must stop before it looks for the data
+    with pytest.raises(ValueError, match="full commit sha"):
         encoders.main(["embed", "--part", "train"])
 
 
@@ -177,5 +181,6 @@ def test_the_job_embeds_so400m_in_any_mode_with_the_pin_and_serves_it_apart():
     start = (ROOT / "train" / "hf_job_apertus_features_start.sh").read_text()
     assert "encoders) PARTS=(train dev)" in job
     assert "python -m galaxus.model.encoders embed" in job and "embeddings.tar" in job
-    assert "-e HELPER_SO400M_REVISION=" in start  # a public sha: a plain variable, not a secret
+    assert "encoders) PARTS=(train dev); SO400M=1" in job  # the encoders mode always embeds so400m
+    assert "-e SO400M=1" in start and "-e HELPER_SO400M_REVISION=" in start  # plain variables, not secrets
     assert "embeddings.tar" in start and "encoders)" in start

@@ -6,8 +6,9 @@
 #   STAGE=rehearse  the first $CHECK dev images end to end, and the projected time of the final pass (#214 step 4)
 #   STAGE=final     the final images, decrypted on this disk with the PASSPHRASE job secret (#214 step 6)
 #   STAGE=encoders  SigLIP 2 so400m embeddings only, for train and dev (galaxus.model.encoders), no Apertus
-# Any stage also embeds the parts with SigLIP 2 so400m when HELPER_SO400M_REVISION is set (a commit sha, not a
-# secret), and serves them as embeddings.tar next to features.tar.
+# Any stage also embeds its parts with SigLIP 2 so400m when SO400M=1 (pinned in galaxus.model.encoders), and serves
+# them as embeddings.tar next to features.tar. Use it for train, dev AND final, so every so400m vector comes from the
+# same device and dtype (cuda, bf16).
 #
 # In order:
 #   1. clone $REF and install it (uv, extra "local", plus torchvision for Apertus' image processor, as the LoRA job);
@@ -17,7 +18,8 @@
 #   5. galaxus.model.heads extract for every part. It resumes, so the check's images are not computed twice;
 #   6. one tar of the feature folder, served on port 8000. The HF jobs proxy only lets through an HF token with
 #      access to this namespace. The job serves until its timeout: cancel it once the laptop has the file.
-# The logs show counts and timings only: no image id, no label and never the passphrase.
+# The logs show counts and timings only: no image id, no label, and never the passphrase or the GitHub token
+# (GH_TOKEN, a read-only job secret while the repo is private).
 set -euo pipefail
 
 : "${HF_TOKEN:?the HF_TOKEN secret is missing}"
@@ -36,11 +38,10 @@ case "$STAGE" in
   features) PARTS=(train dev) ;;
   rehearse) PARTS=(dev) ;;
   final)    PARTS=(final); : "${PASSPHRASE:?STAGE=final needs the PASSPHRASE job secret}" ;;
-  encoders) PARTS=(train dev)
-            : "${HELPER_SO400M_REVISION:?STAGE=encoders needs HELPER_SO400M_REVISION: python -m galaxus.model.encoders pin}" ;;
+  encoders) PARTS=(train dev); SO400M=1 ;;
   *) echo "STAGE must be features, rehearse, final or encoders" >&2; exit 1 ;;
 esac
-SO400M="${HELPER_SO400M_REVISION:-}"   # empty: no so400m step
+SO400M="${SO400M:-}"; [[ "$SO400M" == "0" ]] && SO400M=""   # empty: no so400m step
 
 WORK=/tmp/noidea
 REPO="$WORK/repo"
@@ -53,7 +54,15 @@ log "stage=$STAGE ref=$REF model=$MODEL layers=$LAYERS pool=$POOL parts=${PARTS[
 command -v nvidia-smi >/dev/null && nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || log "no GPU"
 
 log "1/6 clone and install"
-git clone --quiet --depth 1 --branch "$REF" https://github.com/neelshah261/NoIdea-galaxus "$REPO"
+export GIT_TERMINAL_PROMPT=0   # a refused clone fails at once instead of waiting for a password
+if [[ -n "${GH_TOKEN:-}" ]]; then
+  # The repo is private until the hand-in (#215): the read-only token goes in as an HTTP header, never in a URL,
+  # so neither git's messages nor this log can show it.
+  git -c "http.https://github.com/.extraHeader=Authorization: Basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" \
+    clone --quiet --depth 1 --branch "$REF" https://github.com/neelshah261/NoIdea-galaxus "$REPO"
+else
+  git clone --quiet --depth 1 --branch "$REF" https://github.com/neelshah261/NoIdea-galaxus "$REPO"
+fi
 cd "$REPO"
 log "commit $(git rev-parse --short HEAD)"
 uv sync --quiet --extra local --python 3.12

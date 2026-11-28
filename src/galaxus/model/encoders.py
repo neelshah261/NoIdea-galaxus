@@ -8,17 +8,19 @@ text_language 0.696 against 0.511 (#214). Our fine-tune (EXP-0090) and EXP-0059'
   cuda (bf16, or fp16 without bf16), else Apple's mps (fp16), else the CPU (fp32), and keeps the data lane's contract
   (``encode(images) -> one row per image``) and cache (``neighbours.embedding_dir``), so ``helper.embeddings`` and every
   heads predictor read its vectors unchanged.
-* **The pin:** ``$HELPER_SO400M_REVISION``, a full commit sha, refused when missing (determinism, #182). Hugging Face is
-  not reachable from every machine that writes code here, so get it once where it is:
-      uv run --extra local python -m galaxus.model.encoders pin
-  ``$HELPER_SO400M`` picks the checkpoint: ``google/siglip2-so400m-patch16-512`` (default) or ``-384`` (about twice as
-  fast, less text detail). The EXP row records both.
+* **The pin:** :data:`PINS`, read from the Hub with ``python -m galaxus.model.encoders pin`` on Neel's laptop (#215
+  review at b3ef2e2), as every other encoder is pinned (#182). ``$HELPER_SO400M_REVISION`` may override it with another
+  full commit sha. ``$HELPER_SO400M`` picks the checkpoint: ``google/siglip2-so400m-patch16-512`` (default) or ``-384``
+  (about twice as fast, less text detail). The EXP row records both.
+* **One device and dtype for every part:** the job embeds in bf16 on cuda, a Mac in fp16 on mps. Make train, dev and
+  final in the same place (all in the GPU job, ``SO400M=1``), or check their parity first (#215 review).
 * **The cache, per part (resumable, counts and speed only in the log):**
       uv run --extra local python -m galaxus.model.encoders embed --part train
   or inside the GPU feature job (``train/hf_job_apertus_features_start.sh``, ``encoders`` mode or any mode with the
   revision set), which sends it back as ``embeddings.tar``.
 * **Rows:** ``helper-so400m`` (heads on so400m alone), ``helper-fused-so400m`` (EXP-0059's three encoders + so400m, each at
-  unit length), and ``apertus-core`` with ``APERTUS_CORE_BASE=fused-so400m``. Q-0008 covers frozen helper encoders.
+  unit length), and ``apertus-core`` with ``APERTUS_CORE_BASE=fused-so400m``. Q-0008 was asked with SigLIP base heads as
+  its example; if a so400m row ships, it needs its own MODELS.md row with this pin and the same rules check as #197.
 """
 
 from __future__ import annotations
@@ -44,6 +46,12 @@ REVISION_ENV = "HELPER_SO400M_REVISION"
 #: The configs and the weights; ``*.safetensors`` also covers a checkpoint that is split into shards.
 SNAPSHOT_PATTERNS = ["config.json", "preprocessor_config.json", "*.safetensors", "*.safetensors.index.json"]
 SHA = re.compile(r"^[0-9a-f]{40}$")
+#: The Hub revisions, read with ``encoders pin`` on Neel's laptop (#215 review at b3ef2e2). Both Apache-2.0; the 512 px
+#: checkpoint is one 4.55 GB ``model.safetensors`` that includes the text tower.
+PINS = {
+    SO400M_512: "ceea1cba8130d8271436da4828633198c176a775",
+    SO400M_384: "dd658faac399427308559e2c3ac1e99cbe43845d",
+}
 
 
 def so400m_name(environ: Mapping[str, str] | None = None) -> str:
@@ -55,12 +63,14 @@ def so400m_name(environ: Mapping[str, str] | None = None) -> str:
 
 
 def so400m_revision(environ: Mapping[str, str] | None = None) -> str:
-    """The pinned revision from ``$HELPER_SO400M_REVISION``, or a ValueError that says how to get it."""
+    """The checkpoint's pin (:data:`PINS`), or ``$HELPER_SO400M_REVISION`` when set, which must be a full commit sha."""
     environ = os.environ if environ is None else environ
     revision = environ.get(REVISION_ENV, "").strip()
+    if not revision:
+        return PINS[so400m_name(environ)]
     if not SHA.match(revision):
-        raise ValueError(f"set ${REVISION_ENV} to the full commit sha of {so400m_name(environ)}: run "
-                         "`uv run --extra local python -m galaxus.model.encoders pin` on a machine that reaches the Hub")
+        raise ValueError(f"${REVISION_ENV} must be a full commit sha of {so400m_name(environ)}: "
+                         "`uv run --extra local python -m galaxus.model.encoders pin` prints the current one")
     return revision
 
 
@@ -221,7 +231,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"export {NAME_ENV}={name}")
         print(f"export {REVISION_ENV}={model_info(name).sha}")
         return 0
-    so400m_revision()  # refuse before reading or downloading anything when the pin is missing
+    so400m_revision()  # refuse a malformed override before reading or downloading anything
     from galaxus.data import load
 
     frame = {"train": load.read_train, "dev": load.read_dev, "final": load.read_final}[arguments.part]()

@@ -5,13 +5,15 @@
 #   bash train/hf_job_apertus_features_start.sh features             # train (holdout included) + dev, ~1-1.5 h on l40sx1
 #   bash train/hf_job_apertus_features_start.sh rehearse             # 300 dev images: the projected final-pass time
 #   read -rs PASSPHRASE && export PASSPHRASE && bash train/hf_job_apertus_features_start.sh final   # at 13:00 only
-#   HELPER_SO400M_REVISION=<sha> bash train/hf_job_apertus_features_start.sh encoders   # SigLIP 2 so400m only, ~15 min
+#   bash train/hf_job_apertus_features_start.sh encoders             # SigLIP 2 so400m only (train + dev)
 #   bash train/hf_job_apertus_features_start.sh url <job id>         # once it serves: download, untar, cancel
 #
-# With HELPER_SO400M_REVISION set (from `python -m galaxus.model.encoders pin`), every mode also embeds its parts with
-# SigLIP 2 so400m (HELPER_SO400M picks 512 or 384 px) and serves them as embeddings.tar.
+# With SO400M=1, every mode also embeds its parts with SigLIP 2 so400m (pinned in galaxus.model.encoders;
+# HELPER_SO400M picks 512 or 384 px) and serves them as embeddings.tar. Set it for the final job too, so train, dev
+# and final vectors come from the same device and dtype.
 #
-# REF is the branch the job clones (default main; model/apertus-core until #214's PR is merged). FLAVOR=a100-large is
+# GH_TOKEN (environment or .env): a fine-grained, read-only token for this repo while it is private; it goes to the
+# job as a secret, by name. REF is the branch the job clones (default main; model/apertus-core until #215 merges). FLAVOR=a100-large is
 # faster than the default l40sx1 ($1.80/h) if `hf jobs hardware` lists it. The job's disk, with the competition data,
 # is deleted when the job ends; the features reach the laptop only through the job's HF-token-protected port.
 set -euo pipefail
@@ -46,7 +48,7 @@ for url in urls:
     print(f'curl -fL -H "Authorization: Bearer $HF_TOKEN" "{base}/features.tar" -o "$GALAXUS_DATA/out/features.tar"')
     print('mkdir -p "$GALAXUS_DATA/cache/features" && tar -C "$GALAXUS_DATA/cache/features" '
           '-xf "$GALAXUS_DATA/out/features.tar"')
-    print("# SigLIP 2 so400m embeddings (only if the job had HELPER_SO400M_REVISION):")
+    print("# SigLIP 2 so400m embeddings (only in the encoders mode or with SO400M=1):")
     print(f'curl -fL -H "Authorization: Bearer $HF_TOKEN" "{base}/embeddings.tar" -o "$GALAXUS_DATA/out/embeddings.tar"')
     print('mkdir -p "$GALAXUS_DATA/cache/embeddings" && tar -C "$GALAXUS_DATA/cache/embeddings" '
           '-xf "$GALAXUS_DATA/out/embeddings.tar"')
@@ -63,18 +65,31 @@ export KAGGLE_API_TOKEN
 REF="${REF:-main}"
 FLAVOR="${FLAVOR:-l40sx1}"
 SECRETS=(--secrets HF_TOKEN --secrets KAGGLE_API_TOKEN)
+# While the repo is private, the job clones it with GH_TOKEN: a fine-grained token with read-only Contents access to
+# this repo only (Neel creates it), passed by name as a job secret like the others. Without it, the anonymous check
+# below stops here instead of letting the job fail in its first minute (#215 review).
+if [[ -z "${GH_TOKEN:-}" && -f .env ]]; then
+  GH_TOKEN="$(grep -E '^GH_TOKEN=' .env | head -1 | cut -d= -f2- | tr -d '\r')"
+fi
+if [[ -n "${GH_TOKEN:-}" ]]; then
+  export GH_TOKEN
+  SECRETS+=(--secrets GH_TOKEN)
+elif ! GIT_TERMINAL_PROMPT=0 git -c credential.helper= ls-remote --exit-code \
+       https://github.com/neelshah261/NoIdea-galaxus "refs/heads/$REF" >/dev/null 2>&1; then
+  echo "the job cannot clone ref $REF anonymously (the repo is private): set GH_TOKEN to a fine-grained token with" \
+       "read-only Contents access to neelshah261/NoIdea-galaxus, in the environment or in .env" >&2
+  exit 1
+fi
 ENV=(-e STAGE="$MODE" -e REF="$REF")
-# The so400m pin is a public commit sha, not a secret: it goes in as a plain variable.
+# The so400m switches are plain variables (a pin is a public commit sha, not a secret).
+[[ "${SO400M:-}" == "1" ]] && ENV+=(-e SO400M=1)
 [[ -n "${HELPER_SO400M_REVISION:-}" ]] && ENV+=(-e HELPER_SO400M_REVISION="$HELPER_SO400M_REVISION")
 [[ -n "${HELPER_SO400M:-}" ]] && ENV+=(-e HELPER_SO400M="$HELPER_SO400M")
 
 case "$MODE" in
   features) TIMEOUT="${TIMEOUT:-150m}" ;;   # 2.5 h x $1.80 = $4.50 at most on l40sx1; cancel after the download
   rehearse) TIMEOUT="${TIMEOUT:-45m}" ;;
-  encoders)
-    TIMEOUT="${TIMEOUT:-45m}"
-    : "${HELPER_SO400M_REVISION:?set HELPER_SO400M_REVISION first: uv run --extra local python -m galaxus.model.encoders pin}"
-    ;;
+  encoders) TIMEOUT="${TIMEOUT:-45m}" ;;
   final)
     TIMEOUT="${TIMEOUT:-75m}"
     if [[ ${#DRY[@]} -eq 0 ]]; then

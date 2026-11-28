@@ -161,6 +161,15 @@ def test_the_features_leave_the_job_only_through_its_protected_port():
     job, start = JOB.read_text(), START.read_text()
     assert "http.server 8000" in job and "--expose 8000" in start
     assert "hf upload" not in job and "upload" not in re.sub(r"#.*", "", job)  # no repo, no dataset
-    for secret in ("HF_TOKEN", "KAGGLE_API_TOKEN", "PASSPHRASE"):
+    for secret in ("HF_TOKEN", "KAGGLE_API_TOKEN", "PASSPHRASE", "GH_TOKEN"):
         assert f"--secrets {secret}" in start  # by name only: the values never enter the command line
     assert "echo \"$PASSPHRASE" not in job and "print(os.environ[\"PASSPHRASE\"]" not in job
+
+
+def test_the_private_repo_is_cloned_with_the_token_in_a_header_never_in_a_url():
+    """#215 review: the repo is private until the hand-in, so an anonymous clone fails in the job's first minute."""
+    job, start = JOB.read_text(), START.read_text()
+    assert "http.https://github.com/.extraHeader=Authorization: Basic" in job
+    assert "GIT_TERMINAL_PROMPT=0" in job
+    assert not re.search(r"https://[^\s\"']*GH_TOKEN", job)  # never user:token@github.com
+    assert "ls-remote --exit-code" in start  # without GH_TOKEN, an anonymous check stops before any paid time
