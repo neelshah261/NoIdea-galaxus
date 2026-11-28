@@ -16,6 +16,7 @@
 #   5. train; a watcher uploads every new checkpoint-N folder (and at the end the adapter and run.json) to $CKPT_REPO.
 # STAGE=setup stops after steps 1-4 plus a repo write test, on a cheap CPU job, to rehearse everything but the GPU.
 set -euo pipefail
+JOB_STARTED=$(date +%s)            # STAGE=parity keeps its passes inside the job's timeout from here
 
 : "${HF_TOKEN:?the HF_TOKEN secret is missing}"
 : "${KAGGLE_API_TOKEN:?the KAGGLE_API_TOKEN secret is missing}"
@@ -64,11 +65,21 @@ if [[ "$STAGE" == "parity" ]]; then
   # Is EXP-0004's 0.343 the adapter or the vLLM serving? Score the adapter through the training code's own path
   # (bench/lora_parity.py) on a fixed holdout sample. Only the adapter files are fetched; only aggregates are printed.
   ADAPTER_PATH="${ADAPTER_PATH:-$RUN/adapter}"
-  log "parity: $ADAPTER_PATH on ${LIMIT:-200} holdout images, transformers + PEFT, with and without product context"
-  hfcli download "$CKPT_REPO" --repo-type model --local-dir "$WORK/pulled" \
-    --include "$ADAPTER_PATH/adapter_config.json" "$ADAPTER_PATH/adapter_model.safetensors" >/dev/null
+  # The passes stop by this time and score what they have, so a slow GPU costs images, not the whole result. 45 of
+  # the 50 min timeout: the clock starts with this script, after the image pull, and the last image plus the report
+  # need well under a minute.
+  DEADLINE=$(( JOB_STARTED + ${PARITY_BUDGET_MIN:-45} * 60 ))
+  log "parity: $ADAPTER_PATH on ${LIMIT:-200} holdout images, transformers + PEFT, with then without product context," \
+      "passes stop by $(date -u -d "@$DEADLINE" +%H:%M:%S)"
+  # The two files as FILENAMES: `hf download` takes one pattern per --include, so a second pattern after one
+  # --include is read as a filename, and a filename makes it ignore --include (it fetched only the weights).
+  hfcli download "$CKPT_REPO" "$ADAPTER_PATH/adapter_config.json" "$ADAPTER_PATH/adapter_model.safetensors" \
+    --repo-type model --local-dir "$WORK/pulled" >/dev/null
+  for f in adapter_config.json adapter_model.safetensors; do
+    [[ -s "$WORK/pulled/$ADAPTER_PATH/$f" ]] || { log "missing $ADAPTER_PATH/$f in $CKPT_REPO"; exit 1; }
+  done
   uv run --quiet "${WITH[@]}" python bench/lora_parity.py --adapter "$WORK/pulled/$ADAPTER_PATH" --model "$MODEL" \
-    --limit "${LIMIT:-200}" --both
+    --limit "${LIMIT:-200}" --both --deadline "$DEADLINE"
   log "parity done: nothing was trained or uploaded"
   exit 0
 fi
