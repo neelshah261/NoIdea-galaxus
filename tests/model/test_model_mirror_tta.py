@@ -177,3 +177,25 @@ def test_registered_in_eval_around_the_inner_predictor(monkeypatch):
 
     assert isinstance(built, MirrorTTA)
     assert built.inner is inner
+
+
+def test_registered_in_eval_around_the_lora(monkeypatch):
+    inner = FakeInner()
+    monkeypatch.setitem(model_eval.PREDICTORS, "lora", lambda rows, data, seed: inner)
+
+    built = model_eval.PREDICTORS["mirror-tta:lora"](None, SimpleNamespace(allowed_classes=lambda: ALLOWED), 0)
+
+    assert isinstance(built, MirrorTTA)
+    assert built.inner is inner
+
+
+def test_the_lora_reads_the_mirror_from_the_cache_by_its_mirror_id(monkeypatch):
+    """The LoRA asks the cache by item id and path, as zero-shot does, so MirrorTTA's ``<id>.mirror`` item gets the
+    prepared mirror itself."""
+    from galaxus.model import lora
+
+    seen = []
+    monkeypatch.setattr("galaxus.data.images.cached_jpeg",
+                        lambda image_id, path, image_size: seen.append((image_id, path, image_size)) or b"jpeg")
+    lora._cached_image(ImageItem(image_id="img_1.mirror", path="/cache/img_1.mirror.jpg"))
+    assert seen == [("img_1.mirror", "/cache/img_1.mirror.jpg", lora.IMAGE_SIZE)]
