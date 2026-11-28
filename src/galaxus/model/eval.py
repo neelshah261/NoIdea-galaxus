@@ -143,6 +143,21 @@ def _recalibrated(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
                                   data.out_dir(), read_rows(RESULTS_FILE), seed)
 
 
+def _type_prior(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """#133: $TYPE_PRIOR_BASE's saved holdout answers with the product-type prior, cross-fitted on product halves."""
+    import os
+
+    from galaxus.model import type_prior
+
+    base = os.environ.get(type_prior.BASE_ENV)
+    if not base:
+        raise RuntimeError(f"set ${type_prior.BASE_ENV} to the EXP whose holdout answers carry confidences, "
+                           "e.g. EXP-0002")
+    holdout = data.split_holdout(data.read_train())[1]
+    return type_prior.from_saved(base, rows, holdout, data.dimensions(), data.scored_mask, data.solution_frame,
+                                 data.evaluate, data.out_dir(), read_rows(RESULTS_FILE), seed)
+
+
 def _mirror_tta(inner: str) -> PredictorFactory:
     """EXP-0006 (#48): the predictor registered as ``inner``, with mirror TTA for perspective."""
 
@@ -158,6 +173,7 @@ def _mirror_tta(inner: str) -> PredictorFactory:
 PREDICTORS: dict[str, PredictorFactory] = {
     "ensemble": _ensemble,
     "recalibrated": _recalibrated,  # #42: confidence-gated recalibration of $RECAL_BASE (e.g. EXP-0004)
+    "type-prior": _type_prior,  # #133: the product-type prior on $TYPE_PRIOR_BASE's answers (e.g. EXP-0002)
     "majority": _majority,
     # Every zero-shot variant (zero_shot.VARIANTS): EXP-0002, EXP-0009, EXP-0014 and the score sprint's (#106).
     **{name: _zero_shot(**options) for name, options in ZERO_SHOT_VARIANTS.items()},

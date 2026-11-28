@@ -70,6 +70,15 @@ OBSERVE_FIRST = (
     "object, what surrounds it, the viewing angle and any visible text."
 )
 OBSERVE_MAX_TOKENS = 400
+#: #133 (the hosts' idea 3, #17): the product type says what the product is (#17 point 9: accessory vs product) and
+#: which shot is its hero shot (point 1). The type goes first in the context, and this line asks the model to read it
+#: first. Without a product type in the context, the user message is exactly the plain one.
+TYPE_FIELD = "product_type"
+TYPE_FIRST = (
+    "The product context starts with the product type from the catalog. Read it first: it tells you what the product "
+    "is, so whether the image shows that product or something else, and which side is its front. Then decide every "
+    "dimension from what you see in the image."
+)
 #: Image processing (#106, EXP-0016): white margins are cropped away so the product fills the image. A pixel is
 #: content when one of its channels differs from white by more than ``CROP_WHITE_THRESHOLD`` (JPEG noise on white
 #: stays white); the box around the content grows by ``CROP_MARGIN`` of its size on each side. An image whose box
@@ -97,6 +106,7 @@ PRESETS: dict[str, dict[str, Any]] = {
     # best on background and language, and dropping the context triples subject (EXP-0009). These combine them.
     "zero-shot-observe-first-768": {"observe_first": True, "image_size": 768},  # EXP-0024
     "zero-shot-observe-first-no-context": {"observe_first": True, "use_context": False},  # EXP-0025
+    "zero-shot-type-first": {"type_first": True},  # #133: the product type first; the EXP id is the next free one
 }
 #: Every zero-shot setup by name: what the eval script scores and what the runner, submit and final_run can build.
 #: One table, so a variant that wins on the holdout can write its dev file and Saturday's file the same day.
@@ -141,13 +151,15 @@ def system_prompt(
     image_first: bool = False,
     macro_aware: bool = False,
     observe_first: bool = False,
+    type_first: bool = False,
 ) -> str:
-    """The instruction, the extra lines the variant asks for (#106), then the guideline.
+    """The instruction, the extra lines the variant asks for (#106, #133), then the guideline.
 
     With no extra line the text is exactly what EXP-0002 and EXP-0009 sent, so their prompt hashes still hold.
     """
     instruction = INSTRUCTION.format(dimensions=", ".join(dimensions))
-    for wanted, line in ((image_first, IMAGE_FIRST), (macro_aware, MACRO_AWARE), (observe_first, OBSERVE_FIRST)):
+    for wanted, line in ((image_first, IMAGE_FIRST), (macro_aware, MACRO_AWARE), (observe_first, OBSERVE_FIRST),
+                         (type_first, TYPE_FIRST)):
         if wanted:
             instruction += "\n" + line
     return instruction + "\n\n" + guideline.strip()
@@ -263,6 +275,7 @@ class ZeroShotPredictor:
         image_first: bool = False,
         macro_aware: bool = False,
         observe_first: bool = False,
+        type_first: bool = False,
         image: str = "plain",
         drop_context: Sequence[str] = (),
         defaults: Mapping[str, str] | None = None,
@@ -294,6 +307,7 @@ class ZeroShotPredictor:
         self.image_first = image_first
         self.macro_aware = macro_aware
         self.observe_first = observe_first
+        self.type_first = type_first
         self.image = image
         self.drop_context = tuple(drop_context)
         self.max_tokens = OBSERVE_MAX_TOKENS if observe_first else MAX_TOKENS
@@ -312,6 +326,7 @@ class ZeroShotPredictor:
             image_first=image_first,
             macro_aware=macro_aware,
             observe_first=observe_first,
+            type_first=type_first,
         )
         self._lock = threading.Lock()
         self.stats = {
@@ -331,10 +346,16 @@ class ZeroShotPredictor:
         return cached_jpeg(item.image_id, item.path, image_size=self.image_size)
 
     def _context(self, item: ImageItem) -> Mapping[str, str] | None:
-        """The item's context, without the fields this variant drops (EXP-0018); None when nothing is left."""
+        """The item's context, without the fields this variant drops (EXP-0018); None when nothing is left.
+
+        With ``type_first`` (#133) the product type comes first; the other fields keep their order.
+        """
         if not self.use_context or not item.context:
             return None
-        return {name: value for name, value in item.context.items() if name not in self.drop_context} or None
+        context = {name: value for name, value in item.context.items() if name not in self.drop_context}
+        if self.type_first and TYPE_FIELD in context:
+            context = {TYPE_FIELD: context[TYPE_FIELD], **{k: v for k, v in context.items() if k != TYPE_FIELD}}
+        return context or None
 
     def _ask(self, messages: list[dict[str, str]], image: bytes) -> dict[str, tuple[str, float | None]]:
         """``{dimension: (class, confidence or None)}`` for the dimensions the answer names validly."""
@@ -394,6 +415,7 @@ class ZeroShotPredictor:
             "image_first": self.image_first,
             "macro_aware": self.macro_aware,
             "observe_first": self.observe_first,
+            "type_first": self.type_first,
             "image": self.image,
             "drop_context": list(self.drop_context),
             "temperature": 0.0,
