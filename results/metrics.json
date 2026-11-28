@@ -2438,5 +2438,144 @@
     "usd_per_hour": null,
     "cost_per_100k_usd": null,
     "note": ""
+  },
+  {
+    "id": "EXP-0070",
+    "created": "2026-11-28T09:36:18+01:00",
+    "predictor": "helper-siglip-text",
+    "commit": "7f8e88a90bb2f25fa0b4b3cc4fd5352cad2dcdf6",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "key": "helper:google/siglip-base-patch16-224+context",
+      "calibration": {
+        "subject": {
+          "bias": {
+            "accessories": -1.0,
+            "delivery_scope": -0.5,
+            "detail_closeup": 1.25,
+            "energy_label": -0.75,
+            "full_product": 1.25,
+            "infographic": 0.25,
+            "logo": -1.25,
+            "multipack_trade_unit": 0.25,
+            "multiview": 0.0,
+            "package_and_product": -0.25,
+            "packaging": 0.0,
+            "placeholder": -1.25,
+            "product_grouping": 0.0
+          }
+        },
+        "background": {
+          "bias": {
+            "color": -1.75,
+            "scene_lifestyle": -2.75,
+            "white": 0.75
+          }
+        },
+        "perspective": {
+          "bias": {
+            "back_angle_left": -1.25,
+            "back_angle_right": -1.0,
+            "back_head_on": -1.0,
+            "bottom_up": -1.25,
+            "front_angle_left": 0.25,
+            "front_angle_right": 0.0,
+            "front_head_on": 1.25,
+            "left_side": -0.75,
+            "right_side": 0.75,
+            "top_down": -0.75
+          }
+        },
+        "individuals": {
+          "bias": {
+            "individual_present": -1.25,
+            "none": 0.0
+          }
+        },
+        "text_classification": {
+          "bias": {
+            "certification_seal": -1.25,
+            "none": 1.5,
+            "nutritional_info": -0.5,
+            "other": 0.5,
+            "promotional_text": -0.5,
+            "technical_specs": -0.5
+          }
+        },
+        "text_language": {
+          "bias": {
+            "Dutch": -1.25,
+            "English": 1.5,
+            "French": -1.75,
+            "German": -2.0,
+            "Italian": 0.25,
+            "none": 0.5,
+            "other": -1.5
+          }
+        }
+      },
+      "seed": 0,
+      "context": {
+        "fields": [
+          "product_title",
+          "product_type",
+          "brand",
+          "category",
+          "subcategory"
+        ],
+        "hashed_columns": 4096,
+        "hash": "zlib.crc32",
+        "tokens": "lowercase word unigrams and bigrams, field-prefixed",
+        "weighting": "log1p counts * idf, unit length, plus a no-context flag",
+        "features": "one head per dimension, its log-probabilities concatenated, plus the flag",
+        "width": 42,
+        "dropout": 0.3,
+        "out_of_fold": "product folds (helper.product_folds)",
+        "epochs": 300
+      }
+    },
+    "model": "google/siglip-base-patch16-224",
+    "model_revision": "7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed",
+    "docker_digest": null,
+    "helpers": [
+      "google/siglip-base-patch16-224"
+    ],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.7102695998639308,
+    "macro_f1": {
+      "subject": 0.7225470958572366,
+      "background": 0.8749540221950897,
+      "perspective": 0.5027078790450655,
+      "individuals": 0.9766252723750041,
+      "text_classification": 0.6931291562230553,
+      "text_language": 0.4916541734881338
+    },
+    "weighted_f1": {
+      "subject": 0.8442029354188093,
+      "background": 0.9527504083067199,
+      "perspective": 0.5963454827932348,
+      "individuals": 0.9944654786301839,
+      "text_classification": 0.9263530375679631,
+      "text_language": 0.7320146590804583
+    },
+    "overall_weighted_f1": 0.8619088968971589,
+    "images_per_second": 73.41506362404606,
+    "hardware": {
+      "system": "Windows",
+      "machine": "AMD64",
+      "python": "3.14.0",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": ""
   }
 ]
