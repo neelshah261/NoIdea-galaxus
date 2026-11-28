@@ -237,8 +237,9 @@ def from_env() -> TypePriorPredictor:
         raise RuntimeError(f"set ${RULES_ENV} (a json from `python -m galaxus.model.type_prior learn`) and "
                            f"${INNER_ENV} (the live predictor, e.g. galaxus.model.zero_shot:from_preset)")
     saved = json.loads(Path(rules_path).read_text(encoding="utf-8"))
-    return TypePriorPredictor(table=saved["table"], rules=saved["rules"], inner=load_predictor(inner_spec),
-                              base_exp=saved.get("base"))
+    inner = load_predictor(inner_spec)
+    return TypePriorPredictor(table=saved["table"], rules=saved["rules"], inner=inner, base_exp=saved.get("base"),
+                              model=getattr(inner, "model", None), model_revision=getattr(inner, "model_revision", None))
 
 
 def apply_saved(saved_rules: Mapping[str, Any], records: Records, part: pd.DataFrame) -> list[Prediction]:

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import io
 import os
+import threading
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,8 +40,22 @@ from galaxus.types import ImageItem, Prediction
 DEFAULT_ENCODER = "google/siglip-base-patch16-224"
 #: Every encoder's Hugging Face revision, pinned, so a new upload to its repository can never change the embeddings
 #: under a run (determinism, #182). SigLIP base's is the one #170 verified from the HF API; every cached embedding
-#: was made from it. An encoder that is not listed here is refused rather than loaded at its newest upload.
-REVISIONS = {DEFAULT_ENCODER: "7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed"}
+#: was made from it. DINOv2 base and SigLIP 2 base are the snapshots EXP-0059's cached embeddings were made from
+#: (Neel's laptop, #182). An encoder that is not listed here is refused rather than loaded at its newest upload.
+REVISIONS = {
+    DEFAULT_ENCODER: "7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed",
+    "facebook/dinov2-base": "f9e44c814b77203eaa57a6bdbbd535f21ede1415",
+    "google/siglip2-base-patch16-224": "75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2",
+}
+#: EXP-0059's encoders, **in this order**: each image's three embeddings, each divided by its own L2 norm, are
+#: concatenated in this order before the heads (#182). Changing the order changes the features.
+FUSED_ENCODERS = ("google/siglip-base-patch16-224", "facebook/dinov2-base", "google/siglip2-base-patch16-224")
+FUSED_NAME = "fused:" + "+".join(FUSED_ENCODERS)
+#: The encoders behind a helper name: one for a single encoder, three for the fused helper.
+COMPONENTS = {FUSED_NAME: FUSED_ENCODERS}
+#: ``HELPER_FIT_ALL=1``: the dev and final heads are fitted on every labelled row, the official holdout included
+#: (#176). EXP rows never use it: the eval script fits on train minus the holdout and scores the holdout.
+FIT_ALL_ENV = "HELPER_FIT_ALL"
 #: What the pinned snapshot needs: the processor's and the model's configs and the safetensors weights (the repo
 #: also holds pytorch_model.bin, the same weights again, and a text tokenizer the image side never uses).
 SNAPSHOT_FILES = ["config.json", "preprocessor_config.json", "model.safetensors"]
@@ -69,6 +84,25 @@ def load_pinned_encoder(encoder_name: str) -> Any:
     return neighbours.load_encoder(snapshot)
 
 
+_ENCODERS: dict[str, Any] = {}
+_LOCKS: dict[str, threading.Lock] = {}
+_GUARD = threading.Lock()
+
+
+def _lock_for(encoder_name: str) -> threading.Lock:
+    with _GUARD:
+        return _LOCKS.setdefault(encoder_name, threading.Lock())
+
+
+def shared_encoder(encoder_name: str) -> Any:
+    """One loaded encoder per name for the whole process (#181, found by Swarup's drill: the runner's batches each
+    reloaded SigLIP, a Hub check plus a model load per batch, about 330 times for the final images)."""
+    with _lock_for(f"load:{encoder_name}"):
+        if encoder_name not in _ENCODERS:
+            _ENCODERS[encoder_name] = load_pinned_encoder(encoder_name)
+        return _ENCODERS[encoder_name]
+
+
 def embeddings(
     pairs: Iterable[tuple[str, str]],
     encoder_name: str = DEFAULT_ENCODER,
@@ -77,18 +111,44 @@ def embeddings(
 ) -> dict[str, np.ndarray]:
     """``{image_id: embedding}`` for ``(image_id, image file)`` pairs, from the cache; missing ones are embedded first.
 
-    The cache is keyed by the encoder's name, as the data lane's index keeps it; the encoder itself is loaded at its
-    pinned revision (:func:`load_pinned_encoder`).
+    The cache is keyed by the encoder's name, as the data lane's index keeps it; the encoder itself is loaded once per
+    process at its pinned revision (:func:`shared_encoder`). One encoder's embedding runs one at a time, so two
+    ensemble members that share an encoder never write the same cache file at once: the second finds it cached.
     """
     from galaxus.data import neighbours
 
     pairs = [(str(image_id), str(path)) for image_id, path in pairs]
     folder = Path(directory) if directory is not None else neighbours.embedding_dir(encoder_name)
-    missing = [(image_id, path) for image_id, path in pairs if not (folder / f"{image_id}.npy").is_file()]
-    if missing:
-        encoder = (load_encoder or load_pinned_encoder)(encoder_name)
-        neighbours.embed_rows(missing, encoder, encoder_name, directory=folder)
-    return {image_id: np.load(folder / f"{image_id}.npy").astype(np.float32).reshape(-1) for image_id, _ in pairs}
+    with _lock_for(f"embed:{folder}"):
+        missing = [(image_id, path) for image_id, path in pairs if not (folder / f"{image_id}.npy").is_file()]
+        if missing:
+            encoder = (load_encoder or shared_encoder)(encoder_name)
+            neighbours.embed_rows(missing, encoder, encoder_name, directory=folder)
+        return {image_id: np.load(folder / f"{image_id}.npy").astype(np.float32).reshape(-1) for image_id, _ in pairs}
+
+
+def unit_length(vector: np.ndarray) -> np.ndarray:
+    """``vector`` divided by its own L2 norm (an all-zero vector stays as it is)."""
+    norm = np.linalg.norm(vector)
+    return vector / norm if norm else vector
+
+
+def fused(per_encoder: Callable[..., dict[str, np.ndarray]],
+          encoders: Sequence[str] = FUSED_ENCODERS) -> Callable[..., dict[str, np.ndarray]]:
+    """EXP-0059's features from a per-encoder embedding function: per image, each encoder's vector at unit length,
+    concatenated in ``encoders``' order (#182)."""
+
+    def embed(pairs: Iterable[tuple[str, str]], _name: str = FUSED_NAME) -> dict[str, np.ndarray]:
+        pairs = [(str(image_id), str(path)) for image_id, path in pairs]
+        parts = [per_encoder(pairs, name) for name in encoders]
+        return {image_id: np.concatenate([unit_length(part[image_id]) for part in parts]) for image_id, _ in pairs}
+
+    return embed
+
+
+def fused_embeddings(pairs: Iterable[tuple[str, str]], _name: str = FUSED_NAME) -> dict[str, np.ndarray]:
+    """``helper-fused``'s features (EXP-0059): SigLIP base, DINOv2 base and SigLIP 2 base, each at unit length."""
+    return fused(embeddings)(pairs, _name)
 
 
 def product_folds(seed: int = 0, n_folds: int = FOLDS) -> Callable[[pd.DataFrame], Iterable[tuple[pd.DataFrame, pd.DataFrame]]]:
@@ -112,10 +172,12 @@ class HelperPredictor(heads.HeadsPredictor):
         super().__init__(model)
         self.encoder_name = encoder_name
         self.embed = embed
-        #: What the EXP row records: the helper model that picks the class, and it again as the helper.
+        #: What the EXP row records: the helper model that picks the class, its encoders and their pinned revisions.
+        components = COMPONENTS.get(encoder_name, (encoder_name,))
         self.model = encoder_name
-        self.model_revision = REVISIONS.get(encoder_name)
-        self.helpers = (encoder_name,)
+        revisions = [REVISIONS.get(name) for name in components]
+        self.model_revision = ", ".join(str(r) for r in revisions) if len(revisions) > 1 else revisions[0]
+        self.helpers = tuple(components)
 
     def predict(self, batch: Sequence[ImageItem]) -> list[Prediction]:
         missing = [item for item in batch if str(item.image_id) not in self.features]
@@ -154,23 +216,30 @@ def mirrored_embeddings(
     pairs = [(str(image_id), str(path)) for image_id, path in pairs]
     folder = Path(directory) if directory is not None else cache_dir("features", "mirror", encoder_name.replace("/", "__"))
     folder.mkdir(parents=True, exist_ok=True)
-    missing = [(image_id, path) for image_id, path in pairs if not (folder / f"{image_id}.npy").is_file()]
-    if missing:
-        encoder = (load_encoder or load_pinned_encoder)(encoder_name)
-        for start in range(0, len(missing), batch_size):
-            batch = missing[start : start + batch_size]
-            images = [
-                ImageOps.mirror(PillowImage.open(io.BytesIO(neighbours.cached_jpeg(
-                    image_id, path, image_size=neighbours.IMAGE_SIZE, patch_size=neighbours.PATCH_SIZE))).convert("RGB"))
-                for image_id, path in batch
-            ]
-            vectors = np.asarray(encoder.encode(images))
-            for (image_id, _), vector in zip(batch, vectors, strict=True):
-                partial = folder / f"{image_id}.npy.part"
-                with partial.open("wb") as handle:  # through a handle: np.save would append ".npy" to a name
-                    np.save(handle, np.asarray(vector, dtype=neighbours.EMBEDDING_DTYPE))
-                partial.replace(folder / f"{image_id}.npy")
-    return {image_id: np.load(folder / f"{image_id}.npy").astype(np.float32).reshape(-1) for image_id, _ in pairs}
+    with _lock_for(f"embed:{folder}"):
+        missing = [(image_id, path) for image_id, path in pairs if not (folder / f"{image_id}.npy").is_file()]
+        if missing:
+            encoder = (load_encoder or shared_encoder)(encoder_name)
+            for start in range(0, len(missing), batch_size):
+                batch = missing[start : start + batch_size]
+                images = [
+                    ImageOps.mirror(PillowImage.open(io.BytesIO(neighbours.cached_jpeg(
+                        image_id, path, image_size=neighbours.IMAGE_SIZE, patch_size=neighbours.PATCH_SIZE)))
+                        .convert("RGB"))
+                    for image_id, path in batch
+                ]
+                vectors = np.asarray(encoder.encode(images))
+                for (image_id, _), vector in zip(batch, vectors, strict=True):
+                    partial = folder / f"{image_id}.npy.part"
+                    with partial.open("wb") as handle:  # through a handle: np.save would append ".npy" to a name
+                        np.save(handle, np.asarray(vector, dtype=neighbours.EMBEDDING_DTYPE))
+                    partial.replace(folder / f"{image_id}.npy")
+        return {image_id: np.load(folder / f"{image_id}.npy").astype(np.float32).reshape(-1) for image_id, _ in pairs}
+
+
+def fused_mirrored_embeddings(pairs: Iterable[tuple[str, str]], _name: str = FUSED_NAME) -> dict[str, np.ndarray]:
+    """The fused features of the mirrored images, for ``helper-fused-mirror``'s perspective head."""
+    return fused(mirrored_embeddings)(pairs, _name)
 
 
 @dataclass(frozen=True)
@@ -332,14 +401,51 @@ def factory(
     return build
 
 
-def from_env(environ: Mapping[str, str] | None = None) -> HelperPredictor:
-    """For the runner, ``submit --run`` and ``final_run --predictor``: fitted on train minus the official holdout.
+def _flag(environ: Mapping[str, str], name: str) -> bool:
+    return environ.get(name, "") not in ("", "0")
 
-    ``HELPER_MIRROR=1`` uses the mirror-aware perspective head.
-    """
+
+def _training_rows(data: Any, environ: Mapping[str, str]) -> tuple[pd.DataFrame, str]:
+    """Train minus the official holdout, or with ``HELPER_FIT_ALL=1`` every labelled row (dev and final only)."""
+    train = data.read_train()
+    if _flag(environ, FIT_ALL_ENV):
+        return train, "every labelled row, the official holdout included (HELPER_FIT_ALL)"
+    return data.split_holdout(train)[0], "train minus the official holdout"
+
+
+def _live(build: Callable[..., HelperPredictor], environ: Mapping[str, str] | None) -> HelperPredictor:
     from galaxus.model.eval import DataLane
 
     environ = os.environ if environ is None else environ
     data = DataLane.real()
-    rows = data.split_holdout(data.read_train())[0]
-    return factory(mirror=environ.get(MIRROR_ENV, "") not in ("", "0"))(rows, data, 0)
+    rows, fitted_on = _training_rows(data, environ)
+    predictor = build(rows, data, 0)
+    predictor.heads_model.meta["fitted_on"] = fitted_on
+    return predictor
+
+
+def from_env(environ: Mapping[str, str] | None = None) -> HelperPredictor:
+    """For the runner, ``submit --run`` and ``final_run --predictor``: SigLIP base heads, fitted on train minus the
+    official holdout. ``HELPER_MIRROR=1`` uses the mirror-aware perspective head; ``HELPER_FIT_ALL=1`` fits on every
+    labelled row."""
+    environ = os.environ if environ is None else environ
+    return _live(factory(mirror=_flag(environ, MIRROR_ENV)), environ)
+
+
+#: ``HELPER_FUSED_MIRROR=1`` turns the mirror-aware perspective head on for :func:`fused_from_env` only, so the
+#: SigLIP member and the fused member of one live ensemble can differ.
+FUSED_MIRROR_ENV = "HELPER_FUSED_MIRROR"
+
+
+def fused_factory(mirror: bool = False):
+    """``helper-fused`` (EXP-0059): #51's heads on the three encoders' features at unit length, concatenated."""
+    return factory(encoder_name=FUSED_NAME, embed=fused_embeddings, mirror=mirror,
+                   mirror_embed=fused_mirrored_embeddings)
+
+
+def fused_from_env(environ: Mapping[str, str] | None = None) -> HelperPredictor:
+    """``helper-fused`` for the runner and the live ensemble (``fused=galaxus.model.helper:fused_from_env``).
+    ``HELPER_FUSED_MIRROR=1`` uses the mirror-aware perspective head; ``HELPER_FIT_ALL=1`` fits on every labelled
+    row."""
+    environ = os.environ if environ is None else environ
+    return _live(fused_factory(mirror=_flag(environ, FUSED_MIRROR_ENV)), environ)

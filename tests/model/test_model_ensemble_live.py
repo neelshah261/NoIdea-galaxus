@@ -119,6 +119,30 @@ def test_concurrent_batches_cache_every_image_once(tmp_path):
     assert sorted(json.loads(line)["image_id"] for line in lines) == IDS
 
 
+def test_the_members_answer_at_the_same_time():
+    """Each member waits for the other inside predict: this passes only when they run concurrently (no clock)."""
+    meeting = threading.Barrier(2)
+
+    class Waiting(Member):
+        def predict(self, batch):
+            meeting.wait(timeout=10)  # in turn, the first member would wait alone and break the barrier
+            return super().predict(batch)
+
+    predictor = ensemble.LiveEnsemblePredictor(choice=CHOICE, predictors={"siglip": Waiting(siglip), "big": Waiting(big)})
+    saved = ensemble.apply(CHOICE, {"siglip": records(Member(siglip)), "big": records(Member(big))})
+    assert predictor.predict(items()) == saved
+
+
+def test_a_failing_member_fails_the_batch():
+    class Broken(Member):
+        def predict(self, batch):
+            raise ConnectionError("gateway down")
+
+    predictor = ensemble.LiveEnsemblePredictor(choice=CHOICE, predictors={"siglip": Member(siglip), "big": Broken(big)})
+    with pytest.raises(ConnectionError, match="gateway down"):
+        predictor.predict(items())
+
+
 def test_the_eval_row_names_the_members_models_helpers_and_the_frozen_routing():
     predictor, _ = live()
     assert predictor.model == "apertus-v1-5-70b, google/siglip-base-patch16-224"
