@@ -150,6 +150,20 @@ def _helper_mirror(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
     return helper.factory(mirror=True)(rows, data, seed)
 
 
+def _helper_fused(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """EXP-0059's ``helper-fused`` (#182): heads on SigLIP base, DINOv2 base and SigLIP 2 base, each at unit length."""
+    from galaxus.model import helper
+
+    return helper.fused_factory()(rows, data, seed)
+
+
+def _helper_fused_mirror(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """``helper-fused`` with the mirror-aware perspective head (#176, #189)."""
+    from galaxus.model import helper
+
+    return helper.fused_factory(mirror=True)(rows, data, seed)
+
+
 def _recalibrated(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
     """#42: $RECAL_BASE's saved holdout answers with confidence-gated recalibration, cross-fitted on product halves."""
     import os
@@ -197,6 +211,8 @@ PREDICTORS: dict[str, PredictorFactory] = {
     "ensemble-agree": _ensemble("agree"),  # #106: the first member unless both product halves agree on another
     "helper-siglip": _helper,  # heads on SigLIP embeddings; see galaxus.model.helper for the rule it touches
     "helper-siglip-mirror": _helper_mirror,  # the same, perspective trained on mirrored copies and averaged with the mirror
+    "helper-fused": _helper_fused,  # EXP-0059: SigLIP base + DINOv2 base + SigLIP 2 base, unit length, concatenated
+    "helper-fused-mirror": _helper_fused_mirror,  # helper-fused with the mirror-aware perspective head
     "recalibrated": _recalibrated,  # #42: confidence-gated recalibration of $RECAL_BASE (e.g. EXP-0004)
     "type-prior": _type_prior,  # #133: the product-type prior on $TYPE_PRIOR_BASE's answers (e.g. EXP-0002)
     "majority": _majority,

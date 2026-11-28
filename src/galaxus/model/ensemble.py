@@ -44,6 +44,7 @@ import sys
 import threading
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -459,7 +460,16 @@ class LiveEnsemblePredictor:
             return {str(item.image_id): known[str(item.image_id)] for item in batch}
 
     def predict(self, batch: Sequence[ImageItem]) -> list[Prediction]:
-        answers = {name: self._answers(name, batch) for name in sorted(self.predictors)}
+        """Every member answers the batch **at the same time**, one thread each (#182: in turn, the final drill ran
+        at 1.98 img/s; the 70B alone runs at 2.4). A member's exception propagates, and the combination runs only
+        once every member has answered."""
+        names = sorted(self.predictors)
+        if len(names) == 1:
+            answers = {names[0]: self._answers(names[0], batch)}
+        else:
+            with ThreadPoolExecutor(max_workers=len(names), thread_name_prefix="member") as pool:
+                futures = {name: pool.submit(self._answers, name, batch) for name in names}
+                answers = {name: futures[name].result() for name in names}
         return [combine(self.choice, answers, str(item.image_id)) for item in batch]
 
     def config(self) -> dict[str, Any]:
