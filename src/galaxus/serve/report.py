@@ -302,6 +302,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--exp", default=None, help="the EXP of the final submission (default: best holdout score)")
     parser.add_argument("--team", default=None, help="Kaggle team name")
     parser.add_argument("--kaggle", action="store_true", help="read the public score from Kaggle (read-only)")
+    parser.add_argument("--public-score", default=None, help="the final submission's public score, as Kaggle shows it")
     parser.add_argument("--weights", default=None, help="the published weights: <Hugging Face repo> @ <revision>")
     parser.add_argument("--models-file", type=Path, default=Path("MODELS.md"))
     parser.add_argument("--out", type=Path, default=None, help="write here (default: print)")
@@ -316,7 +317,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         pick(rows, arguments.exp),
         read_bench(out / "bench"),
         count_label_errors(out / "label_errors.csv"),
-        kaggle_public_score() if arguments.kaggle else None,
+        arguments.public_score or (kaggle_public_score() if arguments.kaggle else None),
         arguments.team,
         str(arguments.results).replace("\\", "/"),
         read_drills(out / "drill"),
