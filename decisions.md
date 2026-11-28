@@ -78,3 +78,22 @@ named.
   2026-11-28, after the reply: Q-0008 is answered yes. So EXP-0061 and the helpers routed per dimension stay within
   the rules; each helper and its revision go in `MODELS.md` and the report. TODO(neelshah261): confirm in a comment
   on #137.
+
+### The answer to the follow-up (2026-11-28, about 11:15 CET)
+
+- **Source:** relayed by Parth in his session, numbered as the follow-up's three questions (#231, #137).
+  TODO(neelshah261): link or quote the answer.
+- **Supersedes** the "Q-0008 stands" bullet above, Q-0008's answer and Q-0005's "the type prior (#133)", and answers
+  Q-0009 and Q-0011.
+- **1, Q-0011: no.** A head may read only Apertus v1.5's hidden states; with SigLIP in its input, SigLIP would do part
+  of the classification. (a) The concatenated base: no. (b) Combining several Apertus runs (ensembling or averaging
+  Apertus outputs): yes. A weighted vote between Apertus and helper-model answers: no, since the helpers would then
+  decide the label. SigLIP stays a supporting tool, for example for retrieval hints in the prompt (Q-0003).
+- **2, Q-0009: no.** A fine-tuned SigLIP 2 predicting classes is another model doing the core task, even with open
+  weights and trained on train only. The same goes for the frozen SigLIP heads, so **Q-0008 is now no**: no helper
+  model picks a class at runtime, routed or not.
+- **3, the type prior: no.** The bias is only a per-class shift on Apertus' own scores, fitted on train (Q-0005,
+  point 2). A prior that overrules Apertus is an external rule, so Q-0005 no longer covers the type prior (#133).
+- **So:** the method uses only Apertus v1.5 (8B or 70B): heads on its hidden states with a per-class bias, its
+  zero-shot answers, and ensembles over Apertus runs. EXP-0061 and every row with helper heads or the type prior are
+  outside the rules. Helpers may only give hints in Apertus' prompt.
