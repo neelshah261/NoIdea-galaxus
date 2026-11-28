@@ -196,3 +196,70 @@ def test_the_label_error_csv_lands_outside_every_git_work_tree(saturday_data, ca
     assert "never commit it" in printed
     for image_id in train["image_id"]:
         assert image_id not in printed
+
+
+def test_the_bonus_csv_can_be_made_without_the_gateway(saturday_data, capsys):
+    """The 14:30 deliverable has a second source: neighbour votes (#112 part A), so no gateway and no GPU.
+
+    Every other test of the label-error finder feeds it a ``holdout.jsonl`` written by hand or by the model lane,
+    which is the path that needs a gateway run with logprobs. This walks the other one end to end with the real
+    commands - embeddings in the cache, ``neighbours label-errors``, then ``label_errors`` over its output - so
+    the fallback stays verified rather than being something that worked once.
+
+    The table has three clusters of four images, one per class, and one planted mislabel: an image sitting in the
+    second cluster while carrying the first cluster's label. That is the row the csv must name.
+    """
+    import numpy as np
+
+    from galaxus.data.neighbours import DEFAULT_ENCODER, EMBEDDING_DTYPE, embedding_dir
+    from galaxus.data.neighbours import main as neighbours_main
+
+    dimension = DIMENSIONS[0]
+    classes = FAKE_CLASSES[dimension]
+    # One cluster per class, however many the fixture's dimension has, so this does not assume a class count.
+    per_cluster = 12 // len(classes)
+    planted = "t_07"
+
+    rows, vectors = [], {}
+    for position in range(12):
+        image_id = f"t_{position:02d}"
+        cluster = position // per_cluster
+        label = classes[0] if image_id == planted else classes[cluster]
+        row = {"image_id": image_id, "product_id": f"p_{position:02d}", dimension: label}
+        row[f"{dimension}_source"] = "human"
+        row[f"{dimension}_relevant"] = "true"
+        rows.append(row)
+        vector = np.zeros(8, dtype=np.float32)
+        vector[cluster] = 1.0
+        vector[2 + (position % 6)] = 0.05  # a little spread inside the cluster, so neighbours have an order
+        vectors[image_id] = vector
+    pd.DataFrame(rows).to_csv(saturday_data / "train.csv", index=False)
+
+    folder = embedding_dir(DEFAULT_ENCODER)
+    folder.mkdir(parents=True, exist_ok=True)
+    for image_id, vector in vectors.items():
+        np.save(folder / f"{image_id}.npy", vector.astype(EMBEDDING_DTYPE))
+
+    assert neighbours_main(["label-errors", "--k", "3", "--min-similarity", "0.5", "--dimensions", dimension]) == 0
+    votes = saturday_data / "out" / "neighbour_votes.jsonl"
+    assert votes.is_file()
+
+    # 0.75 rather than the default 0.9: a vote's confidence is the neighbours' agreement, which at k=3 is 1.0,
+    # 0.67 or 0.33, so the default would keep only a unanimous three. The two flags interact and the chain is
+    # where that is visible.
+    assert label_errors_main(["--predictions", str(votes), "--dimensions", dimension, "--threshold", "0.75"]) == 0
+
+    written = saturday_data / "out" / "label_errors.csv"
+    reported = pd.read_csv(written).to_dict(orient="records")
+    assert {
+        "image_id": planted,
+        "dimension": dimension,
+        "label": classes[0],
+        "suggested_label": classes[1],
+    } in reported, reported
+
+    # Same two rules as the other path: outside every work tree, and no id on stdout.
+    for folder_up in (written.resolve(), *written.resolve().parents):
+        assert not (folder_up / ".git").exists()
+    printed = capsys.readouterr().out
+    assert planted not in printed

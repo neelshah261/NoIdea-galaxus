@@ -203,12 +203,13 @@ def test_a_missing_jsonl_file_says_what_it_looked_for(tmp_path):
 
 def test_a_prediction_without_confidences_is_refused():
     """``Prediction.confidence`` is optional in the contract, but this report ranks by it (issue #7)."""
-    with pytest.raises(ValueError, match="no confidence"):
+    with pytest.raises(ValueError, match="none of these predictions has a confidence"):
         out_of_fold_frame([{"image_id": "img_1", "labels": {"subject": "beta"}, "confidence": None}])
 
 
 def test_a_dimension_without_a_confidence_is_refused():
-    with pytest.raises(KeyError, match="background"):
+    """One dimension and no confidence for it means nothing is rankable, so the file is still refused."""
+    with pytest.raises(ValueError, match="none of these predictions has a confidence"):
         out_of_fold_frame([{"image_id": "img_1", "labels": {"background": "white"}, "confidence": {"subject": 0.9}}])
 
 
@@ -327,7 +328,7 @@ def test_predictions_without_confidence_can_be_read_when_not_ranking(galaxus_dat
 def test_reading_without_confidence_is_opt_in_so_the_finder_still_refuses(galaxus_data):
     path = galaxus_data / "holdout.jsonl"
     path.write_text(json.dumps({"image_id": "img_1", "labels": {"subject": "beta"}}), encoding="utf-8")
-    with pytest.raises(ValueError, match="has no confidence"):
+    with pytest.raises(ValueError, match="none of these predictions has a confidence"):
         out_of_fold_frame(path)
 
 
@@ -338,8 +339,13 @@ def test_a_dimension_without_a_confidence_is_kept_when_not_ranking(galaxus_data)
     path.write_text(json.dumps(record), encoding="utf-8")
     frame = out_of_fold_frame(path, require_confidence=False)
     assert sorted(frame["dimension"]) == ["background", "subject"]
-    with pytest.raises(KeyError, match="carries no confidence"):
-        out_of_fold_frame(path)
+
+    # Ranking keeps the cell it can rank and skips the other, rather than refusing the file. A real predictor
+    # writes partial confidences by design - the LoRA counts them as `no_confidence_cells` (#75, #122) - and
+    # refusing the whole file for one of them would lose every good candidate in it.
+    ranked = out_of_fold_frame(path)
+    assert ranked["dimension"].tolist() == ["subject"]
+    assert ranked.attrs["unrankable_cells"] == 1
 
 
 def test_write_label_errors_itself_refuses_a_path_inside_a_work_tree(tmp_path):
@@ -397,5 +403,48 @@ def test_a_writer_that_dropped_confidence_would_be_caught_here(galaxus_data, tra
         [Prediction(image_id="img_1", labels={"subject": "beta"}, confidence=None)],
     )
     assert '"confidence": null' in path.read_text(encoding="utf-8")
-    with pytest.raises(ValueError, match="has no confidence"):
+    with pytest.raises(ValueError, match="none of these predictions has a confidence"):
         find_label_errors(path, train_table, dimension_names=("subject",))
+
+
+def test_one_fallback_row_does_not_refuse_the_whole_file(galaxus_data, train_table):
+    """The case that found this: a real run has fallback rows, and they must not cost us the good candidates.
+
+    A predictor that falls back to the sample's answer writes ``confidence: null`` for that image - the LoRA
+    counts them as ``fallbacks`` (#75, merged as #122), and the zero-shot predictor does the same. Before this,
+    the first such row raised and the report was empty, which at 14:30 on the Saturday would have meant no csv
+    at all from a run that worked.
+    """
+    records = [
+        {"image_id": "img_1", "labels": {"subject": "beta"}, "confidence": {"subject": 0.97}},
+        {"image_id": "img_2", "labels": {"subject": "beta"}, "confidence": None},
+        {"image_id": "img_5", "labels": {"subject": "beta"}, "confidence": {"subject": 0.95}},
+    ]
+    path = galaxus_data / "holdout.jsonl"
+    path.write_text("\n".join(json.dumps(record) for record in records), encoding="utf-8")
+
+    report = find_label_errors(path, train_table, dimension_names=("subject",))
+
+    # img_1 and img_5 are the human-labelled "alpha" rows. img_3 would not qualify in any case: its label is
+    # a model prelabel, and the finder only disagrees with humans.
+    assert report["image_id"].tolist() == ["img_1", "img_5"], "the fallback row cost us the confident ones"
+    assert out_of_fold_frame(path).attrs["unrankable_cells"] == 1
+
+
+def test_the_command_says_how_many_cells_it_could_not_rank(galaxus_data, train_table, capsys):
+    """A quiet skip would look like a clean run, so the count is printed rather than only recorded."""
+    records = [
+        {"image_id": "img_1", "labels": {"subject": "beta"}, "confidence": {"subject": 0.97}},
+        {"image_id": "img_2", "labels": {"subject": "beta"}, "confidence": None},
+    ]
+    train_table.to_csv(galaxus_data / "train.csv", index=False)  # the command reads train.csv from disk
+    folder = galaxus_data / "out" / "predictions" / "EXP-0001"
+    folder.mkdir(parents=True)
+    (folder / "holdout.jsonl").write_text("\n".join(json.dumps(record) for record in records), encoding="utf-8")
+
+    assert main(["--predictions", str(folder), "--dimensions", "subject"]) == 0
+
+    printed = capsys.readouterr().out
+    assert "1 cell(s) skipped for want of a confidence" in printed
+    for image_id in ("img_1", "img_2"):
+        assert image_id not in printed
