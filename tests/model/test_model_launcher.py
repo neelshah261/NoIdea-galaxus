@@ -19,6 +19,9 @@ ROOT = Path(__file__).resolve().parents[2]
 START = ROOT / "train" / "hf_job_apertus_features_start.sh"
 
 pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+#: The bash that shutil.which finds. A bare "bash" in subprocess can start another one on Windows: CreateProcess
+#: looks in System32 before PATH and finds WSL's bash.exe, which cannot read Windows paths ("No such file").
+BASH = shutil.which("bash") or "bash"
 
 
 def launch(tmp_path, *arguments, extra_env=None):
@@ -30,7 +33,7 @@ def launch(tmp_path, *arguments, extra_env=None):
     env = {"PATH": f"{fake}{os.pathsep}{os.environ.get('PATH', '')}", "HOME": str(tmp_path),
            "HF_TOKEN": "hf-test", "KAGGLE_API_TOKEN": "kaggle-test", "GH_TOKEN": "gh-test",  # secret-scan: allow
            **(extra_env or {})}
-    done = subprocess.run(["bash", str(START), *arguments], check=False, env=env, capture_output=True, text=True,
+    done = subprocess.run([BASH, str(START), *arguments], check=False, env=env, capture_output=True, text=True,
                           cwd=tmp_path)  # the exit code is asserted by each test
     return done.returncode, done.stdout.splitlines(), done.stderr
 
