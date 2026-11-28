@@ -2494,5 +2494,236 @@
     "usd_per_hour": 1.8,
     "cost_per_100k_usd": 14.74373302577739,
     "note": "#76 LoRA on Apertus 8B, 1 epoch (exp0004-e1/adapter), merged at the file level, vLLM on 1x L40S via HF Jobs, 512 px, class-enum schema"
+  },
+  {
+    "id": "EXP-0092",
+    "created": "2026-11-28T11:23:21+01:00",
+    "predictor": "apertus-core",
+    "commit": "4adaa3348141fc8bbb91ee3a4ca11817a3b640c9",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "key": "helper:apertus-core",
+      "calibration": {
+        "subject": {
+          "bias": {
+            "accessories": 1.25,
+            "delivery_scope": 0.0,
+            "detail_closeup": 0.25,
+            "energy_label": -2.75,
+            "full_product": 2.0,
+            "infographic": 1.0,
+            "logo": -0.75,
+            "multipack_trade_unit": 1.25,
+            "multiview": 0.0,
+            "package_and_product": 0.0,
+            "packaging": -0.75,
+            "placeholder": -1.0,
+            "product_grouping": -1.5
+          }
+        },
+        "background": {
+          "bias": {
+            "color": -0.25,
+            "scene_lifestyle": -0.25,
+            "white": 0.0
+          }
+        },
+        "perspective": {
+          "bias": {
+            "back_angle_left": 0.5,
+            "back_angle_right": 0.25,
+            "back_head_on": 0.25,
+            "bottom_up": -1.0,
+            "front_angle_left": 0.0,
+            "front_angle_right": 0.25,
+            "front_head_on": 0.0,
+            "left_side": 0.0,
+            "right_side": -0.75,
+            "top_down": -0.75
+          }
+        },
+        "individuals": {
+          "bias": {
+            "individual_present": 0.0,
+            "none": 0.0
+          }
+        },
+        "text_classification": {
+          "bias": {
+            "certification_seal": -0.5,
+            "none": 1.25,
+            "nutritional_info": 0.75,
+            "other": 1.25,
+            "promotional_text": 0.0,
+            "technical_specs": 1.0
+          }
+        },
+        "text_language": {
+          "bias": {
+            "Dutch": 0.5,
+            "English": 0.75,
+            "French": 0.5,
+            "German": 0.0,
+            "Italian": 0.0,
+            "none": 0.5,
+            "other": 1.0
+          }
+        }
+      },
+      "seed": 0,
+      "core": "swiss-ai/Apertus-v1.5-8B",
+      "layers": [
+        -1,
+        -9
+      ],
+      "pool": "last",
+      "base": "none",
+      "base_encoders": [],
+      "base_revisions": [],
+      "base_scores": null
+    },
+    "model": "swiss-ai/Apertus-v1.5-8B",
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.46624233010819943,
+    "macro_f1": {
+      "subject": 0.4141792403787431,
+      "background": 0.5095332541894265,
+      "perspective": 0.34031149496303337,
+      "individuals": 0.7560953246587575,
+      "text_classification": 0.4121273396743321,
+      "text_language": 0.36520732678490403
+    },
+    "weighted_f1": {
+      "subject": 0.6306122136735508,
+      "background": 0.7470944340837545,
+      "perspective": 0.42182770636578004,
+      "individuals": 0.9404465755050196,
+      "text_classification": 0.8117739682277619,
+      "text_language": 0.5993308365316087
+    },
+    "overall_weighted_f1": 0.7111969378887868,
+    "images_per_second": 38308.385702681946,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": "#219: heads on Apertus 8B hidden states, layers -1,-9, last token, no base"
+  },
+  {
+    "id": "EXP-0095",
+    "created": "2026-11-28T11:23:41+01:00",
+    "predictor": "ensemble-agree",
+    "commit": "4adaa3348141fc8bbb91ee3a4ca11817a3b640c9",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "method": "per-dimension routing under the halves-agree rule (#106): the base member everywhere, except where the best other option beats it on both product halves of the choosing data; chosen on one half of the holdout (it must win on both of that half's product quarters) and scored on the other",
+      "members": {
+        "core": "EXP-0092",
+        "70b": "EXP-0049"
+      },
+      "routing_chosen_on_half": [
+        {
+          "subject": "vote",
+          "background": "vote",
+          "perspective": "vote",
+          "individuals": "vote",
+          "text_classification": "vote",
+          "text_language": "70b"
+        },
+        {
+          "subject": "vote",
+          "background": "core",
+          "perspective": "vote",
+          "individuals": "core",
+          "text_classification": "vote",
+          "text_language": "vote"
+        }
+      ],
+      "routing_full_holdout": {
+        "subject": "vote",
+        "background": "vote",
+        "perspective": "vote",
+        "individuals": "vote",
+        "text_classification": "vote",
+        "text_language": "vote"
+      },
+      "speed": "images_per_second is the members' combined speed: every image goes through every member",
+      "rule": "agree",
+      "base": "core",
+      "routing_full_holdout_by_half": [
+        {
+          "subject": "vote",
+          "background": "vote",
+          "perspective": "vote",
+          "individuals": "vote",
+          "text_classification": "vote",
+          "text_language": "70b"
+        },
+        {
+          "subject": "vote",
+          "background": "70b",
+          "perspective": "vote",
+          "individuals": "vote",
+          "text_classification": "vote",
+          "text_language": "vote"
+        }
+      ]
+    },
+    "model": "apertus-v1-5-70b, swiss-ai/Apertus-v1.5-8B",
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.5400874259362741,
+    "macro_f1": {
+      "subject": 0.433206840191408,
+      "background": 0.5291358358395439,
+      "perspective": 0.3843581535053255,
+      "individuals": 0.7786126503115445,
+      "text_classification": 0.46335606463021417,
+      "text_language": 0.6518550111396088
+    },
+    "weighted_f1": {
+      "subject": 0.6547006296757237,
+      "background": 0.7642168594146904,
+      "perspective": 0.4649029412253513,
+      "individuals": 0.9496031391719124,
+      "text_classification": 0.8442639689586507,
+      "text_language": 0.750921038081409
+    },
+    "overall_weighted_f1": 0.7475773187718806,
+    "images_per_second": 2.416272220857262,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": "#214: Apertus-only: heads on Apertus hidden states + 70B, agree"
   }
 ]
