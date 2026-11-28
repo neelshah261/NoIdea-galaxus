@@ -1075,5 +1075,983 @@
     "usd_per_hour": null,
     "cost_per_100k_usd": null,
     "note": ""
+  },
+  {
+    "id": "EXP-0038",
+    "created": "2026-11-28T04:02:23+01:00",
+    "predictor": "zero-shot-per-dimension",
+    "commit": "08ca84a10f5cc3db521660b5ad7bb5b28450959d",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "backend": "api",
+      "image_size": 512,
+      "context": true,
+      "image_first": false,
+      "macro_aware": false,
+      "observe_first": false,
+      "type_first": false,
+      "per_dimension": true,
+      "image": "plain",
+      "drop_context": [],
+      "temperature": 0.0,
+      "max_tokens": 200,
+      "workers": 24,
+      "prompt_sha256": "bd37fa85409400fe",
+      "images": 2444,
+      "retries": 0,
+      "defaulted_cells": 0,
+      "no_confidence_cells": 0,
+      "prompt_tokens": 56991318,
+      "completion_tokens": 125067
+    },
+    "model": "apertus-v1-5-8b",
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.2703392453516157,
+    "macro_f1": {
+      "subject": 0.059272836041264924,
+      "background": 0.45057900343727697,
+      "perspective": 0.10897551872138773,
+      "individuals": 0.5217393832609365,
+      "text_classification": 0.2229495022514031,
+      "text_language": 0.25851922839742497
+    },
+    "weighted_f1": {
+      "subject": 0.41847260195403474,
+      "background": 0.7043116623752028,
+      "perspective": 0.2308047987288581,
+      "individuals": 0.9113031785441957,
+      "text_classification": 0.6300486565828091,
+      "text_language": 0.2984701019624616
+    },
+    "overall_weighted_f1": 0.563207683735825,
+    "images_per_second": 2.9189785362158016,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": ""
+  },
+  {
+    "id": "EXP-0039",
+    "created": "2026-11-28T03:48:26+01:00",
+    "predictor": "zero-shot-per-dimension-observe-first",
+    "commit": "08ca84a10f5cc3db521660b5ad7bb5b28450959d",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "backend": "api",
+      "image_size": 512,
+      "context": true,
+      "image_first": false,
+      "macro_aware": false,
+      "observe_first": true,
+      "type_first": false,
+      "per_dimension": true,
+      "image": "plain",
+      "drop_context": [],
+      "temperature": 0.0,
+      "max_tokens": 400,
+      "workers": 24,
+      "prompt_sha256": "b38e466dc6671e59",
+      "images": 2444,
+      "retries": 1421,
+      "defaulted_cells": 885,
+      "no_confidence_cells": 0,
+      "prompt_tokens": 63090029,
+      "completion_tokens": 2037398
+    },
+    "model": "apertus-v1-5-8b",
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.33379635517796696,
+    "macro_f1": {
+      "subject": 0.1688182195089187,
+      "background": 0.39188632634572507,
+      "perspective": 0.22089953718613672,
+      "individuals": 0.5497295234674867,
+      "text_classification": 0.2930057586580406,
+      "text_language": 0.3784387659014938
+    },
+    "weighted_f1": {
+      "subject": 0.4800019795332056,
+      "background": 0.6913411408405256,
+      "perspective": 0.3298871896724859,
+      "individuals": 0.9155150650940491,
+      "text_classification": 0.751610764427783,
+      "text_language": 0.5735961596349303
+    },
+    "overall_weighted_f1": 0.6381529381515831,
+    "images_per_second": 1.5006767659244493,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": ""
+  },
+  {
+    "id": "EXP-0041",
+    "created": "2026-11-28T03:21:16+01:00",
+    "predictor": "zero-shot-per-dimension-observe-first-no-context",
+    "commit": "08ca84a10f5cc3db521660b5ad7bb5b28450959d",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "backend": "api",
+      "image_size": 512,
+      "context": false,
+      "image_first": false,
+      "macro_aware": false,
+      "observe_first": true,
+      "type_first": false,
+      "per_dimension": true,
+      "image": "plain",
+      "drop_context": [],
+      "temperature": 0.0,
+      "max_tokens": 400,
+      "workers": 24,
+      "prompt_sha256": "b38e466dc6671e59",
+      "images": 2444,
+      "retries": 1340,
+      "defaulted_cells": 862,
+      "no_confidence_cells": 0,
+      "prompt_tokens": 62154003,
+      "completion_tokens": 1845444
+    },
+    "model": "apertus-v1-5-8b",
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.37998672565585134,
+    "macro_f1": {
+      "subject": 0.24844029783463498,
+      "background": 0.42157414546153466,
+      "perspective": 0.22442679683091363,
+      "individuals": 0.5285816639440575,
+      "text_classification": 0.2981605574553628,
+      "text_language": 0.5587368924086044
+    },
+    "weighted_f1": {
+      "subject": 0.53042276883025,
+      "background": 0.73963922093248,
+      "perspective": 0.3462184439650949,
+      "individuals": 0.912162100806742,
+      "text_classification": 0.754445853254708,
+      "text_language": 0.6687261168093903
+    },
+    "overall_weighted_f1": 0.6684403211506006,
+    "images_per_second": 1.5624219256017688,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": ""
+  },
+  {
+    "id": "EXP-0044",
+    "created": "2026-11-28T03:11:15+01:00",
+    "predictor": "ensemble-agree",
+    "commit": "3e94f21ac0ade300b71b0f5a0677e8965a88dee3",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "method": "per-dimension routing under the halves-agree rule (#106): the base member everywhere, except where the best other option beats it on both product halves of the choosing data; chosen on one half of the holdout (it must win on both of that half's product quarters) and scored on the other",
+      "members": {
+        "noctx": "EXP-0025",
+        "ctx": "EXP-0021"
+      },
+      "routing_chosen_on_half": [
+        {
+          "subject": "noctx",
+          "background": "ctx",
+          "perspective": "vote",
+          "individuals": "noctx",
+          "text_classification": "ctx",
+          "text_language": "noctx"
+        },
+        {
+          "subject": "noctx",
+          "background": "ctx",
+          "perspective": "noctx",
+          "individuals": "noctx",
+          "text_classification": "ctx",
+          "text_language": "noctx"
+        }
+      ],
+      "routing_full_holdout": {
+        "subject": "noctx",
+        "background": "ctx",
+        "perspective": "noctx",
+        "individuals": "noctx",
+        "text_classification": "ctx",
+        "text_language": "noctx"
+      },
+      "speed": "images_per_second is the members' combined speed: every image goes through every member",
+      "rule": "agree",
+      "base": "noctx",
+      "routing_full_holdout_by_half": [
+        {
+          "subject": "noctx",
+          "background": "ctx",
+          "perspective": "vote",
+          "individuals": "noctx",
+          "text_classification": "ctx",
+          "text_language": "noctx"
+        },
+        {
+          "subject": "noctx",
+          "background": "ctx",
+          "perspective": "noctx",
+          "individuals": "ctx",
+          "text_classification": "ctx",
+          "text_language": "noctx"
+        }
+      ]
+    },
+    "model": "apertus-v1-5-8b",
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.3676639799051917,
+    "macro_f1": {
+      "subject": 0.2331444914868766,
+      "background": 0.42183564932969714,
+      "perspective": 0.2074805252236854,
+      "individuals": 0.5139627878668054,
+      "text_classification": 0.32973360322854345,
+      "text_language": 0.4998268222955419
+    },
+    "weighted_f1": {
+      "subject": 0.5176775415348295,
+      "background": 0.7474121157646348,
+      "perspective": 0.30758107176438554,
+      "individuals": 0.9098609538050769,
+      "text_classification": 0.8109261606217771,
+      "text_language": 0.5995986697818071
+    },
+    "overall_weighted_f1": 0.6661431647476258,
+    "images_per_second": 2.291739664465889,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": ""
+  },
+  {
+    "id": "EXP-0045",
+    "created": "2026-11-28T03:11:28+01:00",
+    "predictor": "type-prior",
+    "commit": "3e94f21ac0ade300b71b0f5a0677e8965a88dee3",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "method": "product-type prior, gated by confidence, learned on one product half and applied to the other (#133)",
+      "base": "EXP-0044",
+      "rules_full_holdout": {
+        "subject": {
+          "below": 1.01,
+          "share": 0.6
+        },
+        "background": {
+          "below": 1.01,
+          "share": 0.9
+        },
+        "perspective": {
+          "below": 1.01,
+          "share": 0.6
+        },
+        "individuals": {
+          "below": 1.01,
+          "share": 0.6
+        },
+        "text_classification": {
+          "below": 1.01,
+          "share": 0.7
+        },
+        "text_language": {
+          "below": 1.01,
+          "share": 0.8
+        }
+      },
+      "min_type_cells": 20,
+      "types_in_table": {
+        "subject": 115,
+        "background": 105,
+        "perspective": 67,
+        "individuals": 105,
+        "text_classification": 121,
+        "text_language": 43
+      }
+    },
+    "model": null,
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.4025513926047113,
+    "macro_f1": {
+      "subject": 0.23497732198036322,
+      "background": 0.4293531312888809,
+      "perspective": 0.26801657472682,
+      "individuals": 0.6421064679229531,
+      "text_classification": 0.3697241135157088,
+      "text_language": 0.4711307461935416
+    },
+    "weighted_f1": {
+      "subject": 0.526618115927203,
+      "background": 0.7727801961173211,
+      "perspective": 0.34823458904130855,
+      "individuals": 0.9303576012283482,
+      "text_classification": 0.829145555578476,
+      "text_language": 0.6208825905417674
+    },
+    "overall_weighted_f1": 0.6875638320612799,
+    "images_per_second": null,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": ""
+  },
+  {
+    "id": "EXP-0046",
+    "created": "2026-11-28T03:48:45+01:00",
+    "predictor": "type-prior",
+    "commit": "3e94f21ac0ade300b71b0f5a0677e8965a88dee3",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "method": "product-type prior, gated by confidence, learned on one product half and applied to the other (#133)",
+      "base": "EXP-0041",
+      "rules_full_holdout": {
+        "subject": {
+          "below": 1.01,
+          "share": 0.6
+        },
+        "background": {
+          "below": 1.01,
+          "share": 0.7
+        },
+        "perspective": {
+          "below": 1.01,
+          "share": 0.6
+        },
+        "individuals": {
+          "below": 1.01,
+          "share": 0.7
+        },
+        "text_classification": {
+          "below": 1.01,
+          "share": 0.7
+        },
+        "text_language": {
+          "below": 1.01,
+          "share": 0.8
+        }
+      },
+      "min_type_cells": 20,
+      "types_in_table": {
+        "subject": 115,
+        "background": 105,
+        "perspective": 67,
+        "individuals": 105,
+        "text_classification": 121,
+        "text_language": 43
+      }
+    },
+    "model": null,
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.4161343725078967,
+    "macro_f1": {
+      "subject": 0.25536456802327095,
+      "background": 0.41884721460948854,
+      "perspective": 0.2939959732895204,
+      "individuals": 0.6318388503818968,
+      "text_classification": 0.33282036801372095,
+      "text_language": 0.5639392607294825
+    },
+    "weighted_f1": {
+      "subject": 0.5437445828291375,
+      "background": 0.7564715033599412,
+      "perspective": 0.3940508479892095,
+      "individuals": 0.9288399537387674,
+      "text_classification": 0.7960754051582548,
+      "text_language": 0.6796233429416746
+    },
+    "overall_weighted_f1": 0.6932398429877602,
+    "images_per_second": null,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": ""
+  },
+  {
+    "id": "EXP-0047",
+    "created": "2026-11-28T04:03:30+01:00",
+    "predictor": "recalibrated",
+    "commit": "8fb1a41295e3882178ea680d5d459ea21cdca7c4",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "method": "confidence-gated recalibration, learned on one product half, applied to the other (#42)",
+      "base": "EXP-0041",
+      "rules_full_holdout": {
+        "subject": {
+          "full_product": {
+            "below": 0.9,
+            "to": "infographic"
+          },
+          "detail_closeup": {
+            "below": 0.9,
+            "to": "infographic"
+          },
+          "packaging": {
+            "below": 0.6,
+            "to": "infographic"
+          },
+          "placeholder": {
+            "below": 0.7,
+            "to": "detail_closeup"
+          },
+          "package_and_product": {
+            "below": 0.8,
+            "to": "infographic"
+          },
+          "infographic": {
+            "below": 0.5,
+            "to": "product_grouping"
+          }
+        },
+        "background": {
+          "color": {
+            "below": 0.8,
+            "to": "white"
+          }
+        },
+        "perspective": {
+          "front_head_on": {
+            "below": 0.7,
+            "to": "back_angle_left"
+          },
+          "front_angle_right": {
+            "below": 0.5,
+            "to": "back_head_on"
+          },
+          "front_angle_left": {
+            "below": 0.8,
+            "to": "back_angle_left"
+          },
+          "right_side": {
+            "below": 0.9,
+            "to": "left_side"
+          },
+          "back_angle_right": {
+            "below": 0.9,
+            "to": "back_head_on"
+          },
+          "left_side": {
+            "below": 0.5,
+            "to": "back_angle_right"
+          },
+          "back_head_on": {
+            "below": 0.4,
+            "to": "front_angle_left"
+          }
+        },
+        "individuals": {
+          "none": {
+            "below": 0.9,
+            "to": "individual_present"
+          }
+        },
+        "text_classification": {
+          "none": {
+            "below": 0.8,
+            "to": "other"
+          },
+          "nutritional_info": {
+            "below": 0.9,
+            "to": "none"
+          },
+          "technical_specs": {
+            "below": 0.9,
+            "to": "none"
+          },
+          "promotional_text": {
+            "below": 0.7,
+            "to": "none"
+          },
+          "other": {
+            "below": 0.5,
+            "to": "none"
+          }
+        },
+        "text_language": {
+          "none": {
+            "below": 0.7,
+            "to": "other"
+          },
+          "English": {
+            "below": 0.5,
+            "to": "none"
+          },
+          "German": {
+            "below": 0.6,
+            "to": "English"
+          },
+          "other": {
+            "below": 0.5,
+            "to": "English"
+          }
+        }
+      }
+    },
+    "model": null,
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.3827347415149897,
+    "macro_f1": {
+      "subject": 0.2541775493842573,
+      "background": 0.4290206980544164,
+      "perspective": 0.25282696126650295,
+      "individuals": 0.5285816639440575,
+      "text_classification": 0.32125883548812756,
+      "text_language": 0.5105427409525766
+    },
+    "weighted_f1": {
+      "subject": 0.540344464533113,
+      "background": 0.7594613049300277,
+      "perspective": 0.3672840105348557,
+      "individuals": 0.912162100806742,
+      "text_classification": 0.7643438829323592,
+      "text_language": 0.668591032642282
+    },
+    "overall_weighted_f1": 0.6789761425282397,
+    "images_per_second": null,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": ""
+  },
+  {
+    "id": "EXP-0048",
+    "created": "2026-11-28T04:03:33+01:00",
+    "predictor": "type-prior",
+    "commit": "8fb1a41295e3882178ea680d5d459ea21cdca7c4",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "method": "product-type prior, gated by confidence, learned on one product half and applied to the other (#133)",
+      "base": "EXP-0047",
+      "rules_full_holdout": {
+        "subject": {
+          "below": 1.01,
+          "share": 0.6
+        },
+        "background": {
+          "below": 1.01,
+          "share": 0.9
+        },
+        "perspective": {
+          "below": 1.01,
+          "share": 0.6
+        },
+        "individuals": {
+          "below": 1.01,
+          "share": 0.7
+        },
+        "text_classification": {
+          "below": 1.01,
+          "share": 0.7
+        },
+        "text_language": {
+          "below": 1.01,
+          "share": 0.8
+        }
+      },
+      "min_type_cells": 20,
+      "types_in_table": {
+        "subject": 115,
+        "background": 105,
+        "perspective": 67,
+        "individuals": 105,
+        "text_classification": 121,
+        "text_language": 43
+      }
+    },
+    "model": null,
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.41616251581074537,
+    "macro_f1": {
+      "subject": 0.2514433925531148,
+      "background": 0.4226428464030856,
+      "perspective": 0.3123156511099273,
+      "individuals": 0.6318388503818968,
+      "text_classification": 0.3614700854301917,
+      "text_language": 0.517264268986256
+    },
+    "weighted_f1": {
+      "subject": 0.5442634490277758,
+      "background": 0.7665227264774914,
+      "perspective": 0.40494474695138366,
+      "individuals": 0.9288399537387674,
+      "text_classification": 0.8080713174199222,
+      "text_language": 0.678690447557336
+    },
+    "overall_weighted_f1": 0.6989822447485928,
+    "images_per_second": null,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": ""
+  },
+  {
+    "id": "EXP-0049",
+    "created": "2026-11-28T05:07:22+01:00",
+    "predictor": "zero-shot-observe-first-no-context",
+    "commit": "0ea10293bdfd7118b2e3d164110498224cabcc9b",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "backend": "api",
+      "image_size": 512,
+      "context": false,
+      "image_first": false,
+      "macro_aware": false,
+      "observe_first": true,
+      "type_first": false,
+      "image": "plain",
+      "drop_context": [],
+      "temperature": 0.0,
+      "max_tokens": 400,
+      "workers": 8,
+      "prompt_sha256": "5f37f44309f84c2c",
+      "images": 2444,
+      "retries": 1,
+      "defaulted_cells": 6,
+      "no_confidence_cells": 0,
+      "prompt_tokens": 9526164,
+      "completion_tokens": 238221
+    },
+    "model": "apertus-v1-5-70b",
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.46136874759471463,
+    "macro_f1": {
+      "subject": 0.25265791509532154,
+      "background": 0.4826905238295836,
+      "perspective": 0.26830629276227025,
+      "individuals": 0.720578972868217,
+      "text_classification": 0.38938838829059197,
+      "text_language": 0.6545903927223033
+    },
+    "weighted_f1": {
+      "subject": 0.569270250597713,
+      "background": 0.8062954653225632,
+      "perspective": 0.3734476622399359,
+      "individuals": 0.9434402461220989,
+      "text_classification": 0.7680810473601676,
+      "text_language": 0.7496499683018321
+    },
+    "overall_weighted_f1": 0.7082134668576554,
+    "images_per_second": 2.4164246349987675,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": ""
+  },
+  {
+    "id": "EXP-0050",
+    "created": "2026-11-28T04:54:42+01:00",
+    "predictor": "type-prior",
+    "commit": "3786ded4e9e1c8b507b98374a9754851ddf46a92",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "method": "product-type prior, gated by confidence, learned on one product half and applied to the other (#133)",
+      "base": "EXP-0041",
+      "rules_full_holdout": {
+        "subject": {
+          "below": 1.01,
+          "share": 0.5
+        },
+        "background": {
+          "below": 1.01,
+          "share": 0.3
+        },
+        "perspective": {
+          "below": 1.01,
+          "share": 0.4
+        },
+        "individuals": {
+          "below": 1.01,
+          "share": 0.7
+        },
+        "text_classification": {
+          "below": 1.01,
+          "share": 0.7
+        },
+        "text_language": {
+          "below": 1.01,
+          "share": 0.8
+        }
+      },
+      "min_type_cells": 20,
+      "types_in_table": {
+        "subject": 115,
+        "background": 105,
+        "perspective": 67,
+        "individuals": 105,
+        "text_classification": 121,
+        "text_language": 43
+      }
+    },
+    "model": null,
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.4306493722074293,
+    "macro_f1": {
+      "subject": 0.27023168782963364,
+      "background": 0.4438745526187739,
+      "perspective": 0.3244408233373859,
+      "individuals": 0.647678707335636,
+      "text_classification": 0.3337312013936638,
+      "text_language": 0.5639392607294825
+    },
+    "weighted_f1": {
+      "subject": 0.5544111280675251,
+      "background": 0.7816259399984868,
+      "perspective": 0.42433887783904245,
+      "individuals": 0.9312886818147511,
+      "text_classification": 0.7965451079285412,
+      "text_language": 0.6796233429416746
+    },
+    "overall_weighted_f1": 0.704761048972457,
+    "images_per_second": null,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": ""
+  },
+  {
+    "id": "EXP-0051",
+    "created": "2026-11-28T05:07:44+01:00",
+    "predictor": "type-prior",
+    "commit": "3786ded4e9e1c8b507b98374a9754851ddf46a92",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "method": "product-type prior, gated by confidence, learned on one product half and applied to the other (#133)",
+      "base": "EXP-0049",
+      "rules_full_holdout": {
+        "subject": {
+          "below": 1.01,
+          "share": 0.3
+        },
+        "background": {
+          "below": 1.01,
+          "share": 0.3
+        },
+        "perspective": {
+          "below": 1.01,
+          "share": 0.4
+        },
+        "individuals": {
+          "below": 1.01,
+          "share": 0.8
+        },
+        "text_classification": {
+          "below": 1.01,
+          "share": 0.7
+        },
+        "text_language": {
+          "below": 1.01,
+          "share": 0.8
+        }
+      },
+      "min_type_cells": 20,
+      "types_in_table": {
+        "subject": 115,
+        "background": 105,
+        "perspective": 67,
+        "individuals": 105,
+        "text_classification": 121,
+        "text_language": 43
+      }
+    },
+    "model": null,
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.48907030977294613,
+    "macro_f1": {
+      "subject": 0.30262831640685517,
+      "background": 0.4941097557967907,
+      "perspective": 0.3241116777415865,
+      "individuals": 0.7615228485270238,
+      "text_classification": 0.41512953485633425,
+      "text_language": 0.6369197253090865
+    },
+    "weighted_f1": {
+      "subject": 0.5989593203345007,
+      "background": 0.8111532295640801,
+      "perspective": 0.4048583287585122,
+      "individuals": 0.9508983256678584,
+      "text_classification": 0.8105624923481817,
+      "text_language": 0.7489419101398381
+    },
+    "overall_weighted_f1": 0.7293799994264228,
+    "images_per_second": null,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": ""
   }
 ]
