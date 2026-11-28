@@ -318,7 +318,9 @@ def smoke(steps: int = 30) -> int:
     from transformers import LlamaConfig, LlamaForCausalLM, Trainer, TrainingArguments
 
     torch.manual_seed(SEED)
-    dimensions = ("subject", "background", "perspective", "individuals", "text_classification", "text_language")
+    from galaxus.data.classes import dimensions as contract_dimensions
+
+    dimensions = contract_dimensions()  # contracts/classes.json: no dimension name is typed here (#83)
     tokenizer = CharTokenizer()
 
     def with_offsets(text):

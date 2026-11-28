@@ -9,9 +9,9 @@ import pytest
 from model_synthetic import DIMENSIONS, FAKE_CLASSES, FakeMetric, fake_data_lane, train_table
 
 from galaxus.model import eval as model_eval
-from galaxus.model.contract import Prediction
 from galaxus.model.eval import DataLane, DirtyCheckout, InvalidPredictions, items_from_rows, main, run_eval
 from galaxus.model.results import ResultsFileError, read_rows
+from galaxus.types import Prediction
 
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 

@@ -34,7 +34,7 @@ from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from galaxus.model.contract import ImageItem, Prediction
+from galaxus.types import ImageItem, Prediction
 
 GUIDELINE_FILE = "labeling_guideline.md"
 IMAGE_SIZE = 512

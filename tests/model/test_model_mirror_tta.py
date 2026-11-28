@@ -14,8 +14,8 @@ from PIL import Image
 from galaxus.data.classes import no_overlay_class, overlay_dimension
 from galaxus.data.images import cached_image, cached_jpeg, prepared_jpeg
 from galaxus.model import eval as model_eval
-from galaxus.model.contract import ImageItem, Prediction
 from galaxus.model.mirror_tta import MirrorTTA
+from galaxus.types import ImageItem, Prediction
 
 pytestmark = pytest.mark.real_contract
 
