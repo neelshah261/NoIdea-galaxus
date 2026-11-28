@@ -207,6 +207,99 @@ def build_training_set(
     return TrainingSet(examples, stats)
 
 
+# ---------------------------------------------------------------- #135: class weights and focal loss (#17, idea 5)
+
+#: (n / (k * count)) ** power, the heads' tempered class weights (#51): 0 = none, 1 = fully balanced, 0.5 tempers it.
+CLASS_WEIGHT_POWER = 0.5
+CLASS_WEIGHTINGS = ("none", "tempered")
+
+
+def class_weights(examples: Sequence[Example], power: float = CLASS_WEIGHT_POWER) -> dict[str, dict[str, float]]:
+    """Per dimension, a loss weight per class: ``(n / (k * count)) ** power``, scaled so the weight averaged over the
+    trained cells is 1 (the loss keeps its size; rare classes weigh more, common ones less). The same formula as the
+    heads (#51).
+
+    Counted on the epoch as built: train minus the official holdout, with the rare-class repeats and the mirrored rows,
+    on the trained (human) dimensions only. So the weights correct what the loss actually sees, and the repeats are not
+    counted twice.
+    """
+    counts: dict[str, Counter] = {}
+    for example in examples:
+        for dimension in example.trained_dimensions:
+            counts.setdefault(dimension, Counter())[example.target[dimension]] += 1
+    weights: dict[str, dict[str, float]] = {}
+    for dimension, counter in counts.items():
+        n, k = sum(counter.values()), len(counter)
+        raw = {name: (n / (k * count)) ** power for name, count in counter.items()}
+        mean = sum(raw[name] * count for name, count in counter.items()) / n
+        weights[dimension] = {name: value / mean for name, value in raw.items()}
+    return weights
+
+
+@dataclass(frozen=True)
+class LossOptions:
+    """What the LoRA loss adds to plain cross-entropy (#135). The default is the plain loss, the current recipe."""
+
+    class_weights: dict[str, dict[str, float]] | None = None
+    focal_gamma: float = 0.0
+
+    @property
+    def plain(self) -> bool:
+        return self.class_weights is None and self.focal_gamma == 0
+
+    def describe(self) -> str:
+        if self.plain:
+            return "plain cross-entropy"
+        weighting = f"tempered class weights (power {CLASS_WEIGHT_POWER})" if self.class_weights else "no class weights"
+        return f"{weighting}, focal gamma {self.focal_gamma:g} on the class-value tokens"
+
+
+def loss_options(examples: Sequence[Example], class_weighting: str = "none", focal_gamma: float = 0.0,
+                 power: float = CLASS_WEIGHT_POWER) -> LossOptions:
+    """The ``--class-weighting`` and ``--focal-gamma`` flags of ``train/lora_apertus.py``, checked."""
+    if class_weighting not in CLASS_WEIGHTINGS:
+        raise ValueError(f"class weighting {class_weighting!r} is not one of {', '.join(CLASS_WEIGHTINGS)}")
+    if focal_gamma < 0:
+        raise ValueError("the focal gamma is >= 0 (0 = off)")
+    weights = class_weights(examples, power) if class_weighting == "tempered" else None
+    return LossOptions(weights, float(focal_gamma))
+
+
+def loss_weights(
+    input_ids: Sequence[int],
+    example: Example,
+    encode_with_offsets: Callable[[str], tuple[list[int], list[tuple[int, int]]]],
+    weights: Mapping[str, Mapping[str, float]] | None = None,
+) -> dict[str, list]:
+    """Per position of ``input_ids``: ``loss_weights``, the class weight on each class-value token of a trained
+    dimension and 1 everywhere else, and ``value_mask``, 1 on those same tokens (where focal loss applies).
+
+    Prompt, image and prelabel positions keep weight 1, but their labels are -100 (``training_labels``), so they carry no
+    loss: the masking is unchanged.
+    """
+    _, positions = value_positions(input_ids, example.answer, encode_with_offsets)
+    weight, mask = [1.0] * len(input_ids), [0] * len(input_ids)
+    for dimension in example.trained_dimensions:
+        value = weights.get(dimension, {}).get(example.target[dimension], 1.0) if weights else 1.0
+        for place in positions.get(dimension, ()):
+            weight[place], mask[place] = value, 1
+    return {"loss_weights": weight, "value_mask": mask}
+
+
+def combine_token_losses(token_loss: Any, valid: Any, weight: Any, value_mask: Any, focal_gamma: float, xp: Any):
+    """(sum of the weighted per-token losses, number of tokens in the loss) for one batch.
+
+    ``token_loss`` is the plain cross-entropy per position (``-log p`` of the label, 0 where the label is -100) and
+    ``valid`` marks the positions in the loss. When ``focal_gamma`` > 0, focal loss ``(1 - p) ** gamma * -log p`` replaces
+    it on the class-value tokens. Gamma 0 with weights of 1 gives back the plain loss. ``xp`` is ``numpy`` or ``torch``:
+    the same arithmetic runs on both, so ci tests it without torch.
+    """
+    if focal_gamma > 0:
+        focal = (1 - xp.exp(-token_loss)) ** focal_gamma * token_loss
+        token_loss = xp.where(value_mask > 0, focal, token_loss)
+    return (token_loss * weight * valid).sum(), valid.sum()
+
+
 # ---------------------------------------------------------------- the launch plan and its cost
 
 
