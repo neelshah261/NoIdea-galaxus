@@ -47,7 +47,9 @@ INNER_ENV = "TYPE_PRIOR_INNER"
 #: Confidence gates tried; 1.01 means every cell that has a confidence.
 THRESHOLDS = (0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.01)
 #: Minimum share of the type's top class tried.
-SHARES = (0.6, 0.7, 0.8, 0.9, 0.95)
+SHARES = (0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95)  # 0.3-0.5 added (#176): +0.015 on EXP-0041, on both halves
+#: A cell without a confidence is a default answer (zero_shot: no usable reply), the least sure of all.
+UNKNOWN_CONFIDENCE = 0.0
 MIN_TYPE_CELLS = 20      # scored cells a type needs in train before its top class is trusted
 MIN_CHANGED = 5          # a rule must move at least this many cells on the half it is learned on
 Records = dict[str, dict[str, Any]]
@@ -89,16 +91,17 @@ def type_table(rows: pd.DataFrame, dims: Sequence[str], scored_mask: ScoredMask,
 
 def apply_rules(labels: Mapping[str, str], confidence: Mapping[str, float] | None, kind: Any, table: Table,
                 rules: Rules) -> dict[str, str]:
-    """One answer with the rules applied. A cell changes only when its confidence is known and below the rule's gate,
-    and the product type ``kind`` is in the table with a top-class share of at least the rule's."""
+    """One answer with the rules applied. A cell changes only when its confidence is below the rule's gate (a missing
+    one counts as ``UNKNOWN_CONFIDENCE``), and the product type ``kind`` is in the table with a top-class share of at
+    least the rule's."""
     out = dict(labels)
     name = product_type(kind)
     if name is None:
         return out
     for dimension, rule in rules.items():
         entry = table.get(dimension, {}).get(name)
-        value = (confidence or {}).get(dimension)
-        if entry and value is not None and entry["share"] >= rule["share"] and float(value) < rule["below"]:
+        value = (confidence or {}).get(dimension, UNKNOWN_CONFIDENCE)
+        if entry and entry["share"] >= rule["share"] and float(value) < rule["below"]:
             out[dimension] = entry["class"]
     return out
 
@@ -119,14 +122,14 @@ def learn(records: Records, part: pd.DataFrame, table: Table, dims: Sequence[str
     gains: dict[str, dict[str, float]] = {}
     for dimension in dims:
         answers = {i: records[i]["labels"][dimension] for i in ids}
-        conf = {i: (records[i].get("confidence") or {}).get(dimension) for i in ids}
+        conf = {i: (records[i].get("confidence") or {}).get(dimension, UNKNOWN_CONFIDENCE) for i in ids}
         entries = {i: table.get(dimension, {}).get(kinds.get(i)) for i in ids}
         base = best = dimension_f1(answers, part, dimension, fill, dims, solution_frame, evaluate)
         chosen = None
         for share in SHARES:
             for below in THRESHOLDS:
                 moved = {i: entry["class"] for i, entry in entries.items()
-                         if entry and conf[i] is not None and entry["share"] >= share and float(conf[i]) < below
+                         if entry and entry["share"] >= share and float(conf[i]) < below
                          and answers[i] != entry["class"]}
                 if len(moved) < MIN_CHANGED:
                     continue
