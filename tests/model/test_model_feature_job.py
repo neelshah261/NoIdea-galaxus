@@ -41,12 +41,15 @@ def test_the_vision_tokenizer_is_kept_in_float32():
 
 JOB = ROOT / "train" / "hf_job_apertus_features.sh"
 START = ROOT / "train" / "hf_job_apertus_features_start.sh"
+#: The bash that shutil.which finds. A bare "bash" in subprocess can start another one on Windows: CreateProcess
+#: looks in System32 before PATH and finds WSL's bash.exe, which cannot read Windows paths ("No such file").
+BASH = shutil.which("bash") or "bash"
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
 @pytest.mark.parametrize("script", [JOB, START], ids=["job", "start"])
 def test_the_job_scripts_are_valid_bash(script):
-    subprocess.run(["bash", "-n", str(script)], check=True)
+    subprocess.run([BASH, "-n", str(script)], check=True)
 
 
 def test_the_job_passes_layers_with_an_equals_sign():
