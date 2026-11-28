@@ -153,6 +153,9 @@ class TypePriorPredictor:
     rules_by_image: dict[str, Rules] | None = None      # holdout image -> rules learned on the other half
     base_exp: str | None = None
     images_per_second: float | None = None
+    #: The base run's model and revision (#175), so the EXP row, compare and the report name it.
+    model: str | None = None
+    model_revision: str | None = None
 
     def predict(self, batch: Sequence[ImageItem]) -> list[Prediction]:
         if self.inner is not None:
@@ -207,9 +210,11 @@ def from_saved(base_exp: str, rows: pd.DataFrame, holdout: pd.DataFrame, dims: S
     records = load_records(path)
     table = type_table(rows, dims, scored_mask)
     _, by_image, full = crossfit(records, holdout, table, dims, solution_frame, evaluate, seed)
-    speed = {str(r.get("id")): r.get("images_per_second") for r in result_rows}.get(base_exp)
+    base_row = {str(r.get("id")): r for r in result_rows}.get(base_exp, {})
+    speed = base_row.get("images_per_second")
     return TypePriorPredictor(table=table, rules=full["rules"], saved=records, rules_by_image=by_image,
-                              base_exp=base_exp, images_per_second=speed)
+                              base_exp=base_exp, images_per_second=speed,
+                              model=base_row.get("model"), model_revision=base_row.get("model_revision"))
 
 
 def from_env() -> TypePriorPredictor:
