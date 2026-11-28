@@ -120,9 +120,9 @@
     <tr><th>Idea</th><th>Runs</th><th class=num>Overall</th><th>Dimension it targets</th></tr>
     <tr><td>Describe the image first, then label</td><td class=mono>EXP-0021 vs 0002</td><td class=num>{delta EXP-0021.score EXP-0002.score}</td><td>perspective <span class=mono>{delta EXP-0021.macro_f1.perspective EXP-0002.macro_f1.perspective}</span></td></tr>
     <tr><td>Leave the catalog context out</td><td class=mono>EXP-0025 vs 0021</td><td class=num>{delta EXP-0025.score EXP-0021.score}</td><td>subject <span class=mono>{delta EXP-0025.macro_f1.subject EXP-0021.macro_f1.subject}</span></td></tr>
-    <tr><td>Product type as a prior (hosts' idea 3)</td><td class=mono>EXP-0027 vs 0021</td><td class=num>{delta EXP-0027.score EXP-0021.score}</td><td>individuals <span class=mono>{delta EXP-0027.macro_f1.individuals EXP-0021.macro_f1.individuals}</span></td></tr>
-    <tr><td>One question per dimension</td><td class=mono>EXP-0041 vs 0025</td><td class=num>{delta EXP-0041.score EXP-0025.score}</td><td>subject <span class=mono>{delta EXP-0041.macro_f1.subject EXP-0025.macro_f1.subject}</span></td></tr>
-    <tr><td>Mirror the image for left and right</td><td class=mono>EXP-0006 vs 0002</td><td class=num>{delta EXP-0006.score EXP-0002.score}</td><td>perspective <span class=mono>{delta EXP-0006.macro_f1.perspective EXP-0002.macro_f1.perspective}</span></td></tr>
+    <tr><td>Labels of similar training images as a hint; Apertus decides</td><td class=mono>EXP-0098 vs 0049</td><td class=num>{delta EXP-0098.score EXP-0049.score}</td><td>subject <span class=mono>{delta EXP-0098.macro_f1.subject EXP-0049.macro_f1.subject}</span></td></tr>
+    <tr><td>Heads on Apertus 8B hidden states, with the 70B</td><td class=mono>EXP-0095 vs 0049</td><td class=num>{delta EXP-0095.score EXP-0049.score}</td><td>perspective <span class=mono>{delta EXP-0095.macro_f1.perspective EXP-0049.macro_f1.perspective}</span></td></tr>
+    <tr><td>Encoder helpers per dimension (fused on perspective, SigLIP on individuals), vote elsewhere</td><td class=mono>EXP-0106 vs 0101</td><td class=num>{delta EXP-0106.score EXP-0101.score}</td><td>perspective <span class=mono>{delta EXP-0106.macro_f1.perspective EXP-0101.macro_f1.perspective}</span></td></tr>
     <tr><td>For comparison: the 70B, zero-shot</td><td class=mono>EXP-0015 vs 0002</td><td class=num>{delta EXP-0015.score EXP-0002.score}</td><td>individuals <span class=mono>{delta EXP-0015.macro_f1.individuals EXP-0002.macro_f1.individuals}</span></td></tr>
   </table>
   <p class="foot">Gain in mean macro F1 on the official holdout; "pending" means the run has no row yet.</p>
@@ -162,7 +162,7 @@
   <h1>What mattered, and what did not</h1>
   <table class="compact">
     <tr><th>EXP</th><th>Predictor</th><th>Model</th><th class=num>Score</th><th class=num>vs EXP-0002</th><th class=num>img/s</th></tr>
-    {rows EXP-0002 EXP-0001 EXP-0009 EXP-0006 EXP-0017 EXP-0021 EXP-0025 EXP-0027 EXP-0029 EXP-0043 EXP-0015 EXP-0041 EXP-0004}
+    {rows EXP-0002 EXP-0106 EXP-0101 EXP-0098 EXP-0100 EXP-0095 EXP-0092 EXP-0049 EXP-0004 EXP-0025 EXP-0015 EXP-0001}
   </table>
   <p class="foot">Suspected label errors found in train.csv: <span class=mono>{label_errors}</span>. Reproducible from commit <span class=mono>{best.commit}</span>. Thank you.</p>
 </section>
