@@ -1,0 +1,4 @@
+# Shell scripts run under bash (HF Jobs, macOS, Linux, Git Bash): LF in every checkout, Windows included.
+# A CRLF checkout breaks them ($'\r': command not found) and fails tests/model/test_model_feature_job.py and
+# tests/model/test_model_launcher.py on a Windows machine.
+*.sh text eol=lf
