@@ -189,6 +189,8 @@ PREDICTORS: dict[str, PredictorFactory] = {
     "lora": _lora(),  # EXP-0004 (#49): the merged LoRA served by vLLM at $LORA_BASE_URL
     # Mirror TTA (#48) around every variant it can wrap; mirror-tta:zero-shot is EXP-0006.
     **{f"mirror-tta:{name}": _mirror_tta(name) for name in ZERO_SHOT_VARIANTS if mirror_tta_can_wrap(name)},
+    # Mirror TTA around the served LoRA (#145 S2): the mirror reaches it through the same 512 px cache as zero-shot.
+    "mirror-tta:lora": _mirror_tta("lora"),
 }
 
 
