@@ -12,6 +12,14 @@ It batches ``ImageItem``s through any ``Predictor`` and appends one JSON line pe
 - **Parallel batches.** ``workers=N`` keeps up to N batches in flight on a thread pool (#36). Over an HTTP backend
   most of the time is network wait, so this is what reaches the team's 5-10 images per second. Use it only with a
   thread-safe predictor; the default (1) is sequential, as a local GPU model needs.
+- **An unreadable image keeps the constant answer (#216).** With a ``fallback`` (the entry points pass
+  :func:`constant_fallback`), a batch that fails with an image error (``OSError``, which covers PIL's unidentified
+  and truncated files, or ``ValueError``) is retried one image at a time; an image that still fails gets its row of
+  ``sample_submission.csv``, marked ``"fallback": "constant"``, and is counted, never named (product rule 3). Any other
+  error still stops the run, and so do more than ``max_fallbacks`` such images: that many is a broken method, not a
+  broken file. This is what the hosts' reference notebook does ("cannot be read, it keeps the constant answer").
+- **New batches (#216).** ``--csv <table>`` runs any table shaped like dev.csv (``image_id``, ``image_path``
+  relative to the table, optional catalog columns) as part ``csv-<file stem>``.
 - **Timing.** Every run appends one record (images, seconds, images per second, batch size) to
   ``<part>.runs.jsonl`` next to the predictions. The benchmark (:mod:`galaxus.serve.bench`) builds on the same numbers.
 
@@ -40,6 +48,16 @@ PREDICTIONS_DIR = "predictions"
 DEFAULT_BATCH_SIZE = 16
 DEFAULT_WORKERS = 1
 PARTS = ("holdout", "dev", "final")
+#: The errors of one image file (PIL raises ``UnidentifiedImageError``, an ``OSError``, or ``OSError`` for a
+#: truncated file; a bad size or mode surfaces as ``ValueError``). Anything else is the method's own failure.
+IMAGE_ERRORS = (OSError, ValueError)
+#: ...but never these: a network or timeout failure (``urllib``'s errors and ``requests``' are ``OSError`` too) or a
+#: reply that is not JSON is the method or the gateway failing, so it stops the run like any other error.
+NOT_IMAGE_ERRORS: tuple[type[BaseException], ...] = (ConnectionError, TimeoutError, json.JSONDecodeError)
+FALLBACK_MARK = "constant"
+#: More images than this falling back in one run stops it: a systemic error, not a few broken files.
+DEFAULT_MAX_FALLBACKS = 50
+CSV_PREFIX = "csv-"
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
@@ -62,6 +80,8 @@ class RunReport:
     batch_size: int
     finished_at: str
     workers: int = DEFAULT_WORKERS
+    #: Images that could not be read and keep the constant answer (``"fallback": "constant"`` in the file).
+    fallbacks: int = 0
 
     @property
     def complete(self) -> bool:
@@ -167,6 +187,63 @@ def _check_batch(batch: Sequence[Any], predictions: Sequence[Any]) -> list[dict[
     return sorted(records, key=lambda record: order[record["image_id"]])
 
 
+def is_image_error(error: BaseException) -> bool:
+    """True for the error of one unreadable image file (see :data:`IMAGE_ERRORS`), never for a network failure."""
+    import urllib.error
+
+    excluded = (*NOT_IMAGE_ERRORS, urllib.error.URLError)
+    try:
+        import requests
+
+        excluded = (*excluded, requests.RequestException)
+    except ImportError:  # pragma: no cover - requests is optional
+        pass
+    return isinstance(error, IMAGE_ERRORS) and not isinstance(error, excluded)
+
+
+class TooManyFallbacks(RuntimeError):
+    """More images failed with an image error than ``max_fallbacks``: the run stops, as for any other error."""
+
+
+def constant_fallback(sample: Any = None) -> Callable[[str], dict[str, str]]:
+    """``image_id -> labels``: the image's row of ``sample_submission.csv``, or for an image not in it (a ``--csv``
+    batch) the sample's most common row, which is the constant answer of every row."""
+    if sample is None:
+        from galaxus.data.load import read_sample_submission
+
+        sample = read_sample_submission()
+    columns = [c for c in sample.columns if c not in ("image_id", "image_file", "image_path")]
+    rows = {str(r["image_id"]): {c: str(r[c]) for c in columns} for r in sample.to_dict(orient="records")}
+    if not rows:
+        raise ValueError("the sample submission has no rows: no constant answer to fall back to")
+    most_common = sample[columns].astype(str).value_counts().idxmax()
+    most_common = most_common if isinstance(most_common, tuple) else (most_common,)
+    constant = dict(zip(columns, most_common, strict=True))
+
+    def labels(image_id: str) -> dict[str, str]:
+        return dict(rows.get(str(image_id), constant))
+
+    return labels
+
+
+def default_fallback(log: Callable[[str], None] | None = print) -> Callable[[str], dict[str, str]] | None:
+    """:func:`constant_fallback` from ``$GALAXUS_DATA``'s sample_submission.csv, or ``None`` (every error stops the
+    run, as before #216) when that file cannot be read; the entry points use this so a start never fails on it."""
+    try:
+        return constant_fallback()
+    except (OSError, KeyError, ValueError, RuntimeError) as problem:
+        if log:
+            log(f"[runner] no constant answer to fall back to ({type(problem).__name__}): an unreadable image stops "
+                "the run")
+        return None
+
+
+def fallback_record(image_id: str, labels: Mapping[str, str]) -> dict[str, Any]:
+    """The predictions-file line of an image that keeps the constant answer."""
+    return {"image_id": str(image_id), "labels": {str(k): str(v) for k, v in labels.items()}, "confidence": None,
+            "fallback": FALLBACK_MARK}
+
+
 def _batches(items: Sequence[Any], size: int) -> Iterable[Sequence[Any]]:
     for start in range(0, len(items), size):
         yield items[start : start + size]
@@ -181,8 +258,13 @@ def run(
     root: str | os.PathLike[str] | None = None,
     log: Callable[[str], None] | None = print,
     workers: int = DEFAULT_WORKERS,
+    fallback: Callable[[str], Mapping[str, str]] | None = None,
+    max_fallbacks: int = DEFAULT_MAX_FALLBACKS,
 ) -> RunReport:
     """Predict every item that has no line in the predictions file yet, and return what happened.
+
+    With ``fallback``, an image that fails with an image error keeps ``fallback(image_id)`` (see the module
+    docstring); without it, every error stops the run, as before #216.
 
     With ``workers`` above 1, up to that many batches run at the same time; the lines of the file then follow the
     order in which batches finish, which nothing depends on (records are read back by ``image_id``).
@@ -190,6 +272,7 @@ def run(
     Raises:
         ValueError: duplicate image ids among ``items``, or a bad ``exp``/``part``, ``batch_size`` or ``workers``.
         PredictorContractError: the predictor broke the contract; the lines of batches already finished stay valid.
+        TooManyFallbacks: more than ``max_fallbacks`` images failed with an image error.
         Exception: whatever the predictor raised. With several workers, the batches still in flight are finished and
             written first, so a restart only redoes the batches that never ran.
     """
@@ -226,8 +309,38 @@ def run(
                     elapsed = time.perf_counter() - started
                     log(f"[runner] {exp}/{part}: {already + predicted}/{len(items)} ({predicted / elapsed:.2f} img/s)")
 
+        fell_back = 0
+
+        def one_by_one(batch: Sequence[Any], first: BaseException) -> list[dict[str, Any]]:
+            nonlocal fell_back
+            records = []
+            for item in batch:
+                try:
+                    records += _check_batch([item], list(predictor.predict([item])))
+                except IMAGE_ERRORS as error:
+                    if not is_image_error(error):
+                        raise
+                    with lock:
+                        fell_back += 1
+                        count = fell_back
+                    if count > max_fallbacks:
+                        raise TooManyFallbacks(
+                            f"{count} images failed with an image error ({type(error).__name__}), more than "
+                            f"max_fallbacks={max_fallbacks}: this looks like the method failing, not a few broken "
+                            "files, so the run stops") from first
+                    records.append(fallback_record(str(item.image_id), fallback(str(item.image_id))))
+                    if log:
+                        log(f"[runner] {exp}/{part}: {count} image(s) so far could not be read "
+                            f"({type(error).__name__}) and keep the constant answer")
+            return records
+
         def predict(batch: Sequence[Any]) -> list[dict[str, Any]]:
-            return _check_batch(batch, list(predictor.predict(list(batch))))
+            try:
+                return _check_batch(batch, list(predictor.predict(list(batch))))
+            except IMAGE_ERRORS as error:
+                if fallback is None or not is_image_error(error):
+                    raise
+                return one_by_one(batch, error)
 
         if workers == 1:
             for batch in _batches(todo, batch_size):
@@ -248,7 +361,10 @@ def run(
         batch_size=batch_size,
         finished_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         workers=workers,
+        fallbacks=fell_back,
     )
+    if log and fell_back:
+        log(f"[runner] {exp}/{part}: {fell_back} image(s) could not be read and keep the constant answer")
     with runs_path(path).open("a", encoding="utf-8", newline="\n") as handle:
         handle.write(json.dumps(asdict(report)) + "\n")
     return report
@@ -292,6 +408,27 @@ def _run_parallel(
         raise failure
 
 
+def csv_part_name(table: str | os.PathLike[str]) -> str:
+    """``csv-<file stem>``, the part a ``--csv`` table runs as (the model lane's ``heads extract --csv`` matches)."""
+    stem = re.sub(r"[^A-Za-z0-9._-]", "-", Path(table).stem).strip("-.") or "table"
+    return _check_name("part", CSV_PREFIX + stem)
+
+
+def items_for_csv(table: str | os.PathLike[str], limit: int | None = None) -> list[Any]:
+    """The items of any table shaped like dev.csv, read with the data lane's ``read_part`` (image_path resolved
+    relative to the table)."""
+    from galaxus.data.load import read_part
+    from galaxus.serve.items import items_from_frame
+
+    path = Path(table)
+    if not path.is_file():
+        raise FileNotFoundError(f"{path}: no such table")
+    frame = read_part(path)
+    if "image_file" not in frame.columns:
+        raise KeyError(f"{path.name} needs image_id and image_path columns, as dev.csv has")
+    return items_from_frame(frame, limit)
+
+
 def items_for_part(part: str, limit: int | None = None) -> list[Any]:
     """The items of ``holdout`` (the official split), ``dev`` or ``final``, read through the data lane."""
     from galaxus.data import load, split
@@ -315,15 +452,25 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m galaxus.serve.runner", description=__doc__.split("\n")[0])
     parser.add_argument("--predictor", required=True, help="package.module:name, e.g. galaxus.model.baselines:...")
     parser.add_argument("--exp", required=True, help="experiment id, e.g. EXP-0001")
-    parser.add_argument("--part", required=True, choices=PARTS)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--part", choices=PARTS)
+    source.add_argument("--csv", help="any table shaped like dev.csv; runs as part csv-<file stem>")
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
     parser.add_argument("--limit", type=int, default=None, help="only the first N images (smoke runs)")
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS, help="batches in flight (thread-safe only)")
+    parser.add_argument("--max-fallbacks", type=int, default=DEFAULT_MAX_FALLBACKS,
+                        help="unreadable images that may keep the constant answer before the run stops")
+    parser.add_argument("--no-fallback", action="store_true", help="stop on an unreadable image instead")
     arguments = parser.parse_args(argv)
 
-    items = items_for_part(arguments.part, arguments.limit)
+    if arguments.csv:
+        part, items = csv_part_name(arguments.csv), items_for_csv(arguments.csv, arguments.limit)
+    else:
+        part, items = arguments.part, items_for_part(arguments.part, arguments.limit)
     predictor = load_predictor(arguments.predictor)
-    report = run(predictor, items, arguments.exp, arguments.part, arguments.batch_size, workers=arguments.workers)
+    report = run(predictor, items, arguments.exp, part, arguments.batch_size, workers=arguments.workers,
+                 fallback=None if arguments.no_fallback else default_fallback(),
+                 max_fallbacks=arguments.max_fallbacks)
     print(json.dumps(asdict(report), indent=2))
     return 0 if report.complete else 1
 
