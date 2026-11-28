@@ -17,7 +17,6 @@ from galaxus.model import apertus
 from galaxus.model import eval as model_eval
 from galaxus.model import zero_shot as zero_shot_module
 from galaxus.model.apertus.backend import BackendError, Generation
-from galaxus.model.contract import ImageItem
 from galaxus.model.zero_shot import (
     IMAGE_FIRST,
     INSTRUCTION,
@@ -34,6 +33,7 @@ from galaxus.model.zero_shot import (
     system_prompt,
     value_confidence,
 )
+from galaxus.types import ImageItem
 
 ALLOWED = {dimension: frozenset(names) for dimension, names in FAKE_CLASSES.items()}
 DEFAULTS = {dimension: names[0] for dimension, names in FAKE_CLASSES.items()}

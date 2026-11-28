@@ -14,8 +14,8 @@ import pytest
 from model_synthetic import FakeMetric, fake_data_lane, train_table
 
 from galaxus.model import ensemble
-from galaxus.model.contract import ImageItem
 from galaxus.model.eval import run_eval
+from galaxus.types import ImageItem
 
 DIMS = ("subject", "perspective")
 

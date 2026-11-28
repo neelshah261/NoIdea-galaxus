@@ -31,7 +31,6 @@ from typing import Any
 import pandas as pd
 
 from galaxus.model.baselines import MajorityPredictor
-from galaxus.model.contract import ImageItem, Prediction, Predictor
 from galaxus.model.lora import eval_factory as _lora
 from galaxus.model.results import (
     REPOSITORY,
@@ -44,6 +43,7 @@ from galaxus.model.results import (
 )
 from galaxus.model.zero_shot import VARIANTS as ZERO_SHOT_VARIANTS
 from galaxus.model.zero_shot import ZeroShotPredictor, mirror_tta_can_wrap
+from galaxus.types import ImageItem, Prediction, Predictor
 
 ID_COLUMN = "image_id"
 IMAGE_FILE_COLUMN = "image_file"

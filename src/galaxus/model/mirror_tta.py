@@ -24,7 +24,7 @@ from typing import Any
 from galaxus.data.classes import allowed_classes, no_overlay_class, overlay_dimension
 from galaxus.data.images import IMAGE_SIZE, MIRROR_SUFFIX, cached_image
 from galaxus.data.mirror import mirror_class, mirrorable_dimension
-from galaxus.model.contract import ImageItem, Prediction, Predictor
+from galaxus.types import ImageItem, Prediction, Predictor
 
 
 class MirrorTTA:

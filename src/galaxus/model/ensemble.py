@@ -36,7 +36,7 @@ from typing import Any
 
 import pandas as pd
 
-from galaxus.model.contract import ImageItem, Prediction
+from galaxus.types import ImageItem, Prediction
 
 VOTE = "vote"
 ID_COLUMN = "image_id"
