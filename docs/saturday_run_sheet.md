@@ -85,8 +85,9 @@ embedding cache, the routing file and the gateway key.
 - [ ] `shasum -a 256 $GALAXUS_DATA/final_encrypted.bin` matches the SHA-256 in the hosts' README.
 - [ ] The 70B is the model the gateway client will use. This must print `apertus-v1-5-70b`:
       `LLM_NAME=apertus-v1-5-70b uv run --env-file .env python -c "from galaxus.model.apertus.api import gateway_settings as g; print(g()['LLM_NAME'])"`
-- [ ] **Gateway credit for about 21M prompt tokens** (5,292 images × about 3,900; EXP-0049 used 9.5M on 2,444).
-      There is one key in `.env`. A second key as `LLM_API_KEY_2` is used automatically when the first runs out.
+- **Gateway credit is not a limit:** the Keera key has unlimited credits, and it stays as it is (Neel, 28 Nov). The
+  final run needs about 21M prompt tokens (5,292 images × about 3,900). A 429 (rate limit) is still possible:
+  rerun the same command.
 - [ ] **A fresh `ENSEMBLE_CACHE` folder for the final part.** The cache is keyed by member name only (#188 review),
       so a folder from a drill or from another member setup would serve stale answers.
 
