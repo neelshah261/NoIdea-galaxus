@@ -17,7 +17,8 @@ It batches ``ImageItem``s through any ``Predictor`` and appends one JSON line pe
   and truncated files, or ``ValueError``) is retried one image at a time; an image that still fails gets its row of
   ``sample_submission.csv``, marked ``"fallback": "constant"``, and is counted, never named (product rule 3). Any other
   error still stops the run, and so do more than ``max_fallbacks`` such images: that many is a broken method, not a
-  broken file. This is what the hosts' reference notebook does ("cannot be read, it keeps the constant answer").
+  broken file. **A restart retries every constant row** (they are taken out of the file first), so a run stopped by
+  a systemic error predicts those images once the method is fixed, and a truly broken file just falls back again. This is what the hosts' reference notebook does ("cannot be read, it keeps the constant answer").
 - **New batches (#216).** ``--csv <table>`` runs any table shaped like dev.csv (``image_id``, ``image_path``
   relative to the table, optional catalog columns) as part ``csv-<file stem>``.
 - **Timing.** Every run appends one record (images, seconds, images per second, batch size) to
@@ -288,6 +289,13 @@ def run(
     path = predictions_path(exp, part, root)
     path.parent.mkdir(parents=True, exist_ok=True)
     done = read_predictions(path)
+    retry = sum(1 for record in done.values() if record.get("fallback"))
+    if retry:
+        # A constant row is not a prediction: take those lines out and predict their images again (#216 review).
+        done = {image_id: record for image_id, record in done.items() if not record.get("fallback")}
+        _rewrite(path, done.values())
+        if log:
+            log(f"[runner] {exp}/{part}: retrying {retry} image(s) that kept the constant answer last time")
     todo = [item for item in items if str(item.image_id) not in done]
     already = len(items) - len(todo)
     if log and already:
@@ -368,6 +376,16 @@ def run(
     with runs_path(path).open("a", encoding="utf-8", newline="\n") as handle:
         handle.write(json.dumps(asdict(report)) + "\n")
     return report
+
+
+def _rewrite(path: Path, records: Iterable[Mapping[str, Any]]) -> None:
+    """``path`` holding exactly ``records``, replaced in one step (a crash leaves the old file or the new one)."""
+    partial = path.with_name(path.name + ".part")
+    with partial.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write("".join(json.dumps(record, ensure_ascii=False) + "\n" for record in records))
+        handle.flush()
+        os.fsync(handle.fileno())
+    partial.replace(path)
 
 
 def _run_parallel(
