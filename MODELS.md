@@ -26,7 +26,7 @@ from train, not models.
 ## The models in the final submission
 
 The four models the submitted file ran through, and nothing else (AGENTS.md product rule 4; the rows above give
-each one's revision and role). TODO(design): the final EXP id (EXP-0101 or EXP-0106, #243) once it is named.
+each one's revision and role). The final file is **EXP-0106**, 0.784 macro F1 on the official holdout (#243).
 
 | Model | Id | How it runs in the final |
 | --- | --- | --- |
