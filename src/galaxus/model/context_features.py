@@ -10,7 +10,7 @@ Why it should help:
   image lacks, mostly for ``subject``: the deep dive (#17) says the context decides accessory vs product.
 * In a trained head the text is weighed against the image, class by class, with the class weights of #51.
 
-The contract (fixed by #211 so A, C and D fit together):
+The contract (fixed by #211 so A and D fit together):
 
 * **Fields:** :data:`CONTEXT_FIELDS`, the catalog columns of challenge_description.md "The task".
 * **Training features are out of fold:** :meth:`ContextFeatures.out_of_fold` gives every training row a vector made
