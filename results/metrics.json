@@ -2053,5 +2053,390 @@
     "usd_per_hour": null,
     "cost_per_100k_usd": null,
     "note": ""
+  },
+  {
+    "id": "EXP-0052",
+    "created": "2026-11-28T05:10:07+01:00",
+    "predictor": "type-prior",
+    "commit": "3786ded4e9e1c8b507b98374a9754851ddf46a92",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "method": "product-type prior, gated by confidence, learned on one product half and applied to the other (#133)",
+      "base": "EXP-0025",
+      "rules_full_holdout": {
+        "subject": {
+          "below": 1.01,
+          "share": 0.5
+        },
+        "background": {
+          "below": 1.01,
+          "share": 0.3
+        },
+        "perspective": {
+          "below": 1.01,
+          "share": 0.4
+        },
+        "individuals": {
+          "below": 1.01,
+          "share": 0.3
+        },
+        "text_classification": {
+          "below": 1.01,
+          "share": 0.7
+        },
+        "text_language": {
+          "below": 1.01,
+          "share": 0.8
+        }
+      },
+      "min_type_cells": 20,
+      "types_in_table": {
+        "subject": 115,
+        "background": 105,
+        "perspective": 67,
+        "individuals": 105,
+        "text_classification": 121,
+        "text_language": 43
+      }
+    },
+    "model": null,
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.3997272206371533,
+    "macro_f1": {
+      "subject": 0.23456111018070422,
+      "background": 0.4105372638604097,
+      "perspective": 0.30627130575827255,
+      "individuals": 0.6421064679229531,
+      "text_classification": 0.3337564299070386,
+      "text_language": 0.4711307461935416
+    },
+    "weighted_f1": {
+      "subject": 0.5266293104779168,
+      "background": 0.784895565718445,
+      "perspective": 0.38481725775279274,
+      "individuals": 0.9303576012283482,
+      "text_classification": 0.8155468075830675,
+      "text_language": 0.6208825905417674
+    },
+    "overall_weighted_f1": 0.6921702323498787,
+    "images_per_second": 4.607071196591557,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": ""
+  },
+  {
+    "id": "EXP-0055",
+    "created": "2026-11-28T06:22:13+01:00",
+    "predictor": "helper-siglip",
+    "commit": "ae59d53d56d416dcad2eee943005ad2839fe91b5",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "key": "helper:google/siglip-base-patch16-224",
+      "calibration": {
+        "subject": {
+          "bias": {
+            "accessories": -1.5,
+            "delivery_scope": -0.25,
+            "detail_closeup": 1.5,
+            "energy_label": -0.5,
+            "full_product": 1.5,
+            "infographic": 0.5,
+            "logo": -1.5,
+            "multipack_trade_unit": -0.75,
+            "multiview": 0.0,
+            "package_and_product": -0.25,
+            "packaging": -0.5,
+            "placeholder": 0.5,
+            "product_grouping": 0.0
+          }
+        },
+        "background": {
+          "bias": {
+            "color": -2.25,
+            "scene_lifestyle": -3.0,
+            "white": 0.0
+          }
+        },
+        "perspective": {
+          "bias": {
+            "back_angle_left": -1.25,
+            "back_angle_right": -1.25,
+            "back_head_on": -1.75,
+            "bottom_up": -1.25,
+            "front_angle_left": 0.0,
+            "front_angle_right": -0.25,
+            "front_head_on": 1.25,
+            "left_side": -1.5,
+            "right_side": -0.75,
+            "top_down": -1.0
+          }
+        },
+        "individuals": {
+          "bias": {
+            "individual_present": -1.25,
+            "none": 0.0
+          }
+        },
+        "text_classification": {
+          "bias": {
+            "certification_seal": 0.25,
+            "none": 1.75,
+            "nutritional_info": 0.25,
+            "other": 0.5,
+            "promotional_text": -0.25,
+            "technical_specs": -0.25
+          }
+        },
+        "text_language": {
+          "bias": {
+            "Dutch": -0.25,
+            "English": 2.5,
+            "French": 0.0,
+            "German": -1.5,
+            "Italian": 1.5,
+            "none": 2.25,
+            "other": 0.0
+          }
+        }
+      },
+      "seed": 0
+    },
+    "model": "google/siglip-base-patch16-224",
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [
+      "google/siglip-base-patch16-224"
+    ],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.7049395255264184,
+    "macro_f1": {
+      "subject": 0.70157187475976,
+      "background": 0.878469749855137,
+      "perspective": 0.5200977978852588,
+      "individuals": 0.9766252723750041,
+      "text_classification": 0.6665302049828853,
+      "text_language": 0.48634225330046515
+    },
+    "weighted_f1": {
+      "subject": 0.8372793511708231,
+      "background": 0.9543558453769936,
+      "perspective": 0.6059740245280776,
+      "individuals": 0.9944654786301839,
+      "text_classification": 0.9209114596612175,
+      "text_language": 0.7364016238165897
+    },
+    "overall_weighted_f1": 0.8614375578049276,
+    "images_per_second": 30.33162133111804,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": ""
+  },
+  {
+    "id": "EXP-0056",
+    "created": "2026-11-28T06:24:00+01:00",
+    "predictor": "ensemble-agree",
+    "commit": "3786ded4e9e1c8b507b98374a9754851ddf46a92",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "method": "per-dimension routing under the halves-agree rule (#106): the base member everywhere, except where the best other option beats it on both product halves of the choosing data; chosen on one half of the holdout (it must win on both of that half's product quarters) and scored on the other",
+      "members": {
+        "siglip": "EXP-0055",
+        "70b": "EXP-0051"
+      },
+      "routing_chosen_on_half": [
+        {
+          "subject": "siglip",
+          "background": "siglip",
+          "perspective": "siglip",
+          "individuals": "siglip",
+          "text_classification": "vote",
+          "text_language": "vote"
+        },
+        {
+          "subject": "siglip",
+          "background": "vote",
+          "perspective": "siglip",
+          "individuals": "siglip",
+          "text_classification": "siglip",
+          "text_language": "vote"
+        }
+      ],
+      "routing_full_holdout": {
+        "subject": "vote",
+        "background": "vote",
+        "perspective": "siglip",
+        "individuals": "siglip",
+        "text_classification": "siglip",
+        "text_language": "vote"
+      },
+      "speed": "images_per_second is the members' combined speed: every image goes through every member",
+      "rule": "agree",
+      "base": "siglip",
+      "routing_full_holdout_by_half": [
+        {
+          "subject": "vote",
+          "background": "vote",
+          "perspective": "vote",
+          "individuals": "siglip",
+          "text_classification": "vote",
+          "text_language": "vote"
+        },
+        {
+          "subject": "vote",
+          "background": "vote",
+          "perspective": "siglip",
+          "individuals": "siglip",
+          "text_classification": "siglip",
+          "text_language": "vote"
+        }
+      ]
+    },
+    "model": null,
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.7328778720502879,
+    "macro_f1": {
+      "subject": 0.70157187475976,
+      "background": 0.8777328358349777,
+      "perspective": 0.5200977978852588,
+      "individuals": 0.9766252723750041,
+      "text_classification": 0.6655671182060369,
+      "text_language": 0.6556723332406901
+    },
+    "weighted_f1": {
+      "subject": 0.8372793511708231,
+      "background": 0.9532741359348945,
+      "perspective": 0.6059740245280776,
+      "individuals": 0.9944654786301839,
+      "text_classification": 0.9182005735838445,
+      "text_language": 0.7806433498592047
+    },
+    "overall_weighted_f1": 0.864833289639917,
+    "images_per_second": null,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": ""
+  },
+  {
+    "id": "EXP-0057",
+    "created": "2026-11-28T06:24:05+01:00",
+    "predictor": "type-prior",
+    "commit": "3786ded4e9e1c8b507b98374a9754851ddf46a92",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "method": "product-type prior, gated by confidence, learned on one product half and applied to the other (#133)",
+      "base": "EXP-0056",
+      "rules_full_holdout": {
+        "subject": {
+          "below": 0.9,
+          "share": 0.9
+        },
+        "perspective": {
+          "below": 0.4,
+          "share": 0.4
+        },
+        "text_language": {
+          "below": 0.6,
+          "share": 0.5
+        }
+      },
+      "min_type_cells": 20,
+      "types_in_table": {
+        "subject": 115,
+        "background": 105,
+        "perspective": 67,
+        "individuals": 105,
+        "text_classification": 121,
+        "text_language": 43
+      }
+    },
+    "model": null,
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.7289597576216621,
+    "macro_f1": {
+      "subject": 0.7029722242841098,
+      "background": 0.8777328358349777,
+      "perspective": 0.5211205204594552,
+      "individuals": 0.9766252723750041,
+      "text_classification": 0.6270859078315424,
+      "text_language": 0.6682217849448834
+    },
+    "weighted_f1": {
+      "subject": 0.8365952329804096,
+      "background": 0.9532741359348945,
+      "perspective": 0.6073462918602776,
+      "individuals": 0.9944654786301839,
+      "text_classification": 0.9049470342909623,
+      "text_language": 0.7853633104426884
+    },
+    "overall_weighted_f1": 0.8626882557261014,
+    "images_per_second": null,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": ""
   }
 ]
