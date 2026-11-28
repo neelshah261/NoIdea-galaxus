@@ -150,8 +150,8 @@
     <span>+ similar-image hints · EXP-0098</span><div class="track"><div class="fill" style="width:calc({raw EXP-0098.score} * 100%)"></div></div><span class=num>{EXP-0098.score}</span>
     <span class="accent">Full ensemble · {best.id}</span><div class="track"><div class="fill ours" style="width:calc({raw best.score} * 100%)"></div></div><span class="num accent">{best.score}</span>
   </div>
-  <p class="lead" style="margin-top:56px">The Apertus-only file, EXP-0101, scores <b>0.664</b> on the Kaggle public leaderboard.</p>
-  <p class="foot">Mean macro F1 on our official holdout of {best.holdout.images} train images (results/metrics.json). 0.664: Kaggle public score of EXP-0101_devfinal.csv.</p>
+  <p class="lead" style="margin-top:56px">The final file, EXP-0106, scores <b>0.778</b> on the Kaggle public leaderboard; the Apertus-only file, EXP-0101, <b>0.664</b>.</p>
+  <p class="foot">Mean macro F1 on our official holdout of {best.holdout.images} train images (results/metrics.json). 0.778 and 0.664: Kaggle public scores of the EXP-0106 and EXP-0101 dev+final files.</p>
 </section>
 
 <section data-label="Speed and deployment" data-speaker-notes="Speed is the row's images per second, measured by the eval script ({best.config.workers} requests in flight). 100,000 images a day is 1.2 per second (challenge_description.md, Why this matters); the final run plans for at least 2 per second (Timeline). Cost and peak memory come from a GPU benchmark row and stay pending until one exists.">
