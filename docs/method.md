@@ -51,7 +51,7 @@ The 70B runs at 2.38–2.42 images/s with 8 workers (about 37 min for the final 
 
 - **Product text in the prompt hurt every time:** EXP-0021 0.343 vs EXP-0025 0.360 without it, and EXP-0039 0.334 vs
   EXP-0041 0.380.
-- **The generative LoRA (EXP-0004, 0.343) learned the text, not the image.** Its training loss flattened at 0.08–0.09
+- **The generative LoRA (EXP-0004, 0.343 in Swarup's run on #145; its row is not in `results/metrics.json` yet, #157) learned the text, not the image.** Its training loss flattened at 0.08–0.09
   per answer token. That is what a model that sees only the product text reaches out of fold (0.081). The causes are
   on #145: one epoch, product text in every example, no class weights, and a loss dominated by JSON tokens.
 - **Recalibration on top of the type prior** added nothing (EXP-0048).
