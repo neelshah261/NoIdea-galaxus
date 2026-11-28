@@ -116,3 +116,56 @@ def test_the_base_is_the_fused_encoders_unless_set_to_none():
     assert apertus_core.base_from_env({apertus_core.BASE_ENV: "none"}) == (None, (), "none")
     with pytest.raises(ValueError, match="APERTUS_CORE_BASE"):
         apertus_core.base_from_env({apertus_core.BASE_ENV: "large"})
+
+
+# ---------------------------------------------------------------- an image the feature job could not read
+
+
+def test_extract_records_the_unreadable_ids_with_the_features(tmp_path):
+    store = heads.FeatureStore(tmp_path / "store")
+
+    def image_bytes(item):
+        if item.image_id in ("b", "d"):
+            raise OSError("cannot identify image file")
+        return b"jpeg"
+
+    forward = lambda images, prompt: np.ones((1, 1, 3))  # a one-line stand-in for Apertus
+    heads.extract(forward, [ImageItem(image_id=i, path="u") for i in "abc"], store, "final", image_bytes, log=None)
+    heads.extract(forward, [ImageItem(image_id=i, path="u") for i in "abcd"], store, "final", image_bytes, log=None)
+    assert store.unreadable("final") == {"b", "d"}  # merged across runs, kept next to the shards (it travels in the tar)
+    assert store.unreadable() == {"b", "d"} and store.unreadable("dev") == set()
+    assert (tmp_path / "store" / "final" / heads.UNREADABLE_FILE).read_text() == "b\nd\n"
+
+
+def test_only_a_recorded_image_is_an_image_error_a_missing_part_still_stops(tmp_path):
+    from galaxus.serve.runner import is_image_error
+
+    store = store_with(tmp_path, {"a": np.ones(2 * HIDDEN)}, part="final")
+    store.mark_unreadable("final", ["broken"])
+    features = apertus_core.ApertusFeatures(store, (-1, -9))
+    with pytest.raises(apertus_core.UnreadableImage) as unreadable:
+        features.get(["a", "broken"])
+    assert isinstance(unreadable.value, OSError) and is_image_error(unreadable.value)  # the runner keeps its constant row
+    with pytest.raises(KeyError) as never_extracted:
+        features.get(["a", "never_extracted"])
+    assert not is_image_error(never_extracted.value)  # a forgotten untar stops the run instead of falling back
+    with pytest.raises(KeyError):
+        features.get(["broken", "never_extracted"])  # stopping wins when both happen in one batch
+
+
+def test_training_leaves_out_the_images_the_job_could_not_read(tmp_path, capsys):
+    rng = np.random.default_rng(2)
+    n = 120
+    rows = pd.DataFrame({"image_id": [f"i{k}" for k in range(n)], "image_file": "unused",
+                         "product_id": [f"p{k // 2}" for k in range(n)], "kind": rng.choice(["p", "q"], n)})
+    rows["kind_source"] = "human"
+    centre = {"p": 4.0, "q": -4.0}
+    vectors = {i: centre[k] + rng.normal(0, 1, 2 * HIDDEN) for i, k in zip(rows["image_id"], rows["kind"], strict=True)}
+    del vectors["i7"]  # the job could not read i7 ...
+    store = store_with(tmp_path, vectors)
+    store.mark_unreadable("train", ["i7"])  # ... and recorded it
+    data = SimpleNamespace(dimensions=lambda: ("kind",), scored_mask=lambda f, d: f[f"{d}_source"] == "human")
+    predictor = apertus_core.factory(apertus=apertus_core.ApertusFeatures(store, (-1, -9)), base=None, environ={})(
+        rows, data, 0)
+    assert "1 training image(s) the feature job could not read are left out" in capsys.readouterr().out
+    assert predictor.predict([ImageItem(image_id="i0", path="u")])[0].labels["kind"] == rows.loc[0, "kind"]
