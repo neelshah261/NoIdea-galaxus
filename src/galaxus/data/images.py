@@ -341,3 +341,85 @@ def _check_image_size(image_size: int, patch_size: int = PATCH_SIZE) -> None:
             f"image_size must be a multiple of the patch size {patch_size} and at least {patch_size}, "
             f"got {image_size!r}"
         )
+
+
+# The hosts' own planning figure for the final part: "Plan for at least 2 images per second: the 5,292 images then
+# take about 45 minutes" (challenge_description.md, Timeline, Sat 28 Nov 13:00). Kept here so the CLI can say
+# whether a measured rate clears the bar the challenge sets, rather than one of ours.
+HOSTS_FINAL_IMAGES = 5_292
+HOSTS_IMAGES_PER_SECOND = 2.0
+
+
+def _rows_for_part(part: str) -> pd.DataFrame:
+    """The part's table, imported lazily so ``--help`` works without ``$GALAXUS_DATA``."""
+    from galaxus.data.load import read_dev, read_final, read_train
+
+    return {"train": read_train, "dev": read_dev, "final": read_final}[part]()
+
+
+def main(argv: list[str] | None = None) -> int:
+    """``python -m galaxus.data.images``: fill the 512 px cache for one part, and report the rate.
+
+    This is the 13:00 step the drill on a laptop never pays: the dev images were already cached there, while the
+    5,292 final images arrive uncached, and both members of the final method read this cache. Pass ``--directory``
+    at a fresh folder with ``--limit`` to time genuinely uncached images without disturbing the real cache.
+
+    Prints counts and timings only - never an image id (product rule 3).
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="python -m galaxus.data.images",
+        description="Prepare a part's images into the cache both final-run members read, and time it.",
+    )
+    parser.add_argument("--part", choices=("train", "dev", "final"), default="final", help="which table to prepare")
+    parser.add_argument("--workers", type=int, default=8, help="threads preparing images at once (default 8)")
+    parser.add_argument("--limit", type=int, help="prepare only the first N rows, for timing a sample")
+    parser.add_argument("--directory", help="cache folder to fill (default: the real 512 px cache)")
+    parser.add_argument("--mirrored", action="store_true", help="also cache the mirrored copy (#29)")
+    parser.add_argument("--image-size", type=int, default=IMAGE_SIZE, help=f"edge in px (default {IMAGE_SIZE})")
+    parser.add_argument(
+        "--skip-missing", action="store_true", help="count unreadable images instead of stopping on the first"
+    )
+    arguments = parser.parse_args(argv)
+    if arguments.workers < 1:
+        parser.error("--workers must be at least 1")
+    if arguments.limit is not None and arguments.limit < 1:
+        parser.error("--limit must be at least 1")
+
+    rows = _rows_for_part(arguments.part)
+    total = len(rows)
+    if arguments.limit is not None:
+        rows = rows.head(arguments.limit)
+    print(f"part {arguments.part}: {len(rows):,} of {total:,} rows, {arguments.workers} workers")
+
+    started = time.monotonic()
+    counts = fill_image_cache(
+        rows,
+        mirrored=arguments.mirrored,
+        image_size=arguments.image_size,
+        directory=arguments.directory,
+        skip_missing=arguments.skip_missing,
+        workers=arguments.workers,
+    )
+    elapsed = time.monotonic() - started
+
+    written, skipped, missing = counts["written"], counts["skipped"], counts["missing"]
+    print(f"written {written:,}  already cached {skipped:,}  missing {missing:,}  in {elapsed / 60:.1f} min")
+    if not written:
+        print("nothing was prepared, so there is no rate to report: every image asked for was already cached.")
+        return 0
+
+    rate = written / elapsed
+    print(f"{rate:.2f} images per second on the images that were actually prepared ({written:,} of them)")
+    projected = HOSTS_FINAL_IMAGES / rate
+    verdict = "clears" if rate >= HOSTS_IMAGES_PER_SECOND else "is UNDER"
+    print(
+        f"at this rate the {HOSTS_FINAL_IMAGES:,} final images take {projected / 60:.0f} min, which {verdict} the "
+        f"{HOSTS_IMAGES_PER_SECOND:g} images per second challenge_description.md plans for"
+    )
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - exercised through main()
+    raise SystemExit(main())

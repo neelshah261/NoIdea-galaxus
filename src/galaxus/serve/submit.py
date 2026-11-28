@@ -10,6 +10,12 @@ First Kaggle file (issue #15), once the majority predictor (#12) and the writer 
     python -m galaxus.serve.submit --exp EXP-0001 --part dev --run galaxus.model.baselines:MajorityPredictor
 
 Without ``--run`` it only turns an existing ``predictions/<exp>/<part>.jsonl`` into a file.
+
+A new batch of images (#216), any table shaped like dev.csv (``image_id``, ``image_path`` relative to the table,
+optional catalog columns), runs as part ``csv-<file stem>`` and gives a six-column CSV in submission order, with no
+need for sample_submission.csv (an unreadable image still keeps the constant answer when that file is there):
+
+    python -m galaxus.serve.submit --exp EXP-0061 --csv new_batch.csv --run galaxus.model.ensemble:from_env
 """
 
 from __future__ import annotations
@@ -89,27 +95,95 @@ def write_file(
     return write_submission(labels, path=target_root / SUBMISSIONS_DIR / name, sample=sample, validate=True)
 
 
+def write_table(labels: dict[str, dict[str, str]], ids: Sequence[str], name: str,
+                root: str | os.PathLike[str] | None = None) -> Path:
+    """``image_id`` and the six dimensions, in submission order, for ``ids`` in the table's order, into
+    ``<root>/submissions/<name>``. Every cell is checked against the class set first; nothing is written otherwise.
+
+    Raises:
+        KeyError: an image of the table has no prediction.
+        ValueError: a cell is empty or not a class of its dimension.
+    """
+    import csv
+
+    from galaxus.data import classes
+    from galaxus.data.paths import out_dir
+
+    dimensions, allowed = classes.dimensions(), classes.allowed_classes()
+    missing = [image_id for image_id in ids if image_id not in labels]
+    if missing:
+        raise KeyError(f"{len(missing)} image(s) of the table have no prediction")
+    bad = sum(1 for image_id in ids for d in dimensions if labels[image_id].get(d) not in allowed[d])
+    if bad:
+        raise ValueError(f"{bad} cell(s) are empty or not a class of their dimension: nothing written")
+    target = (Path(root) if root is not None else out_dir()) / SUBMISSIONS_DIR / name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    partial = target.with_name(target.name + ".part")
+    with partial.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle, lineterminator="\n")
+        writer.writerow(["image_id", *dimensions])
+        writer.writerows([image_id, *(labels[image_id][d] for d in dimensions)] for image_id in ids)
+    partial.replace(target)
+    return target
+
+
+def _csv_main(arguments: argparse.Namespace) -> int:
+    """``--csv``: run (optionally) and write the six-column file for a new batch; it is not a Kaggle file."""
+    from galaxus.serve.runner import (
+        DEFAULT_MAX_FALLBACKS,
+        csv_part_name,
+        default_fallback,
+        items_for_csv,
+        predictions_path,
+        read_labels,
+        run,
+    )
+
+    part, items = csv_part_name(arguments.csv), items_for_csv(arguments.csv)
+    if arguments.run:
+        from galaxus.serve.items import load_predictor
+
+        report = run(load_predictor(arguments.run), items, arguments.exp, part, arguments.batch_size,
+                     workers=arguments.workers, fallback=default_fallback(), max_fallbacks=DEFAULT_MAX_FALLBACKS)
+        if not report.complete:
+            print(f"{arguments.exp}/{part} is incomplete; not writing a file", file=sys.stderr)
+            return 1
+    labels = read_labels(predictions_path(arguments.exp, part))
+    ids = [str(item.image_id) for item in items]
+    path = write_table(labels, ids, arguments.name or f"{arguments.exp}_{part}.csv")
+    print(f"valid: {path} ({len(ids)} rows, image_id and the six dimensions in submission order)")
+    print("This is a predictions table for a new batch, not a Kaggle file: nothing to upload.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """``python -m galaxus.serve.submit``: optionally run a predictor, then write, validate and print the command."""
     parser = argparse.ArgumentParser(prog="python -m galaxus.serve.submit", description=__doc__.split("\n")[0])
     parser.add_argument("--exp", required=True, help="experiment id whose predictions go into the file")
     parser.add_argument("--part", action="append", choices=("dev", "final"), help="part(s) to include; default dev")
+    parser.add_argument("--csv", help="a new batch: any table shaped like dev.csv (instead of --part)")
     parser.add_argument("--run", metavar="PREDICTOR", help="first run this predictor (package.module:name) on the part")
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--workers", type=int, default=1, help="batches in flight (thread-safe predictors only)")
     parser.add_argument("--base", help="file whose other rows are kept (default: sample_submission.csv)")
     parser.add_argument("--name", help="file name under $GALAXUS_DATA/out/submissions/ (default: <exp>_<parts>.csv)")
     arguments = parser.parse_args(argv)
+    if arguments.csv:
+        if arguments.part or arguments.base:
+            parser.error("--csv is a batch of its own: no --part and no --base with it")
+        return _csv_main(arguments)
     parts = arguments.part or ["dev"]
 
     if arguments.run:
         from galaxus.serve.items import load_predictor
-        from galaxus.serve.runner import items_for_part, run
+        from galaxus.serve.runner import default_fallback, items_for_part, run
 
         predictor = load_predictor(arguments.run)
+        fallback = default_fallback()
         for part in parts:
             report = run(
-                predictor, items_for_part(part), arguments.exp, part, arguments.batch_size, workers=arguments.workers
+                predictor, items_for_part(part), arguments.exp, part, arguments.batch_size, workers=arguments.workers,
+                fallback=fallback,
             )
             if not report.complete:
                 print(f"{arguments.exp}/{part} is incomplete; not writing a file", file=sys.stderr)
