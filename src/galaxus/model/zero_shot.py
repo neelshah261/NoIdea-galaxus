@@ -93,6 +93,10 @@ PRESETS: dict[str, dict[str, Any]] = {
     # #76: 448 x 608 px gave 28 x 38), so cropping and 768 px together give the product about 2.25 times the tokens
     # of plain 512 px, at about that cost in speed.
     "zero-shot-crop-768": {"image": "crop", "image_size": 768},
+    # After the sprint's first rows (#106): observe first (EXP-0021) is the best run at 0.343, 768 px (EXP-0017) is
+    # best on background and language, and dropping the context triples subject (EXP-0009). These combine them.
+    "zero-shot-observe-first-768": {"observe_first": True, "image_size": 768},  # EXP-0024
+    "zero-shot-observe-first-no-context": {"observe_first": True, "use_context": False},  # EXP-0025
 }
 #: Every zero-shot setup by name: what the eval script scores and what the runner, submit and final_run can build.
 #: One table, so a variant that wins on the holdout can write its dev file and Saturday's file the same day.
