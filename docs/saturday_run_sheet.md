@@ -79,9 +79,29 @@ prior is out because it overrules Apertus. So EXP-0056 and EXP-0061 below are **
 method is **EXP-0049: Apertus v1.5 70B, observe first, no product text, 0.461 on the holdout**: the best compliant
 row on `main`. `TODO(neelshah261)`: confirm on #137.
 
-**Upgrade, only if all three hold before the run:** EXP-0092 (heads on Apertus hidden states with a per-class bias)
-has its row on `main`, beats 0.461, and its final features exist. Then use the predictor its row names, with
-`--exp EXP-0092`. Otherwise EXP-0049.
+**Target: EXP-0095** (Parth, 28 Nov; confirmed by Neel on #137): `core=EXP-0092 70b=EXP-0049`, the two Apertus runs
+voting per dimension, **0.540 on the holdout** (#238). **EXP-0049 stays the safety file:** it is uploaded first, and it
+is the file selected if EXP-0095's final members are not done by 14:15. The EXP-0095 steps are #237's C and E:
+
+1. **Before 13:00:** the routing, and EXP-0095's dev file, once the EXP-0049 and EXP-0092 dev answers exist:
+   `uv run --env-file .env python -m galaxus.model.ensemble choose --members core=EXP-0092 70b=EXP-0049 --rule agree --out "$GALAXUS_DATA/out/ensemble/routing-EXP-0095.json"`
+   `uv run --env-file .env python -m galaxus.model.ensemble apply --routing "$GALAXUS_DATA/out/ensemble/routing-EXP-0095.json" --part dev --exp EXP-0095`
+2. **At 13:00, in parallel with the safety file's run below:**
+   - the Apertus final features (a person starts the GPU job, rule 7; `LAYERS=-1,-9 POOL=last`, as EXP-0092):
+     `read -rs PASSPHRASE && export PASSPHRASE && REF=main bash train/hf_job_apertus_features_start.sh final`
+   - the 70B's final answers: they come from the EXP-0049 run below (`predictions/EXP-0049/final.jsonl`).
+3. **Once the final features are untarred:** EXP-0092's final answers, then the combination, then the file:
+   `APERTUS_CORE_BASE=none uv run --extra local --env-file .env python -m galaxus.serve.submit --exp EXP-0092 --part final --run galaxus.model.apertus_core:from_env`
+   `uv run --env-file .env python -m galaxus.model.ensemble apply --routing "$GALAXUS_DATA/out/ensemble/routing-EXP-0095.json" --part final --exp EXP-0095`
+   `uv run --env-file .env python -m galaxus.serve.submit --exp EXP-0095 --part dev --part final`
+   Then the validator, the upload by a person, and **select it on Kaggle**.
+
+**If EXP-0097 lands first:** heads on the new `fields` features (#233; `APERTUS_CORE_LAYERS=-1,-17
+APERTUS_CORE_POOL=fields APERTUS_CORE_BASE=none`, three GPU jobs serving at about 12:15). It replaces EXP-0092 as
+`core` only if its row is on `main` and it beats 0.466, and then the final features must come from three `final` jobs
+with `SHARD=0/3`, `1/3`, `2/3` and the same `LAYERS` and `POOL`. The combination with the 70B gets its own EXP id and
+row before it is used. SigLIP 2 so400m (downloaded at 11:18) may not join any head or vote: since 11:15 a head reads
+only Apertus' hidden states.
 
 ### Before 13:00 (once)
 
