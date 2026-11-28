@@ -76,61 +76,58 @@ fi
 ls "$ADAPTER/adapter_config.json" >/dev/null
 log "adapter: $(du -sh "$ADAPTER" | cut -f1)"
 
-log "2/3 merge it into $MODEL (clean venv, the training's versions)"
-python3 -m pip install --quiet uv
-python3 -m uv venv --quiet --python 3.12 "$WORK/mergeenv"
-# The training job's versions (torch 2.15, torchvision 0.29.2 for Apertus' image classes, transformers 5.24.x).
-python3 -m uv pip install --quiet --python "$WORK/mergeenv/bin/python" "torch==2.15.*" "torchvision==0.29.2" \
-  "transformers==5.24.*" peft accelerate safetensors
-"$WORK/mergeenv/bin/python" - <<'PY'
-import json, os, shutil
+log "2/3 merge it into $MODEL at the file level (base files kept as they are, LoRA added in place)"
+# Why not PeftModel.merge_and_unload + save_pretrained: transformers re-saves under generic shard names
+# (model-0000X-of-...), while vLLM's Apertus loader reads Apertus' own files (model-apertus-model-*,
+# model-vision_tokenizer-model, model-wavtokenizer-model): the first serving run failed with "Cannot find any model
+# weights". So: copy every base file unchanged, then in each shard add scale * B @ A to the weights the LoRA trained,
+# under the same tensor names. Runs in the vLLM image's own python (torch + safetensors).
+python3 - <<'PY'
+import json, os, re, shutil
 from pathlib import Path
-import torch, transformers
+import torch
 from huggingface_hub import snapshot_download
-from peft import PeftModel
+from safetensors import safe_open
+from safetensors.torch import save_file
 
-model_id, adapter, merged = os.environ.get("MODEL", "swiss-ai/Apertus-v1.5-8B"), "/tmp/serve/pulled/" + os.environ["ADAPTER_PATH"], Path("/tmp/serve/merged")
-base_dir = Path(snapshot_download(model_id, token=os.environ["HF_TOKEN"]))
-cls = next(getattr(transformers, n) for n in ("AutoModelForMultimodalLM", "AutoModelForImageTextToText", "AutoModelForCausalLM") if hasattr(transformers, n))
-print("[merge] transformers", transformers.__version__, "| class", cls.__name__, flush=True)
-base = cls.from_pretrained(base_dir, dtype="auto", device_map="cuda")
-model = PeftModel.from_pretrained(base, adapter).merge_and_unload()
-model.save_pretrained(merged, safe_serialization=True, max_shard_size="5GB")
-del model, base
-torch.cuda.empty_cache()
-# Every non-weight file of the base model wins, so vLLM sees the base layout (config, processor, tokenizer, template).
+adapter = Path("/tmp/serve/pulled") / os.environ["ADAPTER_PATH"]
+merged = Path("/tmp/serve/merged")
+base_dir = Path(snapshot_download(os.environ.get("MODEL", "swiss-ai/Apertus-v1.5-8B"), token=os.environ["HF_TOKEN"]))
+config = json.loads((adapter / "adapter_config.json").read_text())
+scale = float(config["lora_alpha"]) / float(config["r"])
+assert not config.get("use_rslora") and not config.get("use_dora"), "only plain LoRA is merged here"
+pairs = {}
+with safe_open(adapter / "adapter_model.safetensors", framework="pt") as handle:
+    for key in handle.keys():
+        m = re.fullmatch(r"base_model\.model\.(.+)\.lora_([AB])\.weight", key)
+        if not m:
+            raise SystemExit(f"[merge] unexpected adapter tensor {key}")
+        pairs.setdefault(m.group(1) + ".weight", {})[m.group(2)] = handle.get_tensor(key)
+index = json.loads((base_dir / "model.safetensors.index.json").read_text())["weight_map"]
+missing = sorted(k for k in pairs if k not in index)
+if missing:
+    raise SystemExit(f"[merge] {len(missing)} adapter targets are not base tensors, e.g. {missing[:3]}")
+merged.mkdir(parents=True, exist_ok=True)
 for f in base_dir.iterdir():
-    if f.is_file() and not f.name.endswith((".safetensors", ".bin")) and f.name != "model.safetensors.index.json":
+    if f.is_file():
         shutil.copy2(f, merged / f.name)
-base_keys = set(json.loads((base_dir / "model.safetensors.index.json").read_text())["weight_map"]) if (base_dir / "model.safetensors.index.json").exists() else None
-idx = merged / "model.safetensors.index.json"
-merged_keys = set(json.loads(idx.read_text())["weight_map"]) if idx.exists() else None
-if base_keys is not None and merged_keys is not None:
-    print(f"[merge] tensors: base {len(base_keys)}, merged {len(merged_keys)}, same names: {base_keys == merged_keys}", flush=True)
-    # AutoModelForMultimodalLM loads Apertus without its audio tokenizer, so the merged save lacks those tensors
-    # (first serving run: 924 -> 764, all model.audio_tokenizer.*). The LoRA never touched them: copy them unchanged from
-    # the base shards into one extra shard and list them in the index, so vLLM finds the full base layout.
-    missing = sorted(base_keys - merged_keys)
-    if missing:
-        from safetensors import safe_open
-        from safetensors.torch import save_file
-        base_map = json.loads((base_dir / "model.safetensors.index.json").read_text())["weight_map"]
-        extra = {}
-        for shard in sorted({base_map[k] for k in missing}):
-            with safe_open(base_dir / shard, framework="pt") as handle:
-                for key in missing:
-                    if base_map[key] == shard:
-                        extra[key] = handle.get_tensor(key)
-        save_file(extra, merged / "model-base-extra.safetensors", metadata={"format": "pt"})
-        index = json.loads(idx.read_text())
-        index["weight_map"].update({key: "model-base-extra.safetensors" for key in missing})
-        idx.write_text(json.dumps(index, indent=2))
-        merged_keys = set(index["weight_map"])
-        print(f"[merge] copied {len(missing)} untouched base tensors (e.g. {missing[0]}); now same names: "
-              f"{base_keys == merged_keys}", flush=True)
-    if base_keys != merged_keys:
-        print("[merge] WARNING names differ, e.g.", sorted(base_keys ^ merged_keys)[:4], flush=True)
-print("[merge] done", flush=True)
+device = "cuda" if torch.cuda.is_available() else "cpu"
+done = 0
+for shard in sorted({index[k] for k in pairs}):
+    with safe_open(base_dir / shard, framework="pt") as handle:
+        meta = handle.metadata() or {}
+        tensors = {k: handle.get_tensor(k) for k in handle.keys()}
+    for key in [k for k in pairs if index[k] == shard]:
+        w = tensors[key]
+        delta = (pairs[key]["B"].to(device, torch.float32) @ pairs[key]["A"].to(device, torch.float32)) * scale
+        if delta.shape != w.shape:
+            raise SystemExit(f"[merge] shape mismatch for {key}: {tuple(delta.shape)} vs {tuple(w.shape)}")
+        tensors[key] = (w.to(device, torch.float32) + delta).to(w.dtype).cpu()
+        done += 1
+    save_file(tensors, merged / shard, metadata={"format": "pt", **meta})
+    print(f"[merge] {shard}: rewritten", flush=True)
+print(f"[merge] {done} of {len(pairs)} LoRA weights added (scale {scale}); every other file is the base model's; done",
+      flush=True)
 PY
 log "merged: $(du -sh "$MERGED" | cut -f1)"
 
