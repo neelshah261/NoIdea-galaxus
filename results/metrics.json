@@ -3569,5 +3569,212 @@
     "usd_per_hour": null,
     "cost_per_100k_usd": null,
     "note": "#237: ensemble-agree hinted=EXP-0098 + 70b=EXP-0049 + mean=EXP-0103 (mean-pooled 8B heads)"
+  },
+  {
+    "id": "EXP-0105",
+    "created": "2026-11-28T14:07:52+01:00",
+    "predictor": "ensemble-agree",
+    "commit": "7823aaff353a3eba9647e9ddbb43cd04681c92f4",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "method": "per-dimension routing under the halves-agree rule (#106): the base member everywhere, except where the best other option beats it on both product halves of the choosing data; chosen on one half of the holdout (it must win on both of that half's product quarters) and scored on the other",
+      "members": {
+        "hinted": "EXP-0098",
+        "siglip": "EXP-0055",
+        "70b": "EXP-0049"
+      },
+      "routing_chosen_on_half": [
+        {
+          "subject": "siglip",
+          "background": "siglip",
+          "perspective": "siglip",
+          "individuals": "siglip",
+          "text_classification": "vote",
+          "text_language": "vote"
+        },
+        {
+          "subject": "siglip",
+          "background": "siglip",
+          "perspective": "vote",
+          "individuals": "siglip",
+          "text_classification": "siglip",
+          "text_language": "vote"
+        }
+      ],
+      "routing_full_holdout": {
+        "subject": "siglip",
+        "background": "siglip",
+        "perspective": "siglip",
+        "individuals": "siglip",
+        "text_classification": "hinted",
+        "text_language": "vote"
+      },
+      "speed": "images_per_second is the members' combined speed: every image goes through every member",
+      "rule": "agree",
+      "base": "hinted",
+      "routing_full_holdout_by_half": [
+        {
+          "subject": "siglip",
+          "background": "siglip",
+          "perspective": "siglip",
+          "individuals": "siglip",
+          "text_classification": "vote",
+          "text_language": "vote"
+        },
+        {
+          "subject": "siglip",
+          "background": "siglip",
+          "perspective": "vote",
+          "individuals": "siglip",
+          "text_classification": "siglip",
+          "text_language": "vote"
+        }
+      ]
+    },
+    "model": "apertus-v1-5-70b, google/siglip-base-patch16-224",
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.7263932923400911,
+    "macro_f1": {
+      "subject": 0.70157187475976,
+      "background": 0.878469749855137,
+      "perspective": 0.497803422307887,
+      "individuals": 0.9766252723750041,
+      "text_classification": 0.6449210551943988,
+      "text_language": 0.6589683795483594
+    },
+    "weighted_f1": {
+      "subject": 0.8372793511708231,
+      "background": 0.9543558453769936,
+      "perspective": 0.5834181671375566,
+      "individuals": 0.9944654786301839,
+      "text_classification": 0.904179021158864,
+      "text_language": 0.8105056236961973
+    },
+    "overall_weighted_f1": 0.8618644853681642,
+    "images_per_second": 0.5774596325875831,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": "Neel 14:05: Apertus 70B hinted as the base, SigLIP/DINOv2 helpers per dimension: hinted=EXP-0098 siglip=EXP-0055 70b=EXP-0049"
+  },
+  {
+    "id": "EXP-0106",
+    "created": "2026-11-28T14:07:53+01:00",
+    "predictor": "ensemble-agree",
+    "commit": "7823aaff353a3eba9647e9ddbb43cd04681c92f4",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "method": "per-dimension routing under the halves-agree rule (#106): the base member everywhere, except where the best other option beats it on both product halves of the choosing data; chosen on one half of the holdout (it must win on both of that half's product quarters) and scored on the other",
+      "members": {
+        "hinted": "EXP-0098",
+        "siglip": "EXP-0055",
+        "fused": "EXP-0059",
+        "70b": "EXP-0049"
+      },
+      "routing_chosen_on_half": [
+        {
+          "subject": "vote",
+          "background": "vote",
+          "perspective": "fused",
+          "individuals": "vote",
+          "text_classification": "vote",
+          "text_language": "vote"
+        },
+        {
+          "subject": "fused",
+          "background": "fused",
+          "perspective": "fused",
+          "individuals": "siglip",
+          "text_classification": "vote",
+          "text_language": "vote"
+        }
+      ],
+      "routing_full_holdout": {
+        "subject": "vote",
+        "background": "vote",
+        "perspective": "fused",
+        "individuals": "siglip",
+        "text_classification": "vote",
+        "text_language": "vote"
+      },
+      "speed": "images_per_second is the members' combined speed: every image goes through every member",
+      "rule": "agree",
+      "base": "hinted",
+      "routing_full_holdout_by_half": [
+        {
+          "subject": "vote",
+          "background": "vote",
+          "perspective": "fused",
+          "individuals": "vote",
+          "text_classification": "vote",
+          "text_language": "vote"
+        },
+        {
+          "subject": "fused",
+          "background": "fused",
+          "perspective": "fused",
+          "individuals": "siglip",
+          "text_classification": "vote",
+          "text_language": "vote"
+        }
+      ]
+    },
+    "model": "apertus-v1-5-70b, google/siglip-base-patch16-224",
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.7842401077015212,
+    "macro_f1": {
+      "subject": 0.7412678222974793,
+      "background": 0.8799746539244246,
+      "perspective": 0.6473719274446808,
+      "individuals": 0.9725791171018279,
+      "text_classification": 0.7155714488631522,
+      "text_language": 0.7486756765775624
+    },
+    "weighted_f1": {
+      "subject": 0.8600040646346908,
+      "background": 0.9545647452544181,
+      "perspective": 0.7140944133901674,
+      "individuals": 0.9934836054093052,
+      "text_classification": 0.9224510042889605,
+      "text_language": 0.8360318396698796
+    },
+    "overall_weighted_f1": 0.8907790199840843,
+    "images_per_second": null,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": "Neel 14:05: Apertus 70B hinted as the base, SigLIP/DINOv2 helpers per dimension: hinted=EXP-0098 siglip=EXP-0055 fused=EXP-0059 70b=EXP-0049"
   }
 ]
