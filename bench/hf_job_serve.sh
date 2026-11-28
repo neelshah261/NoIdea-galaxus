@@ -22,6 +22,11 @@
 # "final=exp0004-e1/adapter,ck500=exp0004-e1/checkpoint-500"). Each name is a model the client picks with
 # LORA_SERVED_MODEL=<name>, so several checkpoints are compared in one session with no merge. It only works if the
 # Swiss AI vLLM build supports LoRA for Apertus 1.5 (not known): if vLLM refuses to start, use the default (merge).
+#
+# #43, quantized Apertus: QUANT=fp8 adds vLLM's online FP8 for the language model to any mode, and the default served
+# name gets "-fp8" (apertus-lora-fp8), so the EXP row's model field says which precision was scored.
+# SERVE_MODE=base serves the published model with no adapter, as "apertus-8b" (or "apertus-8b-fp8"), for the zero-shot
+# rows through vLLM (ZERO_SHOT_BACKEND=vllm, #149): the same prompt as the gateway, in bf16 and in FP8.
 set -euo pipefail
 
 : "${HF_TOKEN:?the HF_TOKEN secret is missing}"
@@ -29,9 +34,16 @@ set -euo pipefail
 RUN="${RUN:-exp0004-e1}"
 export ADAPTER_PATH="${ADAPTER_PATH:-$RUN/adapter}"   # which save to serve: the final adapter or a checkpoint-N
 MODEL="${MODEL:-swiss-ai/Apertus-v1.5-8B}"
-SERVED="${SERVED:-apertus-lora}"
-SERVE_MODE="${SERVE_MODE:-merge}"   # merge (default, safer) | lora (multi-adapter, no merge)
+SERVED="${SERVED:-}"                # default: apertus-lora, or apertus-8b for SERVE_MODE=base; + "-fp8" with QUANT=fp8
+SERVE_MODE="${SERVE_MODE:-merge}"   # merge (default, safer) | lora (multi-adapter, no merge) | base (no adapter, #43)
 export ADAPTERS="${ADAPTERS:-}"
+QUANT="${QUANT:-none}"              # none | fp8 (#43)
+case "$QUANT" in
+  none) QUANT_ARGS=(); SUFFIX="" ;;
+  fp8) QUANT_ARGS=(--quantization fp8); SUFFIX="-fp8" ;;
+  *) echo "QUANT must be none or fp8, got $QUANT" >&2; exit 1 ;;
+esac
+if [[ "$SERVE_MODE" == "base" ]]; then SERVED="${SERVED:-apertus-8b$SUFFIX}"; else SERVED="${SERVED:-apertus-lora$SUFFIX}"; fi
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-64}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-8192}"
 WORK=/tmp/serve
@@ -43,6 +55,13 @@ mkdir -p "$WORK"
 log "run=$RUN adapter=$ADAPTER_PATH model=$MODEL served as $SERVED, from $CKPT_REPO (private)"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || true
 python3 -c "import vllm; print('vllm', vllm.__version__)" || true
+
+if [[ "$SERVE_MODE" == "base" ]]; then
+  log "SERVE_MODE=base: no adapter, no merge; vllm serve $MODEL as $SERVED (quant=$QUANT) on :8000"
+  exec vllm serve "$MODEL" --served-model-name "$SERVED" --host 0.0.0.0 --port 8000 \
+    --chat-template-content-format string --max-model-len "$MAX_MODEL_LEN" --gpu-memory-utilization 0.90 \
+    --enable-prefix-caching --max-num-seqs "$MAX_NUM_SEQS" --limit-mm-per-prompt '{"image": 1}' "${QUANT_ARGS[@]}"
+fi
 
 log "1/3 download the adapter(s)"
 python3 - <<'PY'
@@ -70,7 +89,7 @@ if [[ "$SERVE_MODE" == "lora" ]]; then
   exec vllm serve "$MODEL" --host 0.0.0.0 --port 8000 \
     --chat-template-content-format string --max-model-len "$MAX_MODEL_LEN" --gpu-memory-utilization 0.90 \
     --enable-prefix-caching --max-num-seqs "$MAX_NUM_SEQS" --limit-mm-per-prompt '{"image": 1}' \
-    --enable-lora --max-lora-rank 32 --max-loras "${#MODULES[@]}" --lora-modules "${MODULES[@]}"
+    --enable-lora --max-lora-rank 32 --max-loras "${#MODULES[@]}" --lora-modules "${MODULES[@]}" "${QUANT_ARGS[@]}"
 fi
 
 ls "$ADAPTER/adapter_config.json" >/dev/null
@@ -113,7 +132,7 @@ print("[merge] done", flush=True)
 PY
 log "merged: $(du -sh "$MERGED" | cut -f1)"
 
-log "3/3 vllm serve on :8000 (prefix caching, up to $MAX_NUM_SEQS images at once)"
+log "3/3 vllm serve on :8000 as $SERVED (quant=$QUANT, prefix caching, up to $MAX_NUM_SEQS images at once)"
 exec vllm serve "$MERGED" --served-model-name "$SERVED" --host 0.0.0.0 --port 8000 \
   --chat-template-content-format string --max-model-len "$MAX_MODEL_LEN" --gpu-memory-utilization 0.90 \
-  --enable-prefix-caching --max-num-seqs "$MAX_NUM_SEQS" --limit-mm-per-prompt '{"image": 1}'
+  --enable-prefix-caching --max-num-seqs "$MAX_NUM_SEQS" --limit-mm-per-prompt '{"image": 1}' "${QUANT_ARGS[@]}"

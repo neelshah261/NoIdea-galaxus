@@ -6,6 +6,9 @@
 #   ADAPTER_PATH=exp0004-e1/checkpoint-500 bash bench/hf_job_serve_start.sh   # serve an earlier checkpoint
 #   SERVE_MODE=lora ADAPTERS="final=exp0004-e1/adapter,ck500=exp0004-e1/checkpoint-500" bash bench/hf_job_serve_start.sh
 #        # optional, untested: several adapters in one session without a merge; pick one with LORA_SERVED_MODEL=<name>
+#   QUANT=fp8 bash bench/hf_job_serve_start.sh    # #43: the merged LoRA in FP8, served as apertus-lora-fp8
+#   SERVE_MODE=base [QUANT=fp8] bash bench/hf_job_serve_start.sh   # #43: the published 8B, no adapter, for zero-shot
+#        # rows through vLLM (ZERO_SHOT_BACKEND=vllm): served as apertus-8b or apertus-8b-fp8
 #   bash bench/hf_job_serve_start.sh url <id>     # once it runs: print the two lines to export on this laptop
 #
 # Then, with those exported (the token is read from .env, never printed):
@@ -37,7 +40,9 @@ if not urls:
 for url in urls:
     print(f'export LORA_BASE_URL="{url.rstrip("/")}/v1"')
 print('export LORA_API_KEY="$(grep -E \'^HF_TOKEN=\' .env | cut -d= -f2- | tr -d \'\\r\')"')
-print('export LORA_SERVED_MODEL=apertus-lora')
+print('export LORA_SERVED_MODEL=apertus-lora      # apertus-lora-fp8 with QUANT=fp8')
+print('# SERVE_MODE=base (#43): export ZERO_SHOT_BACKEND=vllm ZERO_SHOT_BASE_URL="$LORA_BASE_URL" '
+      'ZERO_SHOT_API_KEY="$LORA_API_KEY" ZERO_SHOT_SERVED_MODEL=apertus-8b   # apertus-8b-fp8 with QUANT=fp8')
 PY
   exit 0
 fi
@@ -51,10 +56,11 @@ ADAPTER_PATH="${ADAPTER_PATH:-$RUN/adapter}"   # or $RUN/checkpoint-N to serve a
 TIMEOUT="${TIMEOUT:-60m}"     # one unit only; 60 min x $1.80 = $1.80 at most (cancel as soon as you are done)
 SERVE_MODE="${SERVE_MODE:-merge}"
 ADAPTERS="${ADAPTERS:-}"
+QUANT="${QUANT:-none}"        # none | fp8 (#43)
 IMAGE="${IMAGE:-ghcr.io/swiss-ai/vllm_apertus_1.5_release:latest-amd64}"
 
-echo "serve ($SERVE_MODE): ${ADAPTERS:-$ADAPTER_PATH} from $CKPT_REPO on l40sx1, timeout $TIMEOUT, port 8000 behind the HF jobs proxy"
+echo "serve ($SERVE_MODE, quant $QUANT): ${ADAPTERS:-$ADAPTER_PATH} from $CKPT_REPO on l40sx1, timeout $TIMEOUT, port 8000 behind the HF jobs proxy"
 exec hf jobs run "${DRY[@]}" --detach --flavor l40sx1 --timeout "$TIMEOUT" --name "noidea-lora-serve" \
   --expose 8000 --secrets HF_TOKEN -e CKPT_REPO="$CKPT_REPO" -e RUN="$RUN" -e ADAPTER_PATH="$ADAPTER_PATH" \
-  -e SERVE_MODE="$SERVE_MODE" -e ADAPTERS="$ADAPTERS" \
+  -e SERVE_MODE="$SERVE_MODE" -e ADAPTERS="$ADAPTERS" -e QUANT="$QUANT" \
   "$IMAGE" bash -c "$(tr -d '\r' < bench/hf_job_serve.sh)"
