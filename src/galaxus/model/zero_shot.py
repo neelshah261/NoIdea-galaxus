@@ -118,6 +118,37 @@ VARIANTS: dict[str, dict[str, Any]] = {
 }
 #: Which entry of ``VARIANTS`` :func:`from_preset` builds, for the runner, submit and final_run.
 PRESET_ENV = "ZERO_SHOT_PRESET"
+#: #43, quantized Apertus: the same variants on our own vLLM endpoint instead of the gateway, so one prompt is scored in
+#: bf16 and in FP8 (``bench/hf_job_lora_start.sh serve`` with ``QUANT=fp8``). Unset, the gateway is used, as before.
+BACKEND_ENV = "ZERO_SHOT_BACKEND"          # api (default) | vllm
+BASE_URL_ENV = "ZERO_SHOT_BASE_URL"        # e.g. the HF Job's URL for port 8000, ending in /v1
+SERVED_MODEL_ENV = "ZERO_SHOT_SERVED_MODEL"  # the name vLLM serves, e.g. apertus-8b-fp8
+API_KEY_ENV = "ZERO_SHOT_API_KEY"          # a bearer token for an authenticating proxy (HF Jobs); never logged
+
+
+def default_backend(environment: Mapping[str, str] | None = None) -> Any:
+    """The backend a predictor built without one uses: the gateway, or the vLLM endpoint ``$ZERO_SHOT_BACKEND`` names.
+
+    Raises:
+        RuntimeError: for ``vllm`` without ``$ZERO_SHOT_BASE_URL``.
+        ValueError: for a backend name that is neither ``api`` nor ``vllm``.
+    """
+    from galaxus.model.apertus import backend as make_backend
+
+    environment = os.environ if environment is None else environment
+    name = environment.get(BACKEND_ENV, "").strip() or "api"
+    if name == "api":
+        return make_backend("api", retries=GATEWAY_RETRIES, extra_body={"logprobs": True})
+    if name != "vllm":
+        raise ValueError(f"${BACKEND_ENV}={name!r}: choose api (the gateway) or vllm (our own endpoint)")
+    base_url = environment.get(BASE_URL_ENV, "").strip()
+    if not base_url:
+        raise RuntimeError(f"${BACKEND_ENV}=vllm needs ${BASE_URL_ENV}, e.g. the serving job's URL ending in /v1")
+    options: dict[str, Any] = {"base_url": base_url, "api_key": environment.get(API_KEY_ENV) or None,
+                               "retries": GATEWAY_RETRIES, "extra_body": {"logprobs": True}}
+    if environment.get(SERVED_MODEL_ENV, "").strip():
+        options["model"] = environment[SERVED_MODEL_ENV].strip()
+    return make_backend("vllm", **options)
 
 
 def read_guideline() -> str:
@@ -286,9 +317,7 @@ class ZeroShotPredictor:
         workers: int = WORKERS,
     ) -> None:
         if backend is None:
-            from galaxus.model.apertus import backend as make_backend
-
-            backend = make_backend("api", retries=GATEWAY_RETRIES, extra_body={"logprobs": True})
+            backend = default_backend()
         if dimensions is None or allowed is None:
             from galaxus.data.classes import allowed_classes
             from galaxus.data.classes import dimensions as read_dimensions
