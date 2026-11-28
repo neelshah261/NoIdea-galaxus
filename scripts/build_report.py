@@ -58,7 +58,7 @@ li { margin: 1pt 0; }
 """
 
 
-def section7(team: str, exp: str | None, weights: str | None = None) -> str:
+def section7(team: str, exp: str | None) -> str:
     """The generated section 7, links made relative to the repository root."""
     env = dict(os.environ)
     empty = None
@@ -68,8 +68,6 @@ def section7(team: str, exp: str | None, weights: str | None = None) -> str:
     command = [sys.executable, "-m", "galaxus.serve.report", "--team", team]
     if exp:
         command += ["--exp", exp]
-    if weights:
-        command += ["--weights", weights]
     try:
         result = subprocess.run(command, cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8", check=False)
     finally:
@@ -128,11 +126,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--team", default="NoIdea", help="team name, also the PDF's file name")
     parser.add_argument("--exp", default=None, help="the EXP of the final submission (default: best holdout score)")
-    parser.add_argument("--weights", default=None, help="the published weights: <Hugging Face repo> @ <revision>")
     parser.add_argument("--no-pdf", action="store_true", help="only regenerate section 7")
     args = parser.parse_args(argv)
 
-    REPORT.write_text(splice(REPORT.read_text(encoding="utf-8"), section7(args.team, args.exp, args.weights)), encoding="utf-8")
+    REPORT.write_text(splice(REPORT.read_text(encoding="utf-8"), section7(args.team, args.exp)), encoding="utf-8")
     print(f"section 7 regenerated in {REPORT.name}")
     if args.no_pdf:
         return 0

@@ -176,8 +176,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     print("\nA person runs this (agents never publish, AGENTS.md product rule 7):\n")
     print(f"  hf upload {arguments.repo} {folder} . --repo-type model --commit-message \"{arguments.exp} heads, "
           f"code {commit[:12]}\"")
-    print("\nThen put the repo and the revision it prints into the report:"
-          f"\n  python scripts/build_report.py --exp {arguments.exp} --weights \"{arguments.repo} @ <revision>\"")
+    print("\nThen put the repo and the revision it prints into section 7 of the report:"
+          f"\n  python -m galaxus.serve.report --exp {arguments.exp} --weights \"{arguments.repo} @ <revision>\"")
     return 0
 
 
