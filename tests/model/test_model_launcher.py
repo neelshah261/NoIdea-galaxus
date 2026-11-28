@@ -30,7 +30,8 @@ def launch(tmp_path, *arguments, extra_env=None):
     env = {"PATH": f"{fake}{os.pathsep}{os.environ.get('PATH', '')}", "HOME": str(tmp_path),
            "HF_TOKEN": "hf-test", "KAGGLE_API_TOKEN": "kaggle-test", "GH_TOKEN": "gh-test",  # secret-scan: allow
            **(extra_env or {})}
-    done = subprocess.run(["bash", str(START), *arguments], env=env, capture_output=True, text=True, cwd=tmp_path)
+    done = subprocess.run(["bash", str(START), *arguments], check=False, env=env, capture_output=True, text=True,
+                          cwd=tmp_path)  # the exit code is asserted by each test
     return done.returncode, done.stdout.splitlines(), done.stderr
 
 
