@@ -79,19 +79,33 @@ def test_a_failing_batch_keeps_the_finished_ones_and_a_restart_completes(tmp_pat
     assert set(second.seen).isdisjoint(first)
 
 
-def test_parallel_is_faster_over_a_slow_backend(tmp_path):
-    items = make_items(16)
-    started = time.perf_counter()
-    runner.run(SlowPredictor(delay=0.1), items, "S", "dev", batch_size=2, root=tmp_path, log=None)
-    sequential = time.perf_counter() - started
-    started = time.perf_counter()
-    predictor = SlowPredictor(delay=0.1)
-    runner.run(predictor, items, "P", "dev", batch_size=2, root=tmp_path, log=None, workers=8)
-    parallel = time.perf_counter() - started
-    # The overlap is the proof; the wall-clock margin stays loose, since a busy ci runner once measured 1.95x
-    # against an old 2x bound (PR #102) while the batches did overlap.
-    assert predictor.max_active > 1
-    assert parallel < sequential * 0.8
+class MeetingPredictor(SlowPredictor):
+    """Every call waits until ``parties`` calls are inside ``predict`` at once: only overlapping batches get through."""
+
+    def __init__(self, parties: int) -> None:
+        super().__init__(delay=0.0)
+        self.barrier = threading.Barrier(parties, timeout=10)
+
+    def predict(self, items):
+        self.barrier.wait()  # a runner that keeps fewer than ``parties`` batches in flight times out here
+        return super().predict(items)
+
+
+def test_parallel_overlaps_the_waits_of_a_slow_backend(tmp_path):
+    """Over a slow backend the speed-up IS the overlap: four batches waiting at once. Checked by a barrier, not by
+    wall time, which a busy ci runner made a coin flip (0.79 s parallel against 0.81 s sequential, on main e39e7e0)."""
+    items = make_items(16)  # 8 batches of 2: two rounds of four
+    predictor = MeetingPredictor(parties=4)
+    report = runner.run(predictor, items, "P", "dev", batch_size=2, root=tmp_path, log=None, workers=8)
+    assert report.complete  # every call got past the barrier, so four batches were in flight at once
+    assert sorted(predictor.seen) == [item.image_id for item in items]
+
+
+def test_one_worker_never_meets_a_second_batch(tmp_path):
+    predictor = MeetingPredictor(parties=2)
+    predictor.barrier = threading.Barrier(2, timeout=0.3)
+    with pytest.raises(threading.BrokenBarrierError):
+        runner.run(predictor, make_items(4), "S", "dev", batch_size=2, root=tmp_path, log=None)
 
 
 def test_bench_with_workers_times_every_batch():
