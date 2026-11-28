@@ -1,5 +1,27 @@
 # Hack Apertus Zurich — Challenge Partner: Digitec Galaxus
 
+## 📦 Final submission — team NoIdea
+
+An Apertus v1.5 method that labels every Galaxus product image along the six dimensions.
+
+| What | Where |
+| --- | --- |
+| Technical report | [technical_report.md](technical_report.md) · [NoIdea_Report.pdf](NoIdea_Report.pdf) |
+| Pitch deck | [presentation/deck.html](presentation/deck.html) |
+| Demo video | TODO(owner): link |
+| How to run it | [docs/how_to_run.md](docs/how_to_run.md) |
+| Every model, development and runtime | [MODELS.md](MODELS.md) |
+| Every measurement | [results/metrics.json](results/metrics.json), one `EXP-####` row per run |
+
+**The run that produced the final file:** TODO(design) — the final EXP id (EXP-0101 or EXP-0106, see #243) and the
+commit it ran at. The competition rules ask for both: section B(7)(c) has the technical report name the commit and
+the weights revision behind the Final Submission, and B(7)(d) lets the hosts rerun that commit on the final images.
+
+Every number we show comes from `results/metrics.json`, written by the eval script on a fixed holdout through the
+hosts' own `metric.py`. None is hand-written. The competition data itself is never in this repository: no image
+files, no csv files, no labels, no passphrase.
+
+
 ## 🎯 The Challenge
 
 ### Hack Apertus x Galaxus: product image classification
