@@ -72,3 +72,8 @@ def test_the_private_repo_is_cloned_with_the_token_in_a_header_never_in_a_url():
     assert "GIT_TERMINAL_PROMPT=0" in job
     assert not re.search(r"https://[^\s\"']*GH_TOKEN", job)  # never user:token@github.com
     assert "ls-remote --exit-code" in start  # without GH_TOKEN, an anonymous check stops before any paid time
+
+
+def test_the_image_cache_step_skips_a_broken_file_instead_of_stopping_the_job():
+    """#217: one broken final image must not stop the job before Apertus extracts anything."""
+    assert "python -m galaxus.data.images --part \"$part\" --workers 8 --skip-missing" in JOB.read_text()

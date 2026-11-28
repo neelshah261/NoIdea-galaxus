@@ -99,7 +99,9 @@ fi
 
 log "3/6 the 512 px image cache"
 for part in "${PARTS[@]}"; do
-  uv run --quiet python -m galaxus.data.images --part "$part" --workers 8
+  # --skip-missing: a missing (and, with #217, a corrupt) image is counted instead of stopping the job; extract then
+  # records it as unreadable, and the laptop's run keeps its constant row (#216, #219).
+  uv run --quiet python -m galaxus.data.images --part "$part" --workers 8 --skip-missing
 done
 
 extract() {  # extract <part> [limit]: Apertus hidden states into the heads' feature store, resumable
