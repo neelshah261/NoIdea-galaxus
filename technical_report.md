@@ -12,20 +12,23 @@ measured yet is marked `TODO`. Rebuild the PDF with `just report` (`scripts/buil
 
 ## 1. Summary
 
-Galaxus labels every product image along six dimensions with a finetuned Qwen 3.5 9B. We build an Apertus v1.5
-replacement that runs on hardware Galaxus can own. Apertus v1.5 8B reads the image, prepared exactly as the shop
-shows it (transparency on white, 512 × 512 px of area), and answers all six dimensions in one JSON object held to
-the allowed classes.
+**Final submission: EXP-0106** (holdout macro F1 0.784, cross-fitted on the official 2,444-image holdout; Kaggle
+public: TODO(owner)). Four members, combined per dimension by `galaxus.model.ensemble` (halves-agree rule, chosen on
+the holdout):
 
-The plan (BUILD_PLAN.md) has three steps:
+- Apertus v1.5 70B zero-shot with similar-training-image label hints (EXP-0098, the base member);
+- a SigLIP base linear-head helper (EXP-0055);
+- a fused SigLIP base + DINOv2 base + SigLIP 2 base head helper (EXP-0059);
+- plain Apertus 70B (EXP-0049).
 
-1. **Zero-shot Apertus**, measured: EXP-0002.
-2. **A LoRA finetune of Apertus 8B** as the main candidate: EXP-0004, training script merged, GPU run pending.
-3. **One innovation:** mirror test-time augmentation for perspective, the hosts' business priority.
+The routing file says which member answers each dimension. The Apertus-only version is EXP-0101: 0.639 holdout,
+0.66376 public.
 
-A per-dimension ensemble picks the best method for each dimension, with the choice cross-fitted on the holdout.
-**Headline so far:** zero-shot Apertus 8B reaches a mean macro F1 of 0.303 on our official holdout (EXP-0002),
-against 0.187 for the majority baseline (EXP-0001). The final number is TODO until EXP-0004 is scored.
+**How we got here** (holdout macro F1, `results/metrics.json`): zero-shot Apertus 8B 0.303 (EXP-0002) against 0.187
+for the majority baseline (EXP-0001); the 70B with the observe-first prompt and no product text 0.461 (EXP-0049); a
+LoRA on Apertus 8B 0.343 (EXP-0004: one epoch, product text in every example and no class weights, so it learned the
+catalog text and ignored the image, #145); heads on Apertus 8B hidden states with the 70B 0.540 to 0.550 (EXP-0095,
+EXP-0100); the 70B with retrieval hints from similar training images, Apertus deciding, 0.639 (EXP-0101).
 
 ## 2. Architecture
 
@@ -67,23 +70,30 @@ kill and resume halfway (#79).
 
 ## 3. Use of Apertus
 
-- **Model:** `swiss-ai/Apertus-v1.5-8B`; on the gateway, `apertus-v1-5-8b`. All models are listed in MODELS.md.
+- **Models:** Apertus v1.5 70B (`apertus-v1-5-70b` on the gateway; `swiss-ai/Apertus-v1.5-70B` self-hosted) and
+  Apertus v1.5 8B (`swiss-ai/Apertus-v1.5-8B`). All models are listed in MODELS.md.
 
 **Every model we used (rule 6), in development and at runtime; MODELS.md holds the same list:**
 
 | Model | Version | Role | Used in |
 | --- | --- | --- | --- |
-| Apertus v1.5 8B | `apertus-v1-5-8b` (gateway); `swiss-ai/Apertus-v1.5-8B`, revision `1519de0a` in the Kaggle notebooks, the LoRA run's: TODO(swarupgaikwad1801-ux) | classifies the images: zero-shot, base of the LoRA, frozen features for the heads experiments | runtime and development |
-| LoRA adapter on Apertus 8B | TODO(swarupgaikwad1801-ux): Hugging Face repo and revision | main candidate method | runtime, if chosen |
-| Apertus v1.5 70B | `apertus-v1-5-70b` (gateway) | zero-shot comparison (EXP-0015) | development; runtime only if chosen |
-| Linear heads on Apertus hidden states (ours) | trained in the notebooks | experiment, parked until Q-0007 is answered in writing | development |
-| SigLIP base | `google/siglip-base-patch16-224`, revision TODO(neelshah261) | similar-image index for suspected label errors (#112); not run yet | development |
-| EasyOCR, Lingua | TODO(swarupgaikwad1801-ux) | OCR and language detection experiment for `text_language` (#108) | development |
+| Apertus v1.5 70B | `apertus-v1-5-70b` on the Keera gateway, and `swiss-ai/Apertus-v1.5-70B` with vLLM online FP8 on one H200 (HF Jobs, `bench/hf_job_serve.sh` with `SERVE_MODE=base QUANT=fp8`, served as `apertus-70b-fp8`) | classifies the images: zero-shot with the observe-first prompt (EXP-0049) and with similar-image hints (EXP-0098); the base member of EXP-0106 and the whole of EXP-0101 | runtime |
+| Apertus v1.5 8B | `apertus-v1-5-8b` (gateway); `swiss-ai/Apertus-v1.5-8B`, revision `1519de0a` in the Kaggle notebooks | zero-shot (EXP-0002), base of the LoRA (EXP-0004), hidden states for the heads (EXP-0092, EXP-0097) | development; runtime in EXP-0095 and EXP-0100 |
+| SigLIP base | `google/siglip-base-patch16-224`, revision `7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed` | the similar-image hint index (training images only, k=5) and the SigLIP helper (EXP-0055) | runtime |
+| DINOv2 base | `facebook/dinov2-base`, revision `f9e44c814b77203eaa57a6bdbbd535f21ede1415` | in the fused helper (EXP-0059) | runtime |
+| SigLIP 2 base | `google/siglip2-base-patch16-224`, revision `75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2` | in the fused helper (EXP-0059) | runtime |
+| LoRA adapter on Apertus 8B | private Hugging Face repo, not published (EXP-0004, 0.343) | a measured candidate; not in the final method | development |
+| Linear heads on Apertus 8B hidden states (ours) | fitted by `galaxus.model.heads` / `apertus_core` | EXP-0092 (last token, 0.466) and EXP-0097 (fields, 0.463); members of EXP-0095 and EXP-0100 | development; runtime in EXP-0100 |
+| `gpt-6.2-astra` (closed) | via its API, development only | reference row (0.858 on 1,000 holdout images) and label-error candidates; never at runtime | development |
+| EasyOCR, Lingua | TODO(swarupgaikwad1801-ux): versions | OCR and language detection experiment for `text_language` (#108) | development |
 | Tiny random Llama, generated in a test | random weights | CPU smoke test of the LoRA training path | development |
-| Claude Code (Anthropic), one session per lane | TODO(owner): each session's model, as declared on #116 | coding assistant: code, tests, docs, reviews; never classifies an image | development |
-- **How it is used:** inference (zero-shot, EXP-0002 and EXP-0009), fine-tuning (LoRA, EXP-0004), evaluation.
-- **Where it runs:** the Hack Apertus gateway for zero-shot; local weights for training, and vLLM for serving the
-  LoRA.
+| Claude Code (Anthropic), one session per lane | Swarup's serve-lane session: Claude Opus 5.5 (`claude-opus-5-5`); the others: TODO(owner), as declared on #116 | coding assistant: code, tests, docs, reviews; never classifies an image | development |
+
+- **Which dimensions the helpers decide:** TODO(neelshah261): the per-dimension routing in `routing-EXP-0106.json`.
+- **How it is used:** inference (zero-shot with and without hints), heads on hidden states, a LoRA fine-tune
+  (EXP-0004), evaluation.
+- **Where it runs:** the Hack Apertus gateway and vLLM FP8 on one H200 for the 70B; the encoders and heads on a
+  laptop CPU.
 
 **Prompting (zero-shot):**
 
@@ -116,18 +126,17 @@ kill and resume halfway (#79).
 
 ## 5. Limitations
 
-- **Zero-shot collapses onto frequent classes.** In subject and perspective it predicts the most frequent class for
-  almost every image (PR #70). Weighted F1 looks reasonable, but macro F1 stays low. This is why the LoRA is the main
-  candidate.
-- **The LoRA is untested on a GPU.** Its cost and time are estimates until the first 50 steps print the measured
-  rate (#76).
-- **Patch size is an assumption.** The vision patch size (16 px per token) is assumed from Swiss AI's serving
-  script, not measured (Q-0002).
-- **The demo's hero rules are mostly assumptions.** Only one rule is known from the hosts, and the others are marked
-  as assumptions on the page (#31, #66).
-- **The gateway's rate limit is unknown.** Concurrency is capped at the level our load test proved (#58, #59).
-- **Heads are not used.** Heads on Apertus features are parked until the hosts confirm they count as Apertus
-  classifying (Q-0007).
+- **The helpers choose the class on some dimensions.** The organizer's ruling was that Apertus makes the final call;
+  EXP-0101 is the Apertus-only version (0.639 holdout, 0.66376 public).
+- **Perspective is the weakest dimension.**
+- **Two serving paths for one member.** The final rows of EXP-0049 came from FP8 on an H200, while its holdout rows
+  came from the gateway. The two agree on 88% of 96 holdout images.
+- **Zero-shot collapses onto frequent classes** in subject and perspective without help (PR #70): weighted F1 looks
+  reasonable, macro F1 stays low.
+- **Our Apertus hidden-state heads read the last token only** (EXP-0092, 0.466). A public model card of another team
+  reports 0.77 for frozen Apertus 8B heads on the last token plus the mean over the image tokens with an MLP head
+  (#237); we did not get to extract that pooling.
+- **The LoRA (EXP-0004) underfit:** one epoch, product text in every example and no class weights (#145).
 
 ## 6. Reproducibility
 
@@ -136,13 +145,28 @@ kill and resume halfway (#79).
 - **Data:** `just prep train`, `just prep dev`.
 - **Scores:** `just eval <predictor> <EXP-id>` appends a row with the commit, `dirty` flag, seed, config and the
   holdout's hash. Rows from a dirty tree are not shown to judges.
+- **The commands that produced the final rows:**
+
+```bash
+python -m galaxus.model.hints write --part final
+ZERO_SHOT_PRESET=zero-shot-hints ZERO_SHOT_HINTS=$GALAXUS_DATA/out/hints/final.jsonl LLM_NAME=apertus-v1-5-70b \
+  python -m galaxus.serve.submit --exp EXP-0098 --part final --run galaxus.model.zero_shot:from_preset --batch-size 256 --workers 2
+ZERO_SHOT_PRESET=zero-shot-observe-first-no-context ZERO_SHOT_BACKEND=vllm ZERO_SHOT_SERVED_MODEL=apertus-70b-fp8 \
+  python -m galaxus.serve.submit --exp EXP-0049 --part final --run galaxus.model.zero_shot:from_preset --batch-size 256 --workers 8
+python -m galaxus.serve.submit --exp EXP-0055 --part final --run galaxus.model.helper:from_env --batch-size 256
+python -m galaxus.serve.submit --exp EXP-0059 --part final --run galaxus.model.helper:fused_from_env --batch-size 256
+python -m galaxus.model.ensemble choose --members hinted=EXP-0098 siglip=EXP-0055 fused=EXP-0059 70b=EXP-0049 --rule agree --out routing-EXP-0106.json
+python -m galaxus.model.ensemble apply --routing routing-EXP-0106.json --part dev --exp EXP-0106   # then --part final
+python -m galaxus.serve.submit --exp EXP-0106 --part dev --part final
+```
+
 - **Training:** `just lora-check`, then the full run in `train/lora_apertus.py` (a GPU, with the owner's OK).
 - **Saturday:** `just dry-run`, `just drill`, `just final`, run by a person. The final submission's commit and
   weights revision are in section 7.
 - **Hardware:**
     - development on Windows and macOS laptops (CPU);
-    - zero-shot on the gateway;
-    - GPU for the LoRA: TODO(owner), the GPU type of the run in #76.
+    - zero-shot on the gateway, and the 70B's final rows with vLLM FP8 on one H200 (HF Jobs);
+    - the LoRA (EXP-0004) on one Nvidia L40S (HF Jobs, #76).
 
 <!-- section7:start (generated by scripts/build_report.py from galaxus.serve.report; do not edit by hand) -->
 ## 7. Galaxus challenge: results and resources
