@@ -5,6 +5,10 @@
 #   STAGE=features  train (the official holdout included) and dev: for the EXP rows and the dev file
 #   STAGE=rehearse  the first $CHECK dev images end to end, and the projected time of the final pass
 #   STAGE=final     the final images, decrypted on this disk with the PASSPHRASE job secret
+#   STAGE=encoders  SigLIP 2 so400m embeddings only, for train and dev (galaxus.model.encoders), no Apertus
+# Any stage also embeds its parts with SigLIP 2 so400m when SO400M=1 (pinned in galaxus.model.encoders), and serves
+# them as embeddings.tar next to features.tar. Use it for train, dev AND final, so every so400m vector comes from the
+# same device and dtype (cuda, bf16).
 #
 # In order:
 #   1. clone $REF and install it (uv, extra "local", plus torchvision for Apertus' image processor, as the LoRA job);
@@ -24,7 +28,8 @@ STAGE="${STAGE:-features}"
 REF="${REF:-main}"
 MODEL="${MODEL:-swiss-ai/Apertus-v1.5-8B}"
 LAYERS="${LAYERS:--1,-9}"          # always passed as --layers=..., because argparse reads "-1,-9" as an option
-POOL="${POOL:-last}"
+POOL="${POOL:-last}"                # last | mean | fields (a cue per dimension, #214)
+SHARD="${SHARD:-}"                  # i/n: this job's share of every part, for n parallel jobs (#214)
 CHECK="${CHECK:-300}"              # more than one shard of 256, so heads.extract logs the measured img/s
 FINAL_IMAGES="${FINAL_IMAGES:-5292}"
 COMPETITION="hackapertus-galaxus"
@@ -34,8 +39,10 @@ case "$STAGE" in
   features) PARTS=(train dev) ;;
   rehearse) PARTS=(dev) ;;
   final)    PARTS=(final); : "${PASSPHRASE:?STAGE=final needs the PASSPHRASE job secret}" ;;
-  *) echo "STAGE must be features, rehearse or final" >&2; exit 1 ;;
+  encoders) PARTS=(train dev); SO400M=1 ;;
+  *) echo "STAGE must be features, rehearse, final or encoders" >&2; exit 1 ;;
 esac
+SO400M="${SO400M:-}"; [[ "$SO400M" == "0" ]] && SO400M=""   # empty: no so400m step
 
 WORK=/tmp/noidea
 REPO="$WORK/repo"
@@ -44,7 +51,7 @@ SERVE="$WORK/serve"
 log() { echo "[job $(date -u +%H:%M:%S)] $*"; }
 
 mkdir -p "$WORK" "$GALAXUS_DATA" "$SERVE"
-log "stage=$STAGE ref=$REF model=$MODEL layers=$LAYERS pool=$POOL parts=${PARTS[*]}"
+log "stage=$STAGE ref=$REF model=$MODEL layers=$LAYERS pool=$POOL shard=${SHARD:-all} parts=${PARTS[*]}"
 command -v nvidia-smi >/dev/null && nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || log "no GPU"
 
 log "1/6 clone and install"
@@ -93,11 +100,14 @@ fi
 
 log "3/6 the 512 px image cache"
 for part in "${PARTS[@]}"; do
-  uv run --quiet python -m galaxus.data.images --part "$part" --workers 8
+  # --skip-missing: a missing (and, with #217, a corrupt) image is counted instead of stopping the job; extract then
+  # records it as unreadable, and the laptop's run keeps its constant row (#216, #219).
+  uv run --quiet python -m galaxus.data.images --part "$part" --workers 8 --skip-missing
 done
 
 extract() {  # extract <part> [limit]: Apertus hidden states into the heads' feature store, resumable
   local options=(--part "$1" --model "$MODEL" "--layers=$LAYERS" --pool "$POOL")
+  [[ -n "$SHARD" ]] && options+=(--shard "$SHARD")
   [[ -n "${2:-}" ]] && options+=(--limit "$2")
   uv run --quiet "${WITH[@]}" python -m galaxus.model.heads extract "${options[@]}"
 }
@@ -107,6 +117,7 @@ print(heads.store_for(sys.argv[1], tuple(int(x) for x in sys.argv[2].split(','))
     "$MODEL" "$LAYERS" "$POOL"
 }
 
+if [[ "$STAGE" != "encoders" ]]; then   # Apertus: the check, then every part (not in STAGE=encoders)
 log "4/6 check: the first $CHECK images of ${PARTS[0]}"
 check_started=$SECONDS
 extract "${PARTS[0]}" "$CHECK" 2>&1 | tee "$WORK/check.log"
@@ -142,9 +153,32 @@ else
     extract "$part"
   done
 fi
+fi   # Apertus
 
-log "6/6 serving the features on port 8000 (HF-token protected): download features.tar, then cancel this job"
-root="$(store_root)"
-tar -C "$(dirname "$root")" -cf "$SERVE/features.tar" "$(basename "$root")"
-log "features.tar: $(du -h "$SERVE/features.tar" | cut -f1); total time so far $((SECONDS / 60)) min"
+if [[ -n "$SO400M" ]]; then
+  log "5b/6 SigLIP 2 so400m embeddings (${HELPER_SO400M:-google/siglip2-so400m-patch16-512}, pinned)"
+  so400m_started=$SECONDS
+  for part in "${PARTS[@]}"; do
+    if [[ "$STAGE" == "rehearse" ]]; then
+      uv run --quiet python -m galaxus.model.encoders embed --part "$part" --limit "$CHECK"
+    else
+      uv run --quiet python -m galaxus.model.encoders embed --part "$part"
+    fi
+  done
+  log "so400m: $((SECONDS - so400m_started))s for ${PARTS[*]}, the model load included"
+fi
+
+log "6/6 serving on port 8000 (HF-token protected): download the tar files, then cancel this job"
+if [[ "$STAGE" != "encoders" ]]; then
+  root="$(store_root)"
+  tar -C "$(dirname "$root")" -cf "$SERVE/features.tar" "$(basename "$root")"
+  log "features.tar: $(du -h "$SERVE/features.tar" | cut -f1)"
+fi
+if [[ -n "$SO400M" ]]; then
+  folder="$(uv run --quiet python -c "from galaxus.model import encoders; from galaxus.data import neighbours
+print(neighbours.embedding_dir(encoders.so400m_name()))")"
+  tar -C "$(dirname "$folder")" -cf "$SERVE/embeddings.tar" "$(basename "$folder")"
+  log "embeddings.tar: $(du -h "$SERVE/embeddings.tar" | cut -f1)"
+fi
+log "total time so far $((SECONDS / 60)) min"
 exec python3 -m http.server 8000 --bind 0.0.0.0 --directory "$SERVE"

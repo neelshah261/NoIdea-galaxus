@@ -85,8 +85,9 @@ embedding cache, the routing file and the gateway key.
 - [ ] `shasum -a 256 $GALAXUS_DATA/final_encrypted.bin` matches the SHA-256 in the hosts' README.
 - [ ] The 70B is the model the gateway client will use. This must print `apertus-v1-5-70b`:
       `LLM_NAME=apertus-v1-5-70b uv run --env-file .env python -c "from galaxus.model.apertus.api import gateway_settings as g; print(g()['LLM_NAME'])"`
-- [ ] **Gateway credit for about 21M prompt tokens** (5,292 images × about 3,900; EXP-0049 used 9.5M on 2,444).
-      There is one key in `.env`. A second key as `LLM_API_KEY_2` is used automatically when the first runs out.
+- **Gateway credit is not a limit:** the Keera key has unlimited credits, and it stays as it is (Neel, 28 Nov). The
+  final run needs about 21M prompt tokens (5,292 images × about 3,900). A 429 (rate limit) is still possible:
+  rerun the same command.
 - [ ] **A fresh `ENSEMBLE_CACHE` folder for the final part.** The cache is keyed by member name only (#188 review),
       so a folder from a drill or from another member setup would serve stale answers.
 
@@ -106,6 +107,9 @@ uv run --extra local --env-file .env python -m galaxus.serve.final_run --predict
 
 - It asks for the passphrase (not echoed), decrypts, runs both members on each batch, combines them with the frozen
   routing, merges into the dev file, validates, and prints the `kaggle competitions submit …` command.
+- **Uncached final images are prepared on demand** (the data lane's 512 px cache). On Neel's laptop that runs at
+  **671.7 img/s** (#194, 8 workers, 300 uncached images), so about 8 s for all 5,292 images. No separate step is
+  needed here; the manual steps below fill the cache explicitly (step 1b).
 - **About 45 min:** the members run in turn per batch, so the time is the 70B's (2.38–2.42 img/s, EXP-0049) plus
   the SigLIP heads' (about 18–30 img/s). **Drill on Neel's laptop, 06:53:** this exact command passed decrypt,
   kill and resume, and validation. It ran 300 dev images at **1.978 img/s**, just under the 2.0 floor, with two
@@ -122,6 +126,8 @@ uv run --extra local --env-file .env python -m galaxus.serve.final_run --predict
 `ensemble apply` reads `predictions/<member EXP>/final.jsonl`, so the member runs must use exactly these EXP ids.
 
 1. Decrypt: `7zz x -o"$GALAXUS_DATA/final" "$GALAXUS_DATA/final_encrypted.bin"`. It asks for the passphrase.
+1b. Fill the 512 px cache for the final images (#194; resumable, about 8 s on this laptop):
+    `uv run --extra local --env-file .env python -m galaxus.data.images --part final --workers 8`
 2. Both members, in two terminals at the same time (each resumes if rerun):
 
    ```bash

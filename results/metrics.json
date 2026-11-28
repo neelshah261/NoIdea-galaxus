@@ -2438,5 +2438,61 @@
     "usd_per_hour": null,
     "cost_per_100k_usd": null,
     "note": ""
+  },
+  {
+    "id": "EXP-0004",
+    "created": "2026-11-28T03:22:18+01:00",
+    "predictor": "lora",
+    "commit": "8ee07461754a868e0bff2f652410e5e522ece97f",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "fallbacks": 0,
+      "no_confidence_cells": 0,
+      "workers": 16,
+      "image_size": 512,
+      "json_schema": "enum per dimension",
+      "confidence": "token logprobs of the class name (#75)"
+    },
+    "model": "apertus-lora",
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.3431497121125339,
+    "macro_f1": {
+      "subject": 0.19721781770113392,
+      "background": 0.31895677760316,
+      "perspective": 0.32407607283556294,
+      "individuals": 0.5064901593252109,
+      "text_classification": 0.2708194853957148,
+      "text_language": 0.441337959814421
+    },
+    "weighted_f1": {
+      "subject": 0.5037482231485862,
+      "background": 0.7644957179201545,
+      "perspective": 0.43964671351660284,
+      "individuals": 0.9086897227717036,
+      "text_classification": 0.8038437924228816,
+      "text_language": 0.6406019781376238
+    },
+    "overall_weighted_f1": 0.6870478555230475,
+    "images_per_second": 3.3912713905346683,
+    "hardware": {
+      "system": "Windows",
+      "machine": "AMD64",
+      "python": "3.12.10",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": 1.8,
+    "cost_per_100k_usd": 14.74373302577739,
+    "note": "#76 LoRA on Apertus 8B, 1 epoch (exp0004-e1/adapter), merged at the file level, vLLM on 1x L40S via HF Jobs, 512 px, class-enum schema"
   }
 ]
