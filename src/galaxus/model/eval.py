@@ -164,6 +164,22 @@ def _helper_fused_mirror(rows: pd.DataFrame, data: DataLane, seed: int) -> Predi
     return helper.fused_factory(mirror=True)(rows, data, seed)
 
 
+def _helper_text(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """A (#211): ``helper-siglip`` with the catalog text's vector after the image features (EXP-0070)."""
+    from galaxus.model import helper
+    from galaxus.model.context_features import ContextFeatures
+
+    return helper.factory(context=ContextFeatures())(rows, data, seed)
+
+
+def _helper_fused_text(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """A on the fused encoders (#211): ``helper-fused`` plus the catalog text's vector (EXP-0071)."""
+    from galaxus.model import helper
+    from galaxus.model.context_features import ContextFeatures
+
+    return helper.fused_factory(context=ContextFeatures())(rows, data, seed)
+
+
 def _teacher_setup():
     """D (#211): the teacher and self-training switches; one of them must be on for a teacher row."""
     from galaxus.model import teacher
@@ -260,6 +276,8 @@ PREDICTORS: dict[str, PredictorFactory] = {
     "helper-siglip-mirror": _helper_mirror,  # the same, perspective trained on mirrored copies and averaged with the mirror
     "helper-fused": _helper_fused,  # EXP-0059: SigLIP base + DINOv2 base + SigLIP 2 base, unit length, concatenated
     "helper-fused-mirror": _helper_fused_mirror,  # helper-fused with the mirror-aware perspective head
+    "helper-siglip-text": _helper_text,  # A (#211): the catalog text as features next to SigLIP's (EXP-0070)
+    "helper-fused-text": _helper_fused_text,  # A on EXP-0059's three encoders (EXP-0071)
     "helper-siglip-teacher": _helper_teacher,  # D (#211): + teacher dev rows ($HELPER_TEACHER, $HELPER_SELF_TRAIN)
     "helper-fused-teacher": _helper_fused_teacher,  # D (#211): helper-fused + teacher dev rows
     "apertus-core": _apertus_core,  # #219: Apertus hidden states + the frozen encoders (+ optional base scores)
