@@ -107,6 +107,9 @@ uv run --extra local --env-file .env python -m galaxus.serve.final_run --predict
 
 - It asks for the passphrase (not echoed), decrypts, runs both members on each batch, combines them with the frozen
   routing, merges into the dev file, validates, and prints the `kaggle competitions submit …` command.
+- **Uncached final images are prepared on demand** (the data lane's 512 px cache). On Neel's laptop that runs at
+  **671.7 img/s** (#194, 8 workers, 300 uncached images), so about 8 s for all 5,292 images. No separate step is
+  needed here; the manual steps below fill the cache explicitly (step 1b).
 - **About 45 min:** the members run in turn per batch, so the time is the 70B's (2.38–2.42 img/s, EXP-0049) plus
   the SigLIP heads' (about 18–30 img/s). **Drill on Neel's laptop, 06:53:** this exact command passed decrypt,
   kill and resume, and validation. It ran 300 dev images at **1.978 img/s**, just under the 2.0 floor, with two
