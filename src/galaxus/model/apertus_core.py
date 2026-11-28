@@ -41,6 +41,12 @@ APERTUS_8B = "swiss-ai/Apertus-v1.5-8B"
 LAYERS_ENV = "APERTUS_CORE_LAYERS"
 POOL_ENV = "APERTUS_CORE_POOL"
 BASE_SCORES_ENV = "APERTUS_CORE_BASE_SCORES"
+#: Which frozen encoders join Apertus: ``fused`` (EXP-0059's three, the default), ``fused-so400m`` (those + SigLIP 2
+#: so400m, ``galaxus.model.encoders``), ``so400m`` alone, or ``none`` (Apertus alone, through these heads).
+BASE_ENV = "APERTUS_CORE_BASE"
+BASES = ("fused", "fused-so400m", "so400m", "none")
+#: ``factory``'s default: the base named by ``$APERTUS_CORE_BASE``.
+FROM_ENV = object()
 #: The last layer and about three quarters of the depth (layer 24 of 32), where another team found frozen Apertus 8B
 #: heads best (#145). The feature job writes both by default.
 DEFAULT_LAYERS = (-1, -9)
@@ -166,29 +172,61 @@ def core_embeddings(
     return embed
 
 
+def base_from_env(
+    environ: Mapping[str, str] | None = None,
+) -> tuple[Callable[..., dict[str, np.ndarray]] | None, tuple[str, ...], str]:
+    """``(embed, encoders, choice)`` for ``$APERTUS_CORE_BASE`` (default ``fused``)."""
+    environ = os.environ if environ is None else environ
+    choice = environ.get(BASE_ENV, "") or "fused"
+    if choice not in BASES:
+        raise ValueError(f"${BASE_ENV} must be one of {', '.join(BASES)}, not {choice!r}")
+    if choice == "fused":
+        return helper.fused_embeddings, tuple(helper.FUSED_ENCODERS), choice
+    if choice == "none":
+        return None, (), choice
+    from galaxus.model import encoders
+
+    if choice == "fused-so400m":
+        embed, names = encoders.fused_so400m(environ)
+        return embed, names, choice
+
+    def so400m(pairs: Iterable[tuple[str, str]]) -> dict[str, np.ndarray]:
+        return encoders.so400m_embeddings(pairs, environ=environ)
+
+    return so400m, (encoders.so400m_name(environ),), choice
+
+
 def factory(
     apertus: ApertusFeatures | None = None,
-    base: Callable[..., dict[str, np.ndarray]] | None = helper.fused_embeddings,
-    base_name: str | None = helper.FUSED_NAME,
+    base: Any = FROM_ENV,
+    encoders: Sequence[str] = (),
     scores: BaseScores | None = None,
     environ: Mapping[str, str] | None = None,
 ):
-    """The eval script's factory: heads on :func:`core_embeddings` of ``rows`` (train minus the official holdout)."""
+    """The eval script's factory: heads on :func:`core_embeddings` of ``rows`` (train minus the official holdout).
+
+    ``base`` is a ``pairs -> {image_id: vector}`` function with its ``encoders`` named for the EXP row, ``None`` for
+    Apertus alone, or :data:`FROM_ENV` (the default) for ``$APERTUS_CORE_BASE``.
+    """
 
     def build(rows: Any, data: Any, seed: int) -> helper.HelperPredictor:
         env = os.environ if environ is None else environ
         features = apertus or features_from_env(env)
         extra = scores if scores is not None else base_scores_from_env(env)
-        predictor = helper.factory(encoder_name=NAME, embed=core_embeddings(features, base, extra))(rows, data, seed)
+        if base is FROM_ENV:
+            embed, names, choice = base_from_env(env)
+        else:
+            embed, names, choice = base, tuple(encoders), "given"
+        predictor = helper.factory(encoder_name=NAME, embed=core_embeddings(features, embed, extra))(rows, data, seed)
         # What the EXP row records: Apertus classifies; the encoders (and the optional scores) are its helpers.
-        encoders = helper.COMPONENTS.get(base_name, (base_name,)) if base is not None and base_name else ()
+        from galaxus.model.encoders import revision_of
+
         predictor.model = features.model
         predictor.model_revision = None  # Apertus unchanged, as the gateway serves it: the commit names the method
-        predictor.helpers = tuple(encoders) + ((f"base-scores:{extra.path.name}",) if extra is not None else ())
+        predictor.helpers = names + ((f"base-scores:{extra.path.name}",) if extra is not None else ())
         predictor.heads_model.meta.update({
             "core": features.model, "layers": list(features.layer_ids), "pool": features.pool,
-            "base": base_name if base is not None else None,
-            "base_revisions": [helper.REVISIONS.get(name) for name in encoders],
+            "base": choice, "base_encoders": list(names), "base_revisions": [revision_of(n, env) for n in names],
             "base_scores": str(extra.path) if extra is not None else None,
         })
         return predictor

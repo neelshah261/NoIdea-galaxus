@@ -5,6 +5,9 @@
 #   STAGE=features  train (the official holdout included) and dev: for the EXP rows and the dev file (#214 step 1)
 #   STAGE=rehearse  the first $CHECK dev images end to end, and the projected time of the final pass (#214 step 4)
 #   STAGE=final     the final images, decrypted on this disk with the PASSPHRASE job secret (#214 step 6)
+#   STAGE=encoders  SigLIP 2 so400m embeddings only, for train and dev (galaxus.model.encoders), no Apertus
+# Any stage also embeds the parts with SigLIP 2 so400m when HELPER_SO400M_REVISION is set (a commit sha, not a
+# secret), and serves them as embeddings.tar next to features.tar.
 #
 # In order:
 #   1. clone $REF and install it (uv, extra "local", plus torchvision for Apertus' image processor, as the LoRA job);
@@ -33,8 +36,11 @@ case "$STAGE" in
   features) PARTS=(train dev) ;;
   rehearse) PARTS=(dev) ;;
   final)    PARTS=(final); : "${PASSPHRASE:?STAGE=final needs the PASSPHRASE job secret}" ;;
-  *) echo "STAGE must be features, rehearse or final" >&2; exit 1 ;;
+  encoders) PARTS=(train dev)
+            : "${HELPER_SO400M_REVISION:?STAGE=encoders needs HELPER_SO400M_REVISION: python -m galaxus.model.encoders pin}" ;;
+  *) echo "STAGE must be features, rehearse, final or encoders" >&2; exit 1 ;;
 esac
+SO400M="${HELPER_SO400M_REVISION:-}"   # empty: no so400m step
 
 WORK=/tmp/noidea
 REPO="$WORK/repo"
@@ -98,6 +104,7 @@ print(heads.store_for(sys.argv[1], tuple(int(x) for x in sys.argv[2].split(','))
     "$MODEL" "$LAYERS" "$POOL"
 }
 
+if [[ "$STAGE" != "encoders" ]]; then   # Apertus: the check, then every part (not in STAGE=encoders)
 log "4/6 check: the first $CHECK images of ${PARTS[0]}"
 check_started=$SECONDS
 extract "${PARTS[0]}" "$CHECK" 2>&1 | tee "$WORK/check.log"
@@ -133,9 +140,32 @@ else
     extract "$part"
   done
 fi
+fi   # Apertus
 
-log "6/6 serving the features on port 8000 (HF-token protected): download features.tar, then cancel this job"
-root="$(store_root)"
-tar -C "$(dirname "$root")" -cf "$SERVE/features.tar" "$(basename "$root")"
-log "features.tar: $(du -h "$SERVE/features.tar" | cut -f1); total time so far $((SECONDS / 60)) min"
+if [[ -n "$SO400M" ]]; then
+  log "5b/6 SigLIP 2 so400m embeddings (${HELPER_SO400M:-google/siglip2-so400m-patch16-512}, pinned)"
+  so400m_started=$SECONDS
+  for part in "${PARTS[@]}"; do
+    if [[ "$STAGE" == "rehearse" ]]; then
+      uv run --quiet python -m galaxus.model.encoders embed --part "$part" --limit "$CHECK"
+    else
+      uv run --quiet python -m galaxus.model.encoders embed --part "$part"
+    fi
+  done
+  log "so400m: $((SECONDS - so400m_started))s for ${PARTS[*]}, the model load included"
+fi
+
+log "6/6 serving on port 8000 (HF-token protected): download the tar files, then cancel this job"
+if [[ "$STAGE" != "encoders" ]]; then
+  root="$(store_root)"
+  tar -C "$(dirname "$root")" -cf "$SERVE/features.tar" "$(basename "$root")"
+  log "features.tar: $(du -h "$SERVE/features.tar" | cut -f1)"
+fi
+if [[ -n "$SO400M" ]]; then
+  folder="$(uv run --quiet python -c "from galaxus.model import encoders; from galaxus.data import neighbours
+print(neighbours.embedding_dir(encoders.so400m_name()))")"
+  tar -C "$(dirname "$folder")" -cf "$SERVE/embeddings.tar" "$(basename "$folder")"
+  log "embeddings.tar: $(du -h "$SERVE/embeddings.tar" | cut -f1)"
+fi
+log "total time so far $((SECONDS / 60)) min"
 exec python3 -m http.server 8000 --bind 0.0.0.0 --directory "$SERVE"

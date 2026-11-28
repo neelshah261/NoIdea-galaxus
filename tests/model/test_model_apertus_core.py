@@ -101,7 +101,7 @@ def test_the_heads_learn_from_the_apertus_block(tmp_path):
     noise = {i: rng.normal(0, 1, 3) for i in rows["image_id"]}
     data = SimpleNamespace(dimensions=lambda: ("kind",), scored_mask=lambda f, d: f[f"{d}_source"] == "human")
     build = apertus_core.factory(apertus=features, base=lambda pairs: {i: noise[i] for i, _ in pairs},
-                                 base_name="google/siglip-base-patch16-224", environ={})
+                                 encoders=("google/siglip-base-patch16-224",), environ={})
     predictor = build(rows, data, 0)
     answers = predictor.predict([ImageItem(image_id=i, path="u") for i in rows["image_id"]])
     accuracy = np.mean([a.labels["kind"] == k for a, k in zip(answers, rows["kind"], strict=True)])

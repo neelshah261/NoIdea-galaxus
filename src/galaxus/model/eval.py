@@ -164,6 +164,20 @@ def _helper_fused_mirror(rows: pd.DataFrame, data: DataLane, seed: int) -> Predi
     return helper.fused_factory(mirror=True)(rows, data, seed)
 
 
+def _helper_so400m(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """#214: heads on SigLIP 2 so400m (``$HELPER_SO400M``, pinned by ``$HELPER_SO400M_REVISION``) alone."""
+    from galaxus.model import encoders
+
+    return encoders.factory()(rows, data, seed)
+
+
+def _helper_fused_so400m(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """#214: heads on EXP-0059's three frozen encoders plus SigLIP 2 so400m, each at unit length."""
+    from galaxus.model import encoders
+
+    return encoders.factory(fused=True)(rows, data, seed)
+
+
 def _apertus_core(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
     """#214: heads on Apertus v1.5 8B hidden states (the core) and helper-fused's frozen encoders (the base), plus
     ``$APERTUS_CORE_BASE_SCORES`` when set."""
@@ -222,6 +236,8 @@ PREDICTORS: dict[str, PredictorFactory] = {
     "helper-fused": _helper_fused,  # EXP-0059: SigLIP base + DINOv2 base + SigLIP 2 base, unit length, concatenated
     "helper-fused-mirror": _helper_fused_mirror,  # helper-fused with the mirror-aware perspective head
     "apertus-core": _apertus_core,  # #214: Apertus hidden states + the frozen encoders (+ optional base scores)
+    "helper-so400m": _helper_so400m,  # #214: SigLIP 2 so400m heads, pinned by $HELPER_SO400M_REVISION
+    "helper-fused-so400m": _helper_fused_so400m,  # #214: EXP-0059's three encoders + so400m
     "recalibrated": _recalibrated,  # #42: confidence-gated recalibration of $RECAL_BASE (e.g. EXP-0004)
     "type-prior": _type_prior,  # #133: the product-type prior on $TYPE_PRIOR_BASE's answers (e.g. EXP-0002)
     "majority": _majority,
