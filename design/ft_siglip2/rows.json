@@ -1,0 +1,450 @@
+[
+ {
+  "id": "EXP-0067",
+  "created": "2026-11-28T08:03:07+01:00",
+  "predictor": "helper-siglip2-ft",
+  "commit": "604d0b2e3a743089d104fe120d1232171ebea04f",
+  "dirty": false,
+  "seed": 0,
+  "config": {
+   "batch_size": 256,
+   "fine_tune": {
+    "tag": "siglip2-b4-e3",
+    "base": "google/siglip2-base-patch16-224",
+    "revision": "75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2",
+    "rows": 9432,
+    "blocks": 4,
+    "epochs": 3,
+    "probe_epochs": 1,
+    "lr": 3e-05,
+    "head_lr": 0.001,
+    "batch": 32,
+    "val_folds": 7,
+    "best_epoch": 3,
+    "val_macro_f1": 0.8135,
+    "val_per_dimension": {
+     "subject": 0.8451,
+     "background": 0.9323,
+     "perspective": 0.6544,
+     "individuals": 0.9969,
+     "text_classification": 0.8347,
+     "text_language": 0.6178
+    },
+    "bias": true,
+    "mirror_tta": true,
+    "mirrored_rows": 1963,
+    "device": "mps",
+    "smoke": false,
+    "minutes": 3.4
+   }
+  },
+  "model": "google/siglip2-base-patch16-224",
+  "model_revision": "75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2",
+  "docker_digest": null,
+  "helpers": [
+   "google/siglip2-base-patch16-224 fine-tuned (siglip2-b4-e3)"
+  ],
+  "holdout": {
+   "images": 2444,
+   "products": 1452,
+   "sha256": "b782f7d24464c091",
+   "training_images": 9432
+  },
+  "score": 0.8051278328714998,
+  "macro_f1": {
+   "subject": 0.7946694402409106,
+   "background": 0.9203407432971739,
+   "perspective": 0.697412149389921,
+   "individuals": 0.9872973657548125,
+   "text_classification": 0.778028859529916,
+   "text_language": 0.6530184390162651
+  },
+  "weighted_f1": {
+   "subject": 0.8898328669919153,
+   "background": 0.9709694628235901,
+   "perspective": 0.7560790240588644,
+   "individuals": 0.9969868257436404,
+   "text_classification": 0.9481920429544233,
+   "text_language": 0.8441647102240902
+  },
+  "overall_weighted_f1": 0.9123185306188604,
+  "images_per_second": 221.34086208902204,
+  "hardware": {
+   "system": "Darwin",
+   "machine": "arm64",
+   "python": "3.13.18",
+   "gpu": null,
+   "peak_gpu_memory_gb": null
+  },
+  "usd_per_hour": null,
+  "cost_per_100k_usd": null,
+  "note": "#202 scratch: SigLIP 2 base fine-tuned (last 4 blocks + pooling head, 1 probe + 3 epochs, tempered class weights, mirrored perspective rows, product-grouped val picks the epoch and the bias), MPS"
+ },
+ {
+  "id": "EXP-0068",
+  "created": "2026-11-28T08:03:45+01:00",
+  "predictor": "ensemble-agree",
+  "commit": "604d0b2e3a743089d104fe120d1232171ebea04f",
+  "dirty": false,
+  "seed": 0,
+  "config": {
+   "batch_size": 256,
+   "method": "per-dimension routing under the halves-agree rule (#106): the base member everywhere, except where the best other option beats it on both product halves of the choosing data; chosen on one half of the holdout (it must win on both of that half's product quarters) and scored on the other",
+   "members": {
+    "ft": "EXP-0067",
+    "70b": "EXP-0051"
+   },
+   "routing_chosen_on_half": [
+    {
+     "subject": "ft",
+     "background": "ft",
+     "perspective": "ft",
+     "individuals": "ft",
+     "text_classification": "ft",
+     "text_language": "vote"
+    },
+    {
+     "subject": "vote",
+     "background": "ft",
+     "perspective": "ft",
+     "individuals": "ft",
+     "text_classification": "ft",
+     "text_language": "vote"
+    }
+   ],
+   "routing_full_holdout": {
+    "subject": "ft",
+    "background": "ft",
+    "perspective": "ft",
+    "individuals": "ft",
+    "text_classification": "ft",
+    "text_language": "ft"
+   },
+   "speed": "images_per_second is the members' combined speed: every image goes through every member",
+   "rule": "agree",
+   "base": "ft",
+   "routing_full_holdout_by_half": [
+    {
+     "subject": "ft",
+     "background": "ft",
+     "perspective": "ft",
+     "individuals": "ft",
+     "text_classification": "vote",
+     "text_language": "vote"
+    },
+    {
+     "subject": "vote",
+     "background": "vote",
+     "perspective": "ft",
+     "individuals": "ft",
+     "text_classification": "ft",
+     "text_language": "vote"
+    }
+   ]
+  },
+  "model": null,
+  "model_revision": null,
+  "docker_digest": null,
+  "helpers": [],
+  "holdout": {
+   "images": 2444,
+   "products": 1452,
+   "sha256": "b782f7d24464c091",
+   "training_images": 9432
+  },
+  "score": 0.8170431675743887,
+  "macro_f1": {
+   "subject": 0.7882089102727862,
+   "background": 0.9203407432971739,
+   "perspective": 0.697412149389921,
+   "individuals": 0.9872973657548125,
+   "text_classification": 0.778028859529916,
+   "text_language": 0.7309709772017227
+  },
+  "weighted_f1": {
+   "subject": 0.8867619890348855,
+   "background": 0.9709694628235901,
+   "perspective": 0.7560790240588644,
+   "individuals": 0.9969868257436404,
+   "text_classification": 0.9481920429544233,
+   "text_language": 0.8540724248078586
+  },
+  "overall_weighted_f1": 0.9126058293491162,
+  "images_per_second": null,
+  "hardware": {
+   "system": "Darwin",
+   "machine": "arm64",
+   "python": "3.13.18",
+   "gpu": null,
+   "peak_gpu_memory_gb": null
+  },
+  "usd_per_hour": null,
+  "cost_per_100k_usd": null,
+  "note": "#202 scratch combination: ft=EXP-0067 70b=EXP-0051"
+ },
+ {
+  "id": "EXP-0069",
+  "created": "2026-11-28T08:03:46+01:00",
+  "predictor": "ensemble-agree",
+  "commit": "604d0b2e3a743089d104fe120d1232171ebea04f",
+  "dirty": false,
+  "seed": 0,
+  "config": {
+   "batch_size": 256,
+   "method": "per-dimension routing under the halves-agree rule (#106): the base member everywhere, except where the best other option beats it on both product halves of the choosing data; chosen on one half of the holdout (it must win on both of that half's product quarters) and scored on the other",
+   "members": {
+    "ft": "EXP-0067",
+    "fused": "EXP-0059",
+    "70b": "EXP-0051"
+   },
+   "routing_chosen_on_half": [
+    {
+     "subject": "ft",
+     "background": "ft",
+     "perspective": "ft",
+     "individuals": "ft",
+     "text_classification": "ft",
+     "text_language": "vote"
+    },
+    {
+     "subject": "vote",
+     "background": "ft",
+     "perspective": "ft",
+     "individuals": "ft",
+     "text_classification": "ft",
+     "text_language": "ft"
+    }
+   ],
+   "routing_full_holdout": {
+    "subject": "ft",
+    "background": "ft",
+    "perspective": "ft",
+    "individuals": "ft",
+    "text_classification": "ft",
+    "text_language": "vote"
+   },
+   "speed": "images_per_second is the members' combined speed: every image goes through every member",
+   "rule": "agree",
+   "base": "ft",
+   "routing_full_holdout_by_half": [
+    {
+     "subject": "ft",
+     "background": "ft",
+     "perspective": "ft",
+     "individuals": "ft",
+     "text_classification": "ft",
+     "text_language": "vote"
+    },
+    {
+     "subject": "vote",
+     "background": "ft",
+     "perspective": "vote",
+     "individuals": "ft",
+     "text_classification": "vote",
+     "text_language": "vote"
+    }
+   ]
+  },
+  "model": null,
+  "model_revision": null,
+  "docker_digest": null,
+  "helpers": [],
+  "holdout": {
+   "images": 2444,
+   "products": 1452,
+   "sha256": "b782f7d24464c091",
+   "training_images": 9432
+  },
+  "score": 0.8050599563003678,
+  "macro_f1": {
+   "subject": 0.790822895417113,
+   "background": 0.9203407432971739,
+   "perspective": 0.697412149389921,
+   "individuals": 0.9872973657548125,
+   "text_classification": 0.778028859529916,
+   "text_language": 0.65645772441327
+  },
+  "weighted_f1": {
+   "subject": 0.8887584035491922,
+   "background": 0.9709694628235901,
+   "perspective": 0.7560790240588644,
+   "individuals": 0.9969868257436404,
+   "text_classification": 0.9481920429544233,
+   "text_language": 0.8453086595189763
+  },
+  "overall_weighted_f1": 0.9122022564601513,
+  "images_per_second": null,
+  "hardware": {
+   "system": "Darwin",
+   "machine": "arm64",
+   "python": "3.13.18",
+   "gpu": null,
+   "peak_gpu_memory_gb": null
+  },
+  "usd_per_hour": null,
+  "cost_per_100k_usd": null,
+  "note": "#202 scratch combination: ft=EXP-0067 fused=EXP-0059 70b=EXP-0051"
+ },
+ {
+  "id": "EXP-0090",
+  "created": "2026-11-28T08:12:38+01:00",
+  "predictor": "helper-siglip2-ft",
+  "commit": "604d0b2e3a743089d104fe120d1232171ebea04f",
+  "dirty": false,
+  "seed": 0,
+  "config": {
+   "batch_size": 256,
+   "fine_tune": {
+    "tag": "siglip2-b4-e5",
+    "base": "google/siglip2-base-patch16-224",
+    "revision": "75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2",
+    "rows": 9432,
+    "blocks": 4,
+    "epochs": 5,
+    "probe_epochs": 1,
+    "lr": 3e-05,
+    "head_lr": 0.001,
+    "batch": 32,
+    "val_folds": 7,
+    "best_epoch": 4,
+    "val_macro_f1": 0.8273,
+    "val_per_dimension": {
+     "subject": 0.8453,
+     "background": 0.9355,
+     "perspective": 0.6855,
+     "individuals": 0.9969,
+     "text_classification": 0.8354,
+     "text_language": 0.6652
+    },
+    "bias": true,
+    "mirror_tta": true,
+    "mirrored_rows": 1963,
+    "device": "mps",
+    "smoke": false,
+    "minutes": 5.2
+   }
+  },
+  "model": "google/siglip2-base-patch16-224",
+  "model_revision": "75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2",
+  "docker_digest": null,
+  "helpers": [
+   "google/siglip2-base-patch16-224 fine-tuned (siglip2-b4-e5)"
+  ],
+  "holdout": {
+   "images": 2444,
+   "products": 1452,
+   "sha256": "b782f7d24464c091",
+   "training_images": 9432
+  },
+  "score": 0.8162708669581447,
+  "macro_f1": {
+   "subject": 0.8078057150788152,
+   "background": 0.9238483082374193,
+   "perspective": 0.7054327653315056,
+   "individuals": 0.9894535065776261,
+   "text_classification": 0.8033617301896948,
+   "text_language": 0.667723176333807
+  },
+  "weighted_f1": {
+   "subject": 0.8976095604153974,
+   "background": 0.9712019517503618,
+   "perspective": 0.7694290351810482,
+   "individuals": 0.9974936943881942,
+   "text_classification": 0.9478253102325767,
+   "text_language": 0.8471982749135074
+  },
+  "overall_weighted_f1": 0.9161477673470868,
+  "images_per_second": 230.97697065093294,
+  "hardware": {
+   "system": "Darwin",
+   "machine": "arm64",
+   "python": "3.13.18",
+   "gpu": null,
+   "peak_gpu_memory_gb": null
+  },
+  "usd_per_hour": null,
+  "cost_per_100k_usd": null,
+  "note": "#202 scratch variant: last 4 blocks, 1 probe + 5 epochs, else as EXP-0067"
+ },
+ {
+  "id": "EXP-0091",
+  "created": "2026-11-28T08:18:56+01:00",
+  "predictor": "helper-siglip2-ft",
+  "commit": "604d0b2e3a743089d104fe120d1232171ebea04f",
+  "dirty": false,
+  "seed": 0,
+  "config": {
+   "batch_size": 256,
+   "fine_tune": {
+    "tag": "siglip2-b12-e3",
+    "base": "google/siglip2-base-patch16-224",
+    "revision": "75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2",
+    "rows": 9432,
+    "blocks": 12,
+    "epochs": 3,
+    "probe_epochs": 1,
+    "lr": 3e-05,
+    "head_lr": 0.001,
+    "batch": 32,
+    "val_folds": 7,
+    "best_epoch": 3,
+    "val_macro_f1": 0.8034,
+    "val_per_dimension": {
+     "subject": 0.8416,
+     "background": 0.9276,
+     "perspective": 0.7311,
+     "individuals": 0.9938,
+     "text_classification": 0.8253,
+     "text_language": 0.501
+    },
+    "bias": true,
+    "mirror_tta": true,
+    "mirrored_rows": 1963,
+    "device": "mps",
+    "smoke": false,
+    "minutes": 6.1
+   }
+  },
+  "model": "google/siglip2-base-patch16-224",
+  "model_revision": "75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2",
+  "docker_digest": null,
+  "helpers": [
+   "google/siglip2-base-patch16-224 fine-tuned (siglip2-b12-e3)"
+  ],
+  "holdout": {
+   "images": 2444,
+   "products": 1452,
+   "sha256": "b782f7d24464c091",
+   "training_images": 9432
+  },
+  "score": 0.8049477278823328,
+  "macro_f1": {
+   "subject": 0.7858677732949031,
+   "background": 0.930294156229985,
+   "perspective": 0.7507758426022256,
+   "individuals": 0.9852349092086765,
+   "text_classification": 0.7596396985381951,
+   "text_language": 0.6178739874200109
+  },
+  "weighted_f1": {
+   "subject": 0.8904326548831225,
+   "background": 0.9738890383135385,
+   "perspective": 0.8052012154312793,
+   "individuals": 0.9964911721434719,
+   "text_classification": 0.9429945553967678,
+   "text_language": 0.8261177716069632
+  },
+  "overall_weighted_f1": 0.9170474115614117,
+  "images_per_second": 215.26506699885047,
+  "hardware": {
+   "system": "Darwin",
+   "machine": "arm64",
+   "python": "3.13.18",
+   "gpu": null,
+   "peak_gpu_memory_gb": null
+  },
+  "usd_per_hour": null,
+  "cost_per_100k_usd": null,
+  "note": "#202 scratch variant: last 12 blocks, 1 probe + 3 epochs, else as EXP-0067"
+ }
+]
