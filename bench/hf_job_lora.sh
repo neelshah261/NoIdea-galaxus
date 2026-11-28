@@ -29,6 +29,9 @@ MAX_STEPS="${MAX_STEPS:-}"         # e.g. 5 for the GPU check
 SAVE_STEPS="${SAVE_STEPS:-100}"
 MODEL="${MODEL:-swiss-ai/Apertus-v1.5-8B}"
 COMPETITION="hackapertus-galaxus"
+# Extra packages for training: the 8-bit optimizer, and torchvision, which Apertus' image processor
+# (Apertus1p5ImageProcessor) imports; without it AutoProcessor fails (first GPU run, 27 Nov 21:44 UTC).
+WITH=(--with bitsandbytes --with "torchvision==0.29.2")
 
 WORK=/tmp/noidea
 REPO="$WORK/repo"
@@ -78,8 +81,22 @@ if [[ "$STAGE" == "setup" ]]; then
   mkdir -p "$WORK/probe" && echo "setup rehearsal $(date -u +%FT%TZ) commit $(git rev-parse --short HEAD)" \
     > "$WORK/probe/rehearsal.txt"
   upload "$WORK/probe" "rehearsal" "setup rehearsal" && log "private repo write OK"
-  uv run --quiet python -c "import torch, transformers, peft; print('torch', torch.__version__, '| transformers', \
-transformers.__version__, '| peft', peft.__version__)"
+  log "processor check: Apertus' processor on one real training example, the training script's own encoder (CPU)"
+  uv run --quiet "${WITH[@]}" python - "$MODEL" <<'PY'
+import sys
+sys.path.insert(0, "train")
+import torch, torchvision, transformers, peft
+import lora_apertus as la
+print("torch", torch.__version__, "| torchvision", torchvision.__version__, "| transformers", transformers.__version__,
+      "| peft", peft.__version__, flush=True)
+processor = transformers.AutoProcessor.from_pretrained(sys.argv[1])
+print("processor", type(processor).__name__, "| image processor", type(processor.image_processor).__name__, flush=True)
+_, data, classes = la.training_set()
+inputs = la.apertus_encoder(processor, classes)(data.examples[0])
+in_loss = sum(1 for x in inputs["labels"] if x != -100)
+extra = {k: tuple(v.shape) for k, v in inputs.items() if hasattr(v, "shape") and k not in ("input_ids", "labels")}
+print(f"first example: {len(inputs['input_ids'])} tokens, {in_loss} in the loss, other inputs {extra}", flush=True)
+PY
   log "setup rehearsal done: nothing was trained"
   exit 0
 fi
@@ -104,7 +121,7 @@ WATCH_PID=$!
 trap 'kill "$WATCH_PID" 2>/dev/null || true' EXIT
 STEPS=()
 [[ -n "$MAX_STEPS" ]] && STEPS=(--max-steps "$MAX_STEPS")
-uv run --with bitsandbytes python train/lora_apertus.py --model "$MODEL" --epochs "$EPOCHS" --output "$OUT" \
+uv run "${WITH[@]}" python train/lora_apertus.py --model "$MODEL" --epochs "$EPOCHS" --output "$OUT" \
   --save-steps "$SAVE_STEPS" --dollars-per-hour "$PRICE" "${STEPS[@]}" "${RESUME[@]}"
 sleep 30   # the watcher takes the last checkpoint
 kill "$WATCH_PID" 2>/dev/null || true

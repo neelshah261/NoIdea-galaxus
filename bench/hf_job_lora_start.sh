@@ -5,6 +5,7 @@
 #   bash bench/hf_job_lora_start.sh setup             # rehearsal on cpu-upgrade ($0.03/h): all but the GPU
 #   bash bench/hf_job_lora_start.sh check             # 5 optimizer steps on one L40S ($1.80/h), ~25 min with setup
 #   bash bench/hf_job_lora_start.sh train             # the full run on one L40S: 1 epoch, at most $10 (Neel, #76)
+#   bash bench/hf_job_lora_start.sh serve             # serve the finished adapter (#145 S1; bench/hf_job_serve*.sh)
 #
 # Then (with HF_TOKEN set, e.g. `export HF_TOKEN=$(grep ^HF_TOKEN= .env | cut -d= -f2-)`):
 #   hf jobs logs -f <id>    hf jobs ps    hf jobs cancel <id>
@@ -18,7 +19,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-MODE="${1:?usage: bash bench/hf_job_lora_start.sh setup|check|train [--dry-run]}"
+MODE="${1:?usage: bash bench/hf_job_lora_start.sh setup|check|train|serve [--dry-run]}"
+# #145 S1: `serve` runs the finished adapter of $RUN (or $ADAPTER_PATH, e.g. exp0004-e1/checkpoint-500) on vLLM behind
+# the job's exposed port. No data on that job. The serving job lives in bench/hf_job_serve*.sh; this is its entry here:
+#   bash bench/hf_job_lora_start.sh serve --dry-run    then    bash bench/hf_job_lora_start.sh serve
+#   bash bench/hf_job_serve_start.sh url <job id>      # prints LORA_BASE_URL / LORA_API_KEY / LORA_SERVED_MODEL
+if [[ "$MODE" == "serve" ]]; then
+  shift
+  exec bash bench/hf_job_serve_start.sh "$@"
+fi
 DRY=()
 [[ "${2:-}" == "--dry-run" ]] && DRY=(--dry-run)
 
@@ -40,7 +49,7 @@ case "$MODE" in
   setup) FLAVOR=cpu-upgrade; TIMEOUT=1h;    ENV=(-e STAGE=setup) ;;
   check) FLAVOR=l40sx1;      TIMEOUT=45m;   ENV=(-e STAGE=train -e MAX_STEPS=5); RUN="$RUN-check" ;;
   train) FLAVOR=l40sx1;      TIMEOUT="${TIMEOUT:-330m}"; ENV=(-e STAGE=train) ;;   # 330 min = 5.5 h x $1.80 = $9.90 < $10 (one unit only: "5h30m" is rejected)
-  *) echo "mode must be setup, check or train" >&2; exit 1 ;;
+  *) echo "mode must be setup, check, train or serve" >&2; exit 1 ;;
 esac
 
 echo "job: $MODE on $FLAVOR, timeout $TIMEOUT, run $RUN, epochs $EPOCHS, ref $REF, checkpoints to $CKPT_REPO (private)"
