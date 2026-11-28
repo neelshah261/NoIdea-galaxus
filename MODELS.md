@@ -8,12 +8,14 @@ listed here with its version and role. The rules themselves are in
 
 | Model | Version / id | Role | Where it runs | Status | Source in the repo |
 | --- | --- | --- | --- | --- | --- |
-| Apertus v1.5 8B | `apertus-v1-5-8b` on the Hack Apertus (Keera / CSCS) gateway | zero-shot predictor, EXP-0002 and EXP-0009 | the gateway, OpenAI-compatible API | measured | `galaxus.model.zero_shot`, `galaxus.model.apertus.api`, PR #63, #70 |
-| Apertus v1.5 8B | `swiss-ai/Apertus-v1.5-8B` (Hugging Face weights, gated) | base model of the LoRA (EXP-0004) and of the local backend | our GPU (training, vLLM) or this machine (transformers) | script merged, run pending (#76) | `train/lora_apertus.py`, `galaxus.model.lora`, `galaxus.model.apertus.local`, PR #71 |
-| LoRA adapter on Apertus v1.5 8B | TODO(owner): Hugging Face repo and revision, once trained and published | main candidate method (BUILD_PLAN.md phase 2) | merged bf16 weights served by vLLM | not trained yet (#76) | PR #71, #86 |
-| Apertus v1.5 8B heads | linear heads on Apertus hidden states | BUILD_PLAN.md "Bet", **not a runtime method** until the hosts answer Q-0007 | CPU on saved features | parked, PR #51 | `decisions.md` Q-0007 |
+| Apertus v1.5 8B | `apertus-v1-5-8b` on the Hack Apertus (Keera / CSCS) gateway | zero-shot predictor: EXP-0002, EXP-0009 and the #106 sprint's variants (rows not on `main` yet) | the gateway, OpenAI-compatible API | measured | `galaxus.model.zero_shot`, `galaxus.model.apertus.api`, PR #63, #70 |
+| Apertus v1.5 8B | `swiss-ai/Apertus-v1.5-8B` (Hugging Face weights, gated); the Kaggle notebooks pin revision `1519de0ae7f3d114879291810a58259966f64c99`; the LoRA run's revision: TODO(swarupgaikwad1801-ux) | base model of the LoRA (EXP-0004), of the local backend and of the frozen features in `train/one_look_pilot.ipynb` and `train/self_training_heads.ipynb`; bf16, or FP8 quantized by vLLM at load with `QUANT=fp8` (#43) | our GPU (training, vLLM), Kaggle, or this machine (transformers) | LoRA run 3 on an HF Job (#76) | `train/lora_apertus.py`, `galaxus.model.lora`, `galaxus.model.apertus.local`, PR #71 |
+| LoRA adapter on Apertus v1.5 8B | TODO(swarupgaikwad1801-ux): Hugging Face repo and revision, once trained and published | main candidate method (BUILD_PLAN.md phase 2) | merged bf16 weights served by vLLM | not trained yet (#76) | PR #71, #86 |
+| Apertus v1.5 70B | `apertus-v1-5-70b` on the gateway (`swiss-ai/Apertus-v1.5-70B` on Hugging Face) | zero-shot comparison, EXP-0015 (#106; row not on `main` yet); the teacher of #132's distillation code, which no training run has used | the gateway | measured; a runtime model only if the final method includes it (TODO(neelshah261)) | `galaxus.model.apertus.backend`, `galaxus.model.lora` |
+| Apertus v1.5 8B heads | linear heads on Apertus hidden states, trained by us | BUILD_PLAN.md "Bet", **not a runtime method** until the hosts answer Q-0007 in writing; trained in the Kaggle notebooks for development | CPU on saved features | parked, PR #51 | `decisions.md` Q-0007 |
 
-No other model runs at runtime: no image encoder, no OCR and no closed model. The majority baseline (EXP-0001) is
+No other model runs at runtime: no image encoder, no OCR and no closed model. EasyOCR and Lingua were measured
+as a development experiment (#108) and are not wired into any predictor. The majority baseline (EXP-0001) is
 a count, not a model.
 
 ## Serving and tooling around the runtime model
@@ -28,7 +30,12 @@ a count, not a model.
 | Model | Role | Where |
 | --- | --- | --- |
 | tiny random Llama, generated in the test | CPU smoke run of the LoRA training path (masking, LoRA, Trainer), no download | `train/lora_apertus.py --smoke`, `tests/model/test_model_lora.py` |
-| Claude Code (Anthropic), the coding assistant of every lane's agent | writes code, tests and docs; reviews PRs. Never classifies an image and never sees competition data in a prompt | TODO(owner): the model version of each team member's sessions |
+| Claude Code (Anthropic), design session (Neel) | coding assistant: opens issues, reviews PRs, writes the shared files; never classifies an image | model as declared on #116; TODO(neelshah261): copy it here |
+| Claude Code (Anthropic), data lane session (Vernika) | coding assistant of `lane:data`; never classifies an image | model as declared on #116; TODO(neelshah261): copy it here |
+| Claude Code (Anthropic), model lane sessions (Parth) | coding assistant of `lane:model`; never classifies an image | TODO(parthdeshmukh488-ops): post the model on #116 |
+| Claude Code (Anthropic), serve lane session (Swarup) | coding assistant of `lane:serve`; never classifies an image | TODO(swarupgaikwad1801-ux): post the model on #116 |
+| SigLIP base, `google/siglip-base-patch16-224` (apache-2.0, 0.2B), revision TODO(neelshah261) | embeds the prepared train images for the similar-image index that finds suspected label errors (#112 part A); written and tested with a stub encoder, not run yet. Neighbour hints in the prompt (Q-0003, part B) would make it a runtime helper; part B is not built | `galaxus.data.neighbours`, PR #114 |
+| EasyOCR (Latin model) and Lingua (`lingua-language-detector`), versions TODO(swarupgaikwad1801-ux) | OCR plus language detection for `text_language`, measured on the holdout (#108); not in any predictor | `bench/ocr_language.py`, their own environment (not in `uv.lock`) |
 
 Allowed in development by challenge_description.md "Models" (any tools and models, including closed ones and
 coding assistants). Not used so far: closed-model pseudo-labels on dev (BUILD_PLAN.md "Later"; the hosts' remark in

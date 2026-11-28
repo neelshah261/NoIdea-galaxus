@@ -68,6 +68,19 @@ kill and resume halfway (#79).
 ## 3. Use of Apertus
 
 - **Model:** `swiss-ai/Apertus-v1.5-8B`; on the gateway, `apertus-v1-5-8b`. All models are listed in MODELS.md.
+
+**Every model we used (rule 6), in development and at runtime; MODELS.md holds the same list:**
+
+| Model | Version | Role | Used in |
+| --- | --- | --- | --- |
+| Apertus v1.5 8B | `apertus-v1-5-8b` (gateway); `swiss-ai/Apertus-v1.5-8B`, revision `1519de0a` in the Kaggle notebooks, the LoRA run's: TODO(swarupgaikwad1801-ux) | classifies the images: zero-shot, base of the LoRA, frozen features for the heads experiments | runtime and development |
+| LoRA adapter on Apertus 8B | TODO(swarupgaikwad1801-ux): Hugging Face repo and revision | main candidate method | runtime, if chosen |
+| Apertus v1.5 70B | `apertus-v1-5-70b` (gateway) | zero-shot comparison (EXP-0015) | development; runtime only if chosen |
+| Linear heads on Apertus hidden states (ours) | trained in the notebooks | experiment, parked until Q-0007 is answered in writing | development |
+| SigLIP base | `google/siglip-base-patch16-224`, revision TODO(neelshah261) | similar-image index for suspected label errors (#112); not run yet | development |
+| EasyOCR, Lingua | TODO(swarupgaikwad1801-ux) | OCR and language detection experiment for `text_language` (#108) | development |
+| Tiny random Llama, generated in a test | random weights | CPU smoke test of the LoRA training path | development |
+| Claude Code (Anthropic), one session per lane | TODO(owner): each session's model, as declared on #116 | coding assistant: code, tests, docs, reviews; never classifies an image | development |
 - **How it is used:** inference (zero-shot, EXP-0002 and EXP-0009), fine-tuning (LoRA, EXP-0004), evaluation.
 - **Where it runs:** the Hack Apertus gateway for zero-shot; local weights for training, and vLLM for serving the
   LoRA.
