@@ -264,9 +264,11 @@ class LoraPredictor:
         self.system = system_prompt(self.classes)
         self.schema = answer_schema(list(self.classes), {d: frozenset(v) for d, v in self.classes.items()})
         self.fallbacks = 0
+        self.no_confidence_cells = 0
 
     def predict(self, batch: Sequence[Any]) -> list[Any]:
         """One ``galaxus.types.Prediction`` per item, in order (the contract ``eval``, ``runner`` and ``submit`` read)."""
+        from galaxus.model.zero_shot import value_confidence
         from galaxus.types import Prediction
 
         answers = []
@@ -280,14 +282,21 @@ class LoraPredictor:
                 temperature=0.0,
             )
             labels = parse_answer(generation.text, self.classes)
+            confidence: dict[str, float] = {}
             if labels is None:
                 self.fallbacks += 1
                 labels = dict(self.fallback)
-            answers.append(Prediction(image_id=item.image_id, labels=labels, confidence=None))
+            else:
+                # #75: P(class | answer so far) from the answer's token logprobs, as the zero-shot predictor does.
+                # None when the backend sent none; a fallback answer never gets a made-up number.
+                confidence = value_confidence(getattr(generation, "logprobs", None), labels)
+            self.no_confidence_cells += len(labels) - len(confidence)
+            answers.append(Prediction(image_id=item.image_id, labels=labels, confidence=confidence or None))
         return answers
 
     def config(self) -> dict[str, object]:
-        return {"fallbacks": self.fallbacks, "image_size": IMAGE_SIZE, "json_schema": "enum per dimension"}
+        return {"fallbacks": self.fallbacks, "no_confidence_cells": self.no_confidence_cells, "image_size": IMAGE_SIZE,
+                "json_schema": "enum per dimension", "confidence": "token logprobs of the class name (#75)"}
 
 
 # ---------------------------------------------------------------- EXP-0004: the eval script's "lora" predictor
@@ -340,7 +349,8 @@ def _vllm_backend(settings: Mapping[str, str]) -> Any:
     from galaxus.model.apertus.vllm import VllmBackend
 
     return VllmBackend(base_url, settings.get(SERVED_NAME_ENV, DEFAULT_SERVED_NAME),
-                       api_key=settings.get(API_KEY_ENV) or None, retries=RETRIES)
+                       api_key=settings.get(API_KEY_ENV) or None, retries=RETRIES,
+                       extra_body={"logprobs": True})  # #75: confidences, for mirror TTA (#48) and calibration (#42)
 
 
 def from_env(environ: Mapping[str, str] | None = None, backend: Any = None) -> LoraPredictor:
