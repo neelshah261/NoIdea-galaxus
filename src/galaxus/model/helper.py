@@ -33,9 +33,36 @@ from galaxus.model import heads
 from galaxus.types import ImageItem, Prediction
 
 DEFAULT_ENCODER = "google/siglip-base-patch16-224"
+#: Every encoder's Hugging Face revision, pinned, so a new upload to its repository can never change the embeddings
+#: under a run (determinism, #182). SigLIP base's is the one #170 verified from the HF API; every cached embedding
+#: was made from it. An encoder that is not listed here is refused rather than loaded at its newest upload.
+REVISIONS = {DEFAULT_ENCODER: "7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed"}
+#: What the pinned snapshot needs: the processor's and the model's configs and the safetensors weights (the repo
+#: also holds pytorch_model.bin, the same weights again, and a text tokenizer the image side never uses).
+SNAPSHOT_FILES = ["config.json", "preprocessor_config.json", "model.safetensors"]
 FOLDS = 5
 ID_COLUMN = "image_id"
 FILE_COLUMN = "image_file"
+
+
+def pinned_revision(encoder_name: str) -> str:
+    """The pinned revision of ``encoder_name``, or a ValueError that says where to pin one."""
+    revision = REVISIONS.get(encoder_name)
+    if revision is None:
+        raise ValueError(f"{encoder_name} has no pinned revision: add it to galaxus.model.helper.REVISIONS (the commit "
+                         "sha from the Hugging Face API), so the embeddings cannot change under a run")
+    return revision
+
+
+def load_pinned_encoder(encoder_name: str) -> Any:
+    """The data lane's encoder (``neighbours.load_encoder``), loaded from the pinned snapshot of ``encoder_name``."""
+    from huggingface_hub import snapshot_download
+
+    from galaxus.data import neighbours
+
+    snapshot = snapshot_download(repo_id=encoder_name, revision=pinned_revision(encoder_name),
+                                 allow_patterns=SNAPSHOT_FILES)
+    return neighbours.load_encoder(snapshot)
 
 
 def embeddings(
@@ -44,14 +71,18 @@ def embeddings(
     load_encoder: Callable[[str], Any] | None = None,
     directory: str | Path | None = None,
 ) -> dict[str, np.ndarray]:
-    """``{image_id: embedding}`` for ``(image_id, image file)`` pairs, from the cache; missing ones are embedded first."""
+    """``{image_id: embedding}`` for ``(image_id, image file)`` pairs, from the cache; missing ones are embedded first.
+
+    The cache is keyed by the encoder's name, as the data lane's index keeps it; the encoder itself is loaded at its
+    pinned revision (:func:`load_pinned_encoder`).
+    """
     from galaxus.data import neighbours
 
     pairs = [(str(image_id), str(path)) for image_id, path in pairs]
     folder = Path(directory) if directory is not None else neighbours.embedding_dir(encoder_name)
     missing = [(image_id, path) for image_id, path in pairs if not (folder / f"{image_id}.npy").is_file()]
     if missing:
-        encoder = (load_encoder or neighbours.load_encoder)(encoder_name)
+        encoder = (load_encoder or load_pinned_encoder)(encoder_name)
         neighbours.embed_rows(missing, encoder, encoder_name, directory=folder)
     return {image_id: np.load(folder / f"{image_id}.npy").astype(np.float32).reshape(-1) for image_id, _ in pairs}
 
@@ -79,7 +110,7 @@ class HelperPredictor(heads.HeadsPredictor):
         self.embed = embed
         #: What the EXP row records: the helper model that picks the class, and it again as the helper.
         self.model = encoder_name
-        self.model_revision = None
+        self.model_revision = REVISIONS.get(encoder_name)
         self.helpers = (encoder_name,)
 
     def predict(self, batch: Sequence[ImageItem]) -> list[Prediction]:

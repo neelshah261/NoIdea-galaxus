@@ -26,15 +26,22 @@ them per dimension without running any model again (#87):
     python -m galaxus.model.ensemble choose --members zeroshot=EXP-0002 zeroshot_noctx=EXP-0009 --rule agree
     python -m galaxus.model.ensemble apply --routing <routing.json> --part dev --exp EXP-0020
 
+* **Live, for the final run (#182):** :func:`from_env` builds each member's live predictor, answers a batch with all
+  of them and combines the answers with the frozen routing file, so ``final_run --predictor
+  galaxus.model.ensemble:from_env`` runs the whole combination in one pass. ``$ENSEMBLE_CACHE`` keeps every member's
+  answers, so a rerun gives the same file even when a member is not bit-reproducible.
+
 Dimensions and classes come from ``galaxus.data.classes``; nothing here names one.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
+import threading
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -48,6 +55,8 @@ from galaxus.types import ImageItem, Prediction
 VOTE = "vote"
 ID_COLUMN = "image_id"
 MEMBERS_ENV = "ENSEMBLE_MEMBERS"
+#: The live predictor (#182): the routing json ``choose`` saved, each member's predictor, and an answer cache.
+ROUTING_ENV, PREDICTORS_ENV, CACHE_ENV = "ENSEMBLE_ROUTING", "ENSEMBLE_PREDICTORS", "ENSEMBLE_CACHE"
 #: BUILD_PLAN.md phase 2's methods that exist today (#87 step 5); the LoRA (EXP-0004) joins once it is scored.
 DEFAULT_MEMBERS = "zeroshot=EXP-0002 zeroshot_noctx=EXP-0009"
 HALVES = 2
@@ -376,6 +385,135 @@ def members_from_env(environ: Mapping[str, str] | None = None) -> dict[str, str]
     """``$ENSEMBLE_MEMBERS``, or BUILD_PLAN.md's two zero-shot runs when it is unset."""
     environ = os.environ if environ is None else environ
     return parse_members(environ.get(MEMBERS_ENV) or DEFAULT_MEMBERS)
+
+
+def needed_members(choice: Mapping[str, Any]) -> list[str]:
+    """The members a routing reads: those it routes a dimension to, and every member weighted in a dimension that
+    takes the vote (the vote counts them all, as it did when ``choose`` scored it)."""
+    needed = {source for source in choice["routing"].values() if source != VOTE}
+    for dimension, source in choice["routing"].items():
+        if source == VOTE:
+            needed.update(choice["weights"][dimension])
+    return sorted(needed)
+
+
+def _record(prediction: Prediction) -> dict[str, Any]:
+    return {ID_COLUMN: str(prediction.image_id), "labels": dict(prediction.labels),
+            "confidence": dict(prediction.confidence or {})}
+
+
+@dataclass
+class LiveEnsemblePredictor:
+    """The final run's predictor (#182): every member answers the batch live, then a frozen routing combines them.
+
+    * **The routing is frozen:** it is the json ``choose`` saved on the holdout, never re-chosen here, so the final
+      answers follow exactly the routing the EXP row scored. Rechoosing could flip a near-tie dimension.
+    * **Deterministic reruns:** with ``cache_dir``, each member's answers are appended to ``<cache_dir>/<member>.jsonl``
+      as they arrive and read back first on every later call. A member that is not bit-reproducible (a gateway model
+      under server batching) is then asked once per image, and a rerun or a resume after a crash rebuilds the same
+      file. The combination itself is pure: the same member answers always give the same file.
+    """
+
+    choice: dict[str, Any]
+    predictors: dict[str, Any]
+    specs: dict[str, str] = field(default_factory=dict)
+    cache_dir: Path | None = None
+    routing_file: str | None = None
+    images_per_second: float | None = None
+    _memory: dict[str, Records] = field(default_factory=dict, init=False, repr=False)
+    _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        missing = [name for name in needed_members(self.choice) if name not in self.predictors]
+        if missing:
+            raise ValueError(f"the routing needs members {missing}, which have no predictor")
+        models = sorted({str(m) for m in (getattr(p, "model", None) for p in self.predictors.values()) if m})
+        self.model = ", ".join(models) or None
+        self.model_revision = None
+        self.helpers = tuple(sorted({h for p in self.predictors.values() for h in getattr(p, "helpers", ())}))
+
+    def _cached(self, name: str) -> Records:
+        if name not in self._memory:
+            path = None if self.cache_dir is None else self.cache_dir / f"{name}.jsonl"
+            self._memory[name] = load_records(path) if path is not None and path.is_file() else {}
+        return self._memory[name]
+
+    def _answers(self, name: str, batch: Sequence[ImageItem]) -> Records:
+        """One member's answers for ``batch``: cached ones first, the rest asked once and cached."""
+        with self._lock:
+            known = self._cached(name)
+            todo = [item for item in batch if str(item.image_id) not in known]
+        if todo:
+            fresh = {str(p.image_id): _record(p) for p in self.predictors[name].predict(todo)}
+            lost = [str(item.image_id) for item in todo if str(item.image_id) not in fresh]
+            if lost:
+                raise KeyError(f"member {name} gave no answer for {len(lost)} image(s), e.g. {lost[:3]}")
+            with self._lock:
+                new = {i: r for i, r in fresh.items() if i not in known}
+                known.update(new)
+                if self.cache_dir is not None and new:
+                    self.cache_dir.mkdir(parents=True, exist_ok=True)
+                    with (self.cache_dir / f"{name}.jsonl").open("a", encoding="utf-8", newline="\n") as handle:
+                        handle.writelines(json.dumps(r, ensure_ascii=False) + "\n" for r in new.values())
+        with self._lock:
+            return {str(item.image_id): known[str(item.image_id)] for item in batch}
+
+    def predict(self, batch: Sequence[ImageItem]) -> list[Prediction]:
+        answers = {name: self._answers(name, batch) for name in sorted(self.predictors)}
+        return [combine(self.choice, answers, str(item.image_id)) for item in batch]
+
+    def config(self) -> dict[str, Any]:
+        members = {}
+        for name in sorted(self.predictors):
+            inner = getattr(self.predictors[name], "config", None)
+            members[name] = {"predictor": self.specs.get(name), "config": inner() if callable(inner) else None}
+        return {
+            "method": "live per-dimension routing (#182): every member answers each image, the frozen routing "
+                      "from `ensemble choose` combines them",
+            "routing_file": self.routing_file,
+            "routing_sha256": _sha256(self.choice),
+            "routing": dict(self.choice["routing"]),
+            "rule": self.choice.get("rule", BEST),
+            "members": members,
+            "member_exps": self.choice.get("member_exps"),
+            "answer_cache": None if self.cache_dir is None else str(self.cache_dir),
+        }
+
+
+def _sha256(choice: Mapping[str, Any]) -> str:
+    return hashlib.sha256(json.dumps(choice, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+
+
+def from_env(environ: Mapping[str, str] | None = None) -> LiveEnsemblePredictor:
+    """For ``final_run --predictor galaxus.model.ensemble:from_env`` and ``submit --run`` (#182, #181).
+
+    ``$ENSEMBLE_ROUTING`` is the routing json ``choose`` saved; ``$ENSEMBLE_PREDICTORS`` names one live predictor per
+    member the routing reads, under the names ``choose`` used, e.g. ``siglip=galaxus.model.helper:from_env
+    70b=galaxus.model.type_prior:from_env``; ``$ENSEMBLE_CACHE`` (optional, one folder per part) keeps every member's
+    answers so a rerun is identical. A member the routing never reads is not built.
+    """
+    from galaxus.serve.items import load_predictor
+
+    environ = os.environ if environ is None else environ
+    routing_file, specs = environ.get(ROUTING_ENV), environ.get(PREDICTORS_ENV)
+    if not routing_file or not specs:
+        raise RuntimeError(f"set ${ROUTING_ENV} (the routing json `python -m galaxus.model.ensemble choose` saved) and "
+                           f"${PREDICTORS_ENV} (name=package.module:factory per member, e.g. "
+                           "siglip=galaxus.model.helper:from_env 70b=galaxus.model.type_prior:from_env)")
+    choice = json.loads(Path(routing_file).read_text(encoding="utf-8"))
+    member_specs = parse_members(specs)
+    needed = needed_members(choice)
+    missing = [name for name in needed if name not in member_specs]
+    if missing:
+        raise RuntimeError(f"the routing in {routing_file} reads members {missing}: add them to ${PREDICTORS_ENV}")
+    cache = environ.get(CACHE_ENV)
+    return LiveEnsemblePredictor(
+        choice=choice,
+        predictors={name: load_predictor(member_specs[name]) for name in needed},
+        specs={name: member_specs[name] for name in needed},
+        cache_dir=Path(cache) if cache else None,
+        routing_file=routing_file,
+    )
 
 
 def summary(fitted: Mapping[str, Any], member_exps: Mapping[str, str], rule: str = BEST) -> list[str]:
