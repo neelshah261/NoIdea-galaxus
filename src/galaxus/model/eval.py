@@ -164,6 +164,22 @@ def _helper_fused_mirror(rows: pd.DataFrame, data: DataLane, seed: int) -> Predi
     return helper.fused_factory(mirror=True)(rows, data, seed)
 
 
+def _helper_text(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """A (#211): ``helper-siglip`` with the catalog text's vector after the image features (EXP-0070)."""
+    from galaxus.model import helper
+    from galaxus.model.context_features import ContextFeatures
+
+    return helper.factory(context=ContextFeatures())(rows, data, seed)
+
+
+def _helper_fused_text(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """A on the fused encoders (#211): ``helper-fused`` plus the catalog text's vector (EXP-0071)."""
+    from galaxus.model import helper
+    from galaxus.model.context_features import ContextFeatures
+
+    return helper.fused_factory(context=ContextFeatures())(rows, data, seed)
+
+
 def _recalibrated(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
     """#42: $RECAL_BASE's saved holdout answers with confidence-gated recalibration, cross-fitted on product halves."""
     import os
@@ -213,6 +229,8 @@ PREDICTORS: dict[str, PredictorFactory] = {
     "helper-siglip-mirror": _helper_mirror,  # the same, perspective trained on mirrored copies and averaged with the mirror
     "helper-fused": _helper_fused,  # EXP-0059: SigLIP base + DINOv2 base + SigLIP 2 base, unit length, concatenated
     "helper-fused-mirror": _helper_fused_mirror,  # helper-fused with the mirror-aware perspective head
+    "helper-siglip-text": _helper_text,  # A (#211): the catalog text as features next to SigLIP's (EXP-0070)
+    "helper-fused-text": _helper_fused_text,  # A on EXP-0059's three encoders (EXP-0071)
     "recalibrated": _recalibrated,  # #42: confidence-gated recalibration of $RECAL_BASE (e.g. EXP-0004)
     "type-prior": _type_prior,  # #133: the product-type prior on $TYPE_PRIOR_BASE's answers (e.g. EXP-0002)
     "majority": _majority,

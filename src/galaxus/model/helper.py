@@ -186,6 +186,32 @@ class HelperPredictor(heads.HeadsPredictor):
         return super().predict(batch)
 
 
+class ContextHelperPredictor(HelperPredictor):
+    """A (#211): the helper whose features are the image embedding followed by the catalog text's vector.
+
+    A new item's text vector comes from ``ContextFeatures.transform``, so an item whose catalog is missing gets the
+    "no context" vector rather than a missing column. Training rows got theirs out of fold (``out_of_fold``).
+    """
+
+    name = "helper-text"
+
+    def __init__(self, model: heads.HeadsModel, encoder_name: str, embed: Callable[..., dict[str, np.ndarray]],
+                 context: Any) -> None:
+        super().__init__(model, encoder_name, embed)
+        self.context = context
+
+    def predict(self, batch: Sequence[ImageItem]) -> list[Prediction]:
+        missing = [item for item in batch if str(item.image_id) not in self.features]
+        if missing:
+            image = self.embed([(str(item.image_id), str(item.path)) for item in missing], self.encoder_name)
+            text = self.context.transform({str(item.image_id): item.context for item in missing})
+            self.features.update({key: np.concatenate([vector, text[key]]) for key, vector in image.items()})
+        return super().predict(batch)
+
+    def config(self) -> dict[str, object]:
+        return {**super().config(), "context": self.context.config()}
+
+
 # ---------------------------------------------------------------- the mirror-aware perspective head (#176, #182)
 #
 # A mirror changes one thing in a photo: left and right. So the perspective head also trains on the mirrored copies
@@ -374,17 +400,33 @@ def factory(
     mirror: bool = False,
     mirror_embed: Callable[..., dict[str, np.ndarray]] = mirrored_embeddings,
     setup: MirrorSetup | None = None,
+    context: Any = None,
 ):
     """The eval script's factory: heads fitted on ``rows`` (train minus the official holdout), then the predictor.
 
     ``mirror=True`` replaces the perspective head with the mirror-aware one (``helper-siglip-mirror``).
+    ``context`` is A's ``context_features.ContextFeatures`` (#211): the catalog text's vector is concatenated after
+    the image features, out of fold for the training rows and through ``transform`` for everything predicted.
     """
 
     def build(rows: pd.DataFrame, data: Any, seed: int) -> HelperPredictor:
+        if mirror and context is not None:
+            raise ValueError(
+                "the mirror-aware perspective head and A's catalog-text features are not combined yet (#211 builds A "
+                "on its own): the mirrored features would need the same text columns appended, or the perspective "
+                "head's two inputs would be of different widths. Run one of the two."
+            )
         pairs = list(zip(rows[ID_COLUMN].astype(str), rows[FILE_COLUMN].astype(str), strict=True))
         features = embed(pairs, encoder_name)
+        key = f"helper:{encoder_name}"
+        if context is not None:
+            text = context.fit(rows, data, seed).out_of_fold(rows, data, seed)
+            features = {image_id: np.concatenate([vector, text[image_id]]) for image_id, vector in features.items()}
+            key = f"{key}+context"
         model = heads.fit_heads(rows, features, data.dimensions(), data.scored_mask, folds=product_folds(seed),
-                                key=f"helper:{encoder_name}", seed=seed)
+                                key=key, seed=seed)
+        if context is not None:
+            return ContextHelperPredictor(model, encoder_name, embed, context)
         if not mirror:
             return HelperPredictor(model, encoder_name, embed)
         resolved = setup or MirrorSetup.from_classes(data.allowed_classes())
@@ -403,6 +445,14 @@ def factory(
 
 def _flag(environ: Mapping[str, str], name: str) -> bool:
     return environ.get(name, "") not in ("", "0")
+
+
+def _context(environ: Mapping[str, str]) -> Any:
+    """A's catalog-text features (#211) when ``HELPER_CONTEXT=1``, else nothing: the live predictor switches on a
+    flag, so the Saturday run changes its environment and never its code."""
+    from galaxus.model.context_features import CONTEXT_ENV, ContextFeatures
+
+    return ContextFeatures() if _flag(environ, CONTEXT_ENV) else None
 
 
 def _training_rows(data: Any, environ: Mapping[str, str]) -> tuple[pd.DataFrame, str]:
@@ -426,10 +476,10 @@ def _live(build: Callable[..., HelperPredictor], environ: Mapping[str, str] | No
 
 def from_env(environ: Mapping[str, str] | None = None) -> HelperPredictor:
     """For the runner, ``submit --run`` and ``final_run --predictor``: SigLIP base heads, fitted on train minus the
-    official holdout. ``HELPER_MIRROR=1`` uses the mirror-aware perspective head; ``HELPER_FIT_ALL=1`` fits on every
-    labelled row."""
+    official holdout. ``HELPER_MIRROR=1`` uses the mirror-aware perspective head; ``HELPER_CONTEXT=1`` adds A's
+    catalog-text features (#211); ``HELPER_FIT_ALL=1`` fits on every labelled row."""
     environ = os.environ if environ is None else environ
-    return _live(factory(mirror=_flag(environ, MIRROR_ENV)), environ)
+    return _live(factory(mirror=_flag(environ, MIRROR_ENV), context=_context(environ)), environ)
 
 
 #: ``HELPER_FUSED_MIRROR=1`` turns the mirror-aware perspective head on for :func:`fused_from_env` only, so the
@@ -437,15 +487,18 @@ def from_env(environ: Mapping[str, str] | None = None) -> HelperPredictor:
 FUSED_MIRROR_ENV = "HELPER_FUSED_MIRROR"
 
 
-def fused_factory(mirror: bool = False):
-    """``helper-fused`` (EXP-0059): #51's heads on the three encoders' features at unit length, concatenated."""
+def fused_factory(mirror: bool = False, context: Any = None):
+    """``helper-fused`` (EXP-0059): #51's heads on the three encoders' features at unit length, concatenated.
+
+    ``context`` is A's ``ContextFeatures`` (#211), as in :func:`factory`: ``helper-fused-text``.
+    """
     return factory(encoder_name=FUSED_NAME, embed=fused_embeddings, mirror=mirror,
-                   mirror_embed=fused_mirrored_embeddings)
+                   mirror_embed=fused_mirrored_embeddings, context=context)
 
 
 def fused_from_env(environ: Mapping[str, str] | None = None) -> HelperPredictor:
     """``helper-fused`` for the runner and the live ensemble (``fused=galaxus.model.helper:fused_from_env``).
-    ``HELPER_FUSED_MIRROR=1`` uses the mirror-aware perspective head; ``HELPER_FIT_ALL=1`` fits on every labelled
-    row."""
+    ``HELPER_FUSED_MIRROR=1`` uses the mirror-aware perspective head; ``HELPER_CONTEXT=1`` adds A's catalog-text
+    features (#211); ``HELPER_FIT_ALL=1`` fits on every labelled row."""
     environ = os.environ if environ is None else environ
-    return _live(fused_factory(mirror=_flag(environ, FUSED_MIRROR_ENV)), environ)
+    return _live(fused_factory(mirror=_flag(environ, FUSED_MIRROR_ENV), context=_context(environ)), environ)
