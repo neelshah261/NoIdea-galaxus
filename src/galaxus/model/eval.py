@@ -106,7 +106,7 @@ def _zero_shot(**options: Any) -> PredictorFactory:
     """The zero-shot predictor with ``options`` (context, prompt lines, image mode; see ``zero_shot.PRESETS``)."""
 
     def factory(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
-        # shortcut: always the gateway (api); add a --backend flag when a vLLM run needs this script.
+        # The gateway, or our own vLLM endpoint when $ZERO_SHOT_BACKEND=vllm (#43: bf16 vs FP8, same prompt).
         return ZeroShotPredictor(
             defaults=MajorityPredictor.fit(rows, data.dimensions(), data.scored_mask).answer,
             dimensions=data.dimensions(),
