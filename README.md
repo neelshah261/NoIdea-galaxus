@@ -1,5 +1,35 @@
 # Hack Apertus Zurich — Challenge Partner: Digitec Galaxus
 
+## 📦 Final submission — team NoIdea
+
+An Apertus v1.5 method that labels every Galaxus product image along the six dimensions.
+
+| What | Where |
+| --- | --- |
+| Technical report | [technical_report.md](technical_report.md) · [NoIdea_Report.pdf](NoIdea_Report.pdf) |
+| Pitch deck | [presentation/deck.html](presentation/deck.html) |
+| Demo video | TODO(owner): link |
+| How to run it | [docs/how_to_run.md](docs/how_to_run.md) |
+| Every model, development and runtime | [MODELS.md](MODELS.md) |
+| Every measurement | [results/metrics.json](results/metrics.json), one `EXP-####` row per run |
+
+**The run that produced the final file: `EXP-0106`, macro F1 `0.784`** on the official 2,444-image holdout,
+cross-fitted (Kaggle public score: TODO(owner)). It combines four members per dimension with a halves-agree rule:
+the hinted Apertus v1.5 70B (EXP-0098) as the base member, the SigLIP base helper (EXP-0055), the fused
+SigLIP base + DINOv2 base + SigLIP 2 base helper (EXP-0059), and the plain Apertus v1.5 70B (EXP-0049). The routing
+is a weighted vote on `subject`, `background`, `text_classification` and `text_language`, the fused helper on
+`perspective`, and the SigLIP helper on `individuals`. The routing file and the submission are in
+[design/final_submission/](design/final_submission/) (`routing-EXP-0106.json`); an Apertus-only variant is EXP-0101
+(0.639 holdout, 0.66376 public).
+
+The competition rules ask for the provenance: section B(7)(c) has the technical report name the commit and the
+weights revision behind the Final Submission, and B(7)(d) lets the hosts rerun that commit on the final images.
+
+Every number we show comes from `results/metrics.json`, written by the eval script on a fixed holdout through the
+hosts' own `metric.py`. None is hand-written. The competition data itself is never in this repository: no image
+files, no csv files, no labels, no passphrase.
+
+
 ## 🎯 The Challenge
 
 ### Hack Apertus x Galaxus: product image classification

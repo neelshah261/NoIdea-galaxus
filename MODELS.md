@@ -13,12 +13,30 @@ listed here with its version and role. The rules themselves are in
 | LoRA adapter on Apertus v1.5 8B | in a private Hugging Face repo, not published; TODO(swarupgaikwad1801-ux): repo and revision if it enters the final method | candidate method (BUILD_PLAN.md phase 2); not in EXP-0056 | merged bf16 weights served by vLLM | trained (run 3, #76); its holdout score, 0.343, is not yet in `results/metrics.json` (docs/method.md) | PR #71, #86 |
 | Apertus v1.5 70B | `apertus-v1-5-70b` on the gateway (`swiss-ai/Apertus-v1.5-70B` on Hugging Face) | zero-shot EXP-0015; observe first, no product text, EXP-0049; with the product-type prior EXP-0051; **a member of EXP-0056** (with the SigLIP heads, per dimension); the teacher of #132's distillation code, which no training run has used | the gateway | measured; at runtime in EXP-0051 and EXP-0056 | `galaxus.model.zero_shot`, `galaxus.model.type_prior`, `galaxus.model.ensemble` |
 | SigLIP base (helper image model) | `google/siglip-base-patch16-224`, revision `7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed` (apache-2.0, 0.2B; #170), pinned in code by #188 | its pooled embeddings feed our class-balanced heads, which pick the class (Q-0008, `decisions.md`, #178): EXP-0055, and **a member of EXP-0056** | CPU (Neel's laptop) | measured; at runtime in EXP-0055 and EXP-0056 | `galaxus.model.helper`, `galaxus.data.neighbours`, PR #174 |
+| DINOv2 base (helper image model) | `facebook/dinov2-base`, revision `f9e44c814b77203eaa57a6bdbbd535f21ede1415` (apache-2.0 on the Hugging Face repo; Meta's upstream `facebookresearch/dinov2` artifacts carry CC-BY-NC, #176), pinned in code by #196 | the second of `helper-fused`'s three encoders: its pooled embedding at unit length, concatenated with the other two (EXP-0059, a member of EXP-0061); alone, EXP-0062 (scratch row) | CPU (Neel's laptop) | measured; at runtime if EXP-0061 is the final method | `galaxus.model.helper` (`FUSED_ENCODERS`), PR #196 |
+| SigLIP 2 base (helper image model) | `google/siglip2-base-patch16-224`, revision `75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2` (apache-2.0), pinned in code by #196 | the third of `helper-fused`'s encoders (EXP-0059, a member of EXP-0061); alone, EXP-0063 (scratch row) | CPU (Neel's laptop) | measured; at runtime if EXP-0061 is the final method | `galaxus.model.helper` (`FUSED_ENCODERS`), PR #196 |
 | Apertus v1.5 8B heads | linear heads on Apertus hidden states, trained by us | may be a runtime method: Q-0007(a) is answered yes (`decisions.md`, #171); trained in the Kaggle notebooks (#180) | CPU on saved features | merged (#51); no holdout row yet, not in EXP-0056 | `galaxus.model.heads`, `train/self_training_heads.ipynb` |
 
-Besides Apertus, SigLIP base is the one runtime helper (Q-0008): no OCR and no closed model runs at runtime.
+Besides Apertus, the runtime helpers are image encoders only (Q-0008): SigLIP base in EXP-0055/0056, and SigLIP
+base, DINOv2 base and SigLIP 2 base in `helper-fused` (EXP-0059/0061). No OCR and no closed model runs at runtime.
 EasyOCR and Lingua were measured as a development experiment (#108) and are not wired into any predictor. The
 majority baseline (EXP-0001) is a count, and the product-type prior and the per-dimension routing are rules learned
 from train, not models.
+
+## The models in the final submission
+
+The four models the submitted file ran through, and nothing else (AGENTS.md product rule 4; the rows above give
+each one's revision and role). The final file is **EXP-0106**, 0.784 macro F1 on the official holdout (#243).
+
+| Model | Id | How it runs in the final |
+| --- | --- | --- |
+| Apertus v1.5 70B | `apertus-v1-5-70b` | the Hack Apertus gateway, or self-hosted with vLLM in FP8 on one H200 |
+| SigLIP base | `google/siglip-base-patch16-224` | CPU, pooled embeddings into our class-balanced heads |
+| DINOv2 base | `facebook/dinov2-base` | CPU, second of the three fused encoders |
+| SigLIP 2 base | `google/siglip2-base-patch16-224` | CPU, third of the three fused encoders |
+
+Apertus v1.5 performs the classification; the three encoders are open-weights image helpers, which is what the
+model rules allow at runtime (challenge_description.md "Models"). No closed model and no OCR runs at runtime.
 
 ## Serving and tooling around the runtime model
 

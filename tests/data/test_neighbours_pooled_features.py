@@ -52,6 +52,7 @@ def test_image_embeds_wins_when_a_model_offers_it():
     assert pooled_features(output) is embeds
 
 
+@pytest.mark.filterwarnings("ignore:.*mean-pooled:RuntimeWarning")  # asserted in its own test below
 def test_the_patch_grid_is_averaged_only_as_a_last_resort():
     """A mean over the patch grid is permutation-invariant, so it is the fallback and not the default.
 
@@ -65,6 +66,7 @@ def test_the_patch_grid_is_averaged_only_as_a_last_resort():
     np.testing.assert_allclose(result, grid.mean(axis=1))
 
 
+@pytest.mark.filterwarnings("ignore:.*mean-pooled:RuntimeWarning")  # asserted in its own test below
 def test_a_mean_really_is_blind_to_the_patch_order():
     """Guards the docstring's claim, so nobody promotes the fallback to the default by accident."""
     grid = np.arange(1 * 4 * 3, dtype=np.float32).reshape(1, 4, 3)
@@ -87,3 +89,38 @@ def test_an_output_with_nothing_usable_is_handed_back_for_the_caller_to_fail_on(
 def test_the_vector_width_is_whatever_the_encoder_gives(width):
     pooler = np.zeros((5, width), dtype=np.float32)
     assert pooled_features(Pooled(pooler_output=pooler)).shape == (5, width)
+
+
+def test_falling_back_to_the_mean_warns_instead_of_degrading_quietly():
+    """The mirror-aware perspective head (#189) reads these features, and a mean would blind it to left/right.
+
+    Without a warning that switch is invisible: the run finishes, the file validates, and perspective is quietly
+    scored on features that cannot represent a side. The review of #189 found no guard against this, and the mean
+    is still reachable for any encoder exposing only ``last_hidden_state``.
+    """
+    output = Pooled(last_hidden_state=Hidden(np.zeros((2, 196, 768), dtype=np.float32)))
+    with pytest.warns(RuntimeWarning, match="mean-pooled"):
+        pooled_features(output)
+
+
+def test_the_warning_names_the_consequence_not_just_the_mechanism():
+    """A reader of the log needs to know what breaks, not only which attribute was absent."""
+    output = Pooled(last_hidden_state=Hidden(np.zeros((1, 4, 3), dtype=np.float32)))
+    with pytest.warns(RuntimeWarning) as caught:
+        pooled_features(output)
+    message = str(caught[0].message)
+    assert "mirror" in message
+    assert "perspective" in message
+    assert "Pooled" in message  # the type that misbehaved, so the log says which encoder
+
+
+@pytest.mark.parametrize("attribute", ["image_embeds", "pooler_output"])
+def test_the_preferred_paths_stay_silent(attribute, recwarn):
+    """Only the lossy path warns; a warning on the normal path would train everyone to ignore it."""
+    pooled_features(Pooled(**{attribute: np.zeros((2, 768), dtype=np.float32)}))
+    assert [w for w in recwarn if issubclass(w.category, RuntimeWarning)] == []
+
+
+def test_an_unusable_output_does_not_warn_about_pooling_it_never_did(recwarn):
+    pooled_features(Pooled())
+    assert [w for w in recwarn if issubclass(w.category, RuntimeWarning)] == []

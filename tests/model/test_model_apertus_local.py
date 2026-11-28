@@ -184,3 +184,44 @@ def test_without_torch_the_error_says_how_to_run_it(monkeypatch):
     monkeypatch.setitem(sys.modules, "torch", None)
     with pytest.raises(BackendError, match="uv run --with torch --with transformers"):
         LocalBackend()
+
+
+class CueTokenizer:
+    """One token per character of a cue, numbered from 1000, so a cue's token count is its text's length."""
+
+    def __call__(self, text, add_special_tokens):
+        assert add_special_tokens is False
+        return {"input_ids": [1000 + index for index in range(len(text))]}
+
+
+def test_fields_reads_the_prompt_end_its_mean_and_each_cue_end_in_one_pass(stack):
+    """#214: per layer, the "last" and "mean" features, then where Apertus would write each field's class."""
+    local = LocalBackend()
+    local.processor.tokenizer = CueTokenizer()
+    tokens = PROMPT_TOKENS + TOKENS_PER_IMAGE
+    got = local.forward([red()], "describe", layers=(-1, 0), pool="fields", fields=("a", "bb"))
+    assert got.shape == (1, 2 * 4, HIDDEN), "two layers x (last, mean, 2 cues)"
+    top = 100 * (LAYERS - 1)
+    first_cue, second_cue = len("a:"), len("\nbb:")
+    assert got[0, 0, 0] == top + tokens - 1, "the prompt's last token, as pool='last'"
+    assert got[0, 1, 0] == pytest.approx(top + (tokens - 1) / 2), "the prompt's mean, as pool='mean'"
+    assert got[0, 2, 0] == top + tokens + first_cue - 1, "the end of the first cue"
+    assert got[0, 3, 0] == top + tokens + first_cue + second_cue - 1, "the end of the second cue"
+    assert got[0, 4, 0] == tokens - 1, "the next layer starts with its own last prompt token"
+    last = local.forward([red()], "describe", layers=(-1, 0))
+    assert np.array_equal(got[0, [0, 4]], last[0]), "the 'last' features are kept exactly"
+
+
+def test_fields_extends_the_attention_mask_and_refuses_inputs_it_does_not_know(stack):
+    local = LocalBackend()
+    local.processor.tokenizer = CueTokenizer()
+    inputs = {"input_ids": np.arange(9).reshape(1, 9), "attention_mask": np.ones((1, 9), dtype=int),
+              "pixel_values": np.zeros((1, 3, 4, 4))}
+    extended, ends = local._with_cues(inputs, ("a",))
+    assert ends == [8, 10] and extended["input_ids"].shape == (1, 11)
+    assert extended["attention_mask"].tolist() == [[1] * 11]
+    assert extended["pixel_values"] is inputs["pixel_values"], "anything not shaped like the ids is left as it is"
+    with pytest.raises(BackendError, match="does not know how to extend"):
+        local._with_cues({**inputs, "position_hint": np.zeros((1, 9))}, ("a",))
+    with pytest.raises(ValueError, match="field names"):
+        local.forward([red()], "describe", pool="fields")

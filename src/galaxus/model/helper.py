@@ -401,12 +401,16 @@ def factory(
     mirror_embed: Callable[..., dict[str, np.ndarray]] = mirrored_embeddings,
     setup: MirrorSetup | None = None,
     context: Any = None,
+    teacher: Any = None,
 ):
     """The eval script's factory: heads fitted on ``rows`` (train minus the official holdout), then the predictor.
 
     ``mirror=True`` replaces the perspective head with the mirror-aware one (``helper-siglip-mirror``).
     ``context`` is A's ``context_features.ContextFeatures`` (#211): the catalog text's vector is concatenated after
     the image features, out of fold for the training rows and through ``transform`` for everything predicted.
+    ``teacher`` (a ``galaxus.model.teacher.TeacherSetup``, D of #211) appends the teacher's and the agreeing dev rows
+    to the training rows; the calibration bias is still fitted on human cells only, and the EXP row still scores the
+    holdout's human cells only. The mirror-aware head keeps training on the human rows.
     """
 
     def build(rows: pd.DataFrame, data: Any, seed: int) -> HelperPredictor:
@@ -416,6 +420,15 @@ def factory(
                 "on its own): the mirrored features would need the same text columns appended, or the perspective "
                 "head's two inputs would be of different widths. Run one of the two."
             )
+        if teacher is not None and context is not None:
+            raise ValueError("A's catalog-text features and D's teacher rows are not combined yet (#211 builds each "
+                             "on its own). Run one of the two.")
+        human_rows = rows
+        train_mask, calibration_mask, added = data.scored_mask, None, None
+        if teacher is not None:
+            rows, added = _with_teacher(rows, data, seed, teacher, encoder_name, embed)
+            train_mask = teacher_training_mask(data)
+            calibration_mask = human_mask(data)
         pairs = list(zip(rows[ID_COLUMN].astype(str), rows[FILE_COLUMN].astype(str), strict=True))
         features = embed(pairs, encoder_name)
         key = f"helper:{encoder_name}"
@@ -423,8 +436,11 @@ def factory(
             text = context.fit(rows, data, seed).out_of_fold(rows, data, seed)
             features = {image_id: np.concatenate([vector, text[image_id]]) for image_id, vector in features.items()}
             key = f"{key}+context"
-        model = heads.fit_heads(rows, features, data.dimensions(), data.scored_mask, folds=product_folds(seed),
-                                key=key, seed=seed)
+        model = heads.fit_heads(rows, features, data.dimensions(), train_mask, folds=product_folds(seed),
+                                key=key, seed=seed, calibration_mask=calibration_mask)
+        if added is not None:
+            model.meta["teacher"] = {**teacher.describe(), "added_cells": added}
+        rows = human_rows
         if context is not None:
             return ContextHelperPredictor(model, encoder_name, embed, context)
         if not mirror:
@@ -441,6 +457,59 @@ def factory(
         return MirrorHelperPredictor(model, encoder_name, embed, mirror_embed, resolved)
 
     return build
+
+
+def human_mask(data: Any) -> Callable[[pd.DataFrame, str], pd.Series]:
+    """The scored cells of human labels only (``split.scored_mask`` also passes a teacher's cells)."""
+    return lambda frame, d: data.scored_mask(frame, d) & (frame[f"{d}_source"].astype(str) == "human")
+
+
+def teacher_training_mask(data: Any) -> Callable[[pd.DataFrame, str], pd.Series]:
+    """Human cells as ``data.scored_mask`` sees them, plus the teacher's and the agreeing cells (D, #211)."""
+    from galaxus.model import teacher as teacher_module
+
+    def mask(frame: pd.DataFrame, d: str) -> pd.Series:
+        source = frame[f"{d}_source"].astype(str)
+        extra = source.isin((teacher_module.TEACHER_SOURCE, teacher_module.AGREE_SOURCE))
+        return (human_mask(data)(frame, d) & ~extra) | (extra & teacher_module.training_mask(frame, d))
+
+    return mask
+
+
+def _with_teacher(rows: pd.DataFrame, data: Any, seed: int, setup: Any, encoder_name: str,
+                  embed: Callable[..., dict[str, np.ndarray]]) -> tuple[pd.DataFrame, dict[str, int]]:
+    """``rows`` plus the teacher's (or the agreeing) dev rows, and the training cells added per dimension."""
+    from galaxus.model import teacher as teacher_module
+
+    dev = setup.dev_rows()
+    overlap = set(dev[ID_COLUMN].astype(str)) & set(rows[ID_COLUMN].astype(str))
+    if overlap:
+        raise ValueError(f"{len(overlap)} dev image(s) are also training rows: D labels dev images only")
+
+    def first_round(dev_rows: pd.DataFrame) -> dict[str, dict[str, Any]]:
+        """The heads fitted on the human rows alone, answering every dev image (self-training's own member)."""
+        pairs = list(zip(rows[ID_COLUMN].astype(str), rows[FILE_COLUMN].astype(str), strict=True))
+        features = embed(pairs, encoder_name)
+        model = heads.fit_heads(rows, features, data.dimensions(), data.scored_mask, folds=product_folds(seed),
+                                key=f"helper:{encoder_name}:first-round", seed=seed, log=None)
+        predictor = HelperPredictor(model, encoder_name, embed)
+        items = [ImageItem(image_id=str(i), path=str(f)) for i, f in zip(dev_rows[ID_COLUMN], dev_rows[FILE_COLUMN],
+                                                                             strict=True)]
+        answers = {}
+        for start in range(0, len(items), 256):
+            for p in predictor.predict(items[start:start + 256]):
+                answers[str(p.image_id)] = {"labels": dict(p.labels), "confidence": dict(p.confidence or {})}
+        return answers
+
+    extra = setup.extra_rows(dev, data, first_round if setup.self_train else None)
+    dimensions = tuple(data.dimensions())
+    useful = np.zeros(len(extra), dtype=bool)
+    for d in dimensions:
+        useful |= teacher_module.training_mask(extra, d).to_numpy()
+    extra = extra[useful]
+    added = teacher_module.counts(extra, dimensions)
+    print(f"[helper] D: {len(extra)} dev rows added, training cells per dimension {added}")
+    return pd.concat([rows, extra], ignore_index=True), added
 
 
 def _flag(environ: Mapping[str, str], name: str) -> bool:
@@ -478,8 +547,11 @@ def from_env(environ: Mapping[str, str] | None = None) -> HelperPredictor:
     """For the runner, ``submit --run`` and ``final_run --predictor``: SigLIP base heads, fitted on train minus the
     official holdout. ``HELPER_MIRROR=1`` uses the mirror-aware perspective head; ``HELPER_CONTEXT=1`` adds A's
     catalog-text features (#211); ``HELPER_FIT_ALL=1`` fits on every labelled row."""
+    from galaxus.model import teacher
+
     environ = os.environ if environ is None else environ
-    return _live(factory(mirror=_flag(environ, MIRROR_ENV), context=_context(environ)), environ)
+    return _live(factory(mirror=_flag(environ, MIRROR_ENV), context=_context(environ),
+                         teacher=teacher.from_environ(environ)), environ)
 
 
 #: ``HELPER_FUSED_MIRROR=1`` turns the mirror-aware perspective head on for :func:`fused_from_env` only, so the
@@ -487,18 +559,21 @@ def from_env(environ: Mapping[str, str] | None = None) -> HelperPredictor:
 FUSED_MIRROR_ENV = "HELPER_FUSED_MIRROR"
 
 
-def fused_factory(mirror: bool = False, context: Any = None):
+def fused_factory(mirror: bool = False, context: Any = None, teacher: Any = None):
     """``helper-fused`` (EXP-0059): #51's heads on the three encoders' features at unit length, concatenated.
 
     ``context`` is A's ``ContextFeatures`` (#211), as in :func:`factory`: ``helper-fused-text``.
     """
     return factory(encoder_name=FUSED_NAME, embed=fused_embeddings, mirror=mirror,
-                   mirror_embed=fused_mirrored_embeddings, context=context)
+                   mirror_embed=fused_mirrored_embeddings, context=context, teacher=teacher)
 
 
 def fused_from_env(environ: Mapping[str, str] | None = None) -> HelperPredictor:
     """``helper-fused`` for the runner and the live ensemble (``fused=galaxus.model.helper:fused_from_env``).
     ``HELPER_FUSED_MIRROR=1`` uses the mirror-aware perspective head; ``HELPER_CONTEXT=1`` adds A's catalog-text
     features (#211); ``HELPER_FIT_ALL=1`` fits on every labelled row."""
+    from galaxus.model import teacher
+
     environ = os.environ if environ is None else environ
-    return _live(fused_factory(mirror=_flag(environ, FUSED_MIRROR_ENV), context=_context(environ)), environ)
+    return _live(fused_factory(mirror=_flag(environ, FUSED_MIRROR_ENV), context=_context(environ),
+                               teacher=teacher.from_environ(environ)), environ)

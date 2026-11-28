@@ -45,8 +45,16 @@ PROMPT = (
 CONTEXT_FIELDS = ("product_title", "product_type", "brand", "category", "subcategory")
 IMAGE_SIZE = 512  # Swarup's condition: always 512 px of area
 SHARD_SIZE = 256
+#: Per part, the ids ``extract`` could not read, one per line (never printed). ``apertus_core`` treats exactly these as
+#: unreadable images (#219), so a forgotten extraction still stops a run instead of falling back.
+UNREADABLE_FILE = "unreadable.txt"
 DEFAULT_LAYERS = (-1,)
 DEFAULT_POOL = "last"
+#: One pass that also reads, for every dimension, the token where Apertus would write its class (#214, the hosts'
+#: answer: a head may read only Apertus' hidden states). The prompt then lists each dimension's classes, from the
+#: contract, and the store holds ``2 + dimensions`` blocks per layer (``blocks_per_layer``).
+FIELDS_POOL = "fields"
+POOLS = ("last", "mean", FIELDS_POOL)
 EPOCHS = 300
 LEARNING_RATE = 0.01
 L2 = 1e-3
@@ -66,6 +74,43 @@ def prompt_for(context: Mapping[str, str] | None) -> str:
     extra = [f"{name}: {value}" for name, value in context.items() if name not in CONTEXT_FIELDS and value]
     text = "; ".join(parts + extra)
     return PROMPT.format(context=f" {text}." if text else "")
+
+
+def fields_for(pool: str) -> tuple[str, ...]:
+    """The fields ``pool`` reads: every dimension of the contract for ``fields``, none otherwise."""
+    if pool != FIELDS_POOL:
+        return ()
+    from galaxus.data import classes
+
+    return tuple(classes.dimensions())
+
+
+def blocks_per_layer(pool: str) -> int:
+    """How many hidden-size blocks a stored vector holds per layer: 1, or ``2 + dimensions`` for ``fields``."""
+    return 2 + len(fields_for(pool)) if pool == FIELDS_POOL else 1
+
+
+def prompt_for_pool(context: Mapping[str, str] | None, pool: str) -> str:
+    """``prompt_for``, plus each dimension's classes from the contract for ``fields``, so every cue knows its options."""
+    prompt = prompt_for(context)
+    if pool != FIELDS_POOL:
+        return prompt
+    from galaxus.data import classes
+
+    allowed = classes.allowed_classes()
+    options = "; ".join(f"{name}: {', '.join(sorted(allowed[name]))}" for name in fields_for(pool))
+    return f"{prompt} Answer each field with one of its options. Options: {options}."
+
+
+def shard_items(items: Sequence[ImageItem], spec: str) -> tuple[list[ImageItem], str]:
+    """Shard ``i/n`` of ``items`` (sorted by id, every n-th from i) and the file tag its shards carry, so several GPU
+    jobs can split one part and their feature files untar into one store without a name clash."""
+    index_text, _, count_text = spec.partition("/")
+    index, count = int(index_text), int(count_text)
+    if count < 1 or not 0 <= index < count:
+        raise ValueError(f"--shard is i/n with 0 <= i < n, got {spec!r}")
+    ordered = sorted(items, key=lambda item: str(item.image_id))
+    return ordered[index::count], f"s{index}of{count}-"
 
 
 def feature_key(model: str, layers: Sequence[int], pool: str, image_size: int = IMAGE_SIZE) -> str:
@@ -89,6 +134,20 @@ class FeatureStore:
     def ids(self, part: str) -> set[str]:
         return set(self.load(part))
 
+    def unreadable(self, part: str | None = None) -> set[str]:
+        """The ids ``extract`` skipped as unreadable, in one part or in every part."""
+        files = [self.root / part / UNREADABLE_FILE] if part else sorted(self.root.glob(f"*/{UNREADABLE_FILE}"))
+        return {line.strip() for file in files if file.is_file() for line in file.read_text().splitlines() if line.strip()}
+
+    def mark_unreadable(self, part: str, ids: Sequence[str]) -> Path:
+        """Add ``ids`` to the part's unreadable list, through a temporary name (crash-safe like the shards)."""
+        target = self.part_dir(part) / UNREADABLE_FILE
+        merged = sorted(self.unreadable(part) | {str(i) for i in ids})
+        partial = target.with_name(target.name + ".part")
+        partial.write_text("".join(f"{image_id}\n" for image_id in merged))
+        os.replace(partial, target)
+        return target
+
     def load(self, part: str | None = None) -> dict[str, np.ndarray]:
         """``{image_id: features}`` of one part, or of every part when ``part`` is None."""
         parts = [part] if part else [p.name for p in self.root.iterdir() if p.is_dir()] if self.root.exists() else []
@@ -100,12 +159,13 @@ class FeatureStore:
                         features[str(image_id)] = vector
         return features
 
-    def append(self, part: str, ids: Sequence[str], x: np.ndarray) -> Path:
-        """Write one shard (float16) through a temporary name, so a crash never leaves half a shard."""
+    def append(self, part: str, ids: Sequence[str], x: np.ndarray, tag: str = "") -> Path:
+        """Write one shard (float16) through a temporary name, so a crash never leaves half a shard. ``tag`` (from
+        ``shard_items``) keeps the file names of parallel jobs apart."""
         folder = self.part_dir(part)
-        number = len(list(folder.glob("shard_*.npz")))
-        target = folder / f"shard_{number:05d}.npz"
-        temporary = folder / f".shard_{number:05d}.tmp.npz"
+        number = len(list(folder.glob(f"shard_{tag}*.npz")))
+        target = folder / f"shard_{tag}{number:05d}.npz"
+        temporary = folder / f".shard_{tag}{number:05d}.tmp.npz"
         np.savez(temporary, ids=np.asarray(ids, dtype=str), x=x.astype(np.float16))
         os.replace(temporary, target)
         return target
@@ -119,11 +179,17 @@ def extract(
     image_bytes: Callable[[ImageItem], bytes],
     shard_size: int = SHARD_SIZE,
     log: Callable[[str], None] | None = print,
+    prompt: Callable[[Mapping[str, str] | None], str] = prompt_for,
+    shard_tag: str = "",
 ) -> int:
     """Hidden states for every item not yet in ``store``; returns how many were computed.
 
     ``forward(images, prompt) -> (images, layers, hidden)`` is ``LocalBackend.forward`` with the layers and pool
     bound; ``image_bytes(item)`` gives the 512 px prepared JPEG (data lane cache).
+
+    An image that cannot be read or prepared (``OSError``, which covers PIL's unidentified and truncated files, or
+    ``ValueError``) is skipped and counted, never named, so one bad file in a new batch cannot stop the run (#218); the
+    reference notebook keeps the constant answer for such an image. Errors of ``forward`` itself still stop it.
     """
     done = store.ids(part)
     todo = [item for item in items if str(item.image_id) not in done]
@@ -133,20 +199,31 @@ def extract(
     ids: list[str] = []
     rows: list[np.ndarray] = []
     computed = 0
+    unreadable: list[str] = []
     for item in todo:
-        vector = forward([image_bytes(item)], prompt_for(item.context))[0]
+        try:
+            image = image_bytes(item)
+        except (OSError, ValueError):
+            unreadable.append(str(item.image_id))
+            continue
+        vector = forward([image], prompt(item.context))[0]
         ids.append(str(item.image_id))
         rows.append(np.asarray(vector, dtype=np.float32).reshape(-1))
         if len(ids) == shard_size:
-            store.append(part, ids, np.stack(rows))
+            store.append(part, ids, np.stack(rows), tag=shard_tag)
             computed += len(ids)
             ids, rows = [], []
             if log:
                 speed = computed / (time.perf_counter() - started)
                 log(f"[heads] {part}: {len(done) + computed}/{len(items)} ({speed:.2f} img/s)")
     if ids:
-        store.append(part, ids, np.stack(rows))
+        store.append(part, ids, np.stack(rows), tag=shard_tag)
         computed += len(ids)
+    if unreadable:
+        store.mark_unreadable(part, unreadable)  # in the store, so it travels with the features; never in a log
+        if log:
+            log(f"[heads] {part}: {len(unreadable)} image(s) could not be read and were skipped; their rows keep the "
+                "constant answer")
     return computed
 
 
@@ -272,11 +349,15 @@ def fit_heads(
     key: str = "",
     seed: int = 0,
     log: Callable[[str], None] | None = print,
+    calibration_mask: Callable[[pd.DataFrame, str], pd.Series] | None = None,
 ) -> HeadsModel:
     """Heads on the scored human labels of ``rows``; with ``folds``, calibrated on out-of-fold probabilities.
 
+    ``scored_mask`` picks the training cells. ``calibration_mask`` (default: the same) picks the held-out cells the
+    calibration bias is fitted on: D (#211) trains on human and teacher cells but calibrates on human cells only.
     Rows without features are an error: extract them first, so no image is silently left out of training.
     """
+    calibration_mask = calibration_mask or scored_mask
     missing = [str(i) for i in rows["image_id"] if str(i) not in features]
     if missing:
         raise KeyError(f"{len(missing)} training image(s) have no features, first: {missing[:3]}; run extract first")
@@ -292,7 +373,7 @@ def fit_heads(
             oof_rows: list[np.ndarray] = []
             for fit_part, held in folds(rows):
                 fit_scored = fit_part[scored_mask(fit_part, dimension)]
-                held_scored = held[scored_mask(held, dimension)]
+                held_scored = held[calibration_mask(held, dimension)]
                 if held_scored.empty or fit_scored.empty:
                     continue
                 fold_head = fit_head(
@@ -305,7 +386,8 @@ def fit_heads(
                 oof_rows.append(full)
                 oof_ids.extend(str(i) for i in held_scored["image_id"])
             if oof_rows:
-                truth = scored.set_index(scored["image_id"].astype(str)).loc[oof_ids, dimension].astype(str)
+                calibrated = rows[calibration_mask(rows, dimension)]
+                truth = calibrated.set_index(calibrated["image_id"].astype(str)).loc[oof_ids, dimension].astype(str)
                 true_index = np.searchsorted(head.classes, truth.to_numpy())
                 head.bias = fit_bias(np.vstack(oof_rows), true_index)
                 report[dimension] = {"bias": dict(zip(head.classes, head.bias.round(2).tolist()))}
@@ -424,7 +506,8 @@ def _backend_forward(model_name: str, layers: Sequence[int], pool: str) -> Calla
     from galaxus.model.apertus.local import LocalBackend
 
     backend = LocalBackend(model_name)
-    return lambda images, prompt: backend.forward(images, prompt, layers=tuple(layers), pool=pool)
+    fields = fields_for(pool)
+    return lambda images, prompt: backend.forward(images, prompt, layers=tuple(layers), pool=pool, fields=fields)
 
 
 def _cached_image(item: ImageItem) -> bytes:
@@ -448,18 +531,32 @@ def predictor_from_env() -> HeadsPredictor:
     def compute(item: ImageItem) -> np.ndarray:
         if not forward:
             forward.append(_backend_forward(model_name, meta_layers, pool))
-        return forward[0]([_cached_image(item)], prompt_for(item.context))[0]
+        return forward[0]([_cached_image(item)], prompt_for_pool(item.context, pool))[0]
 
     return HeadsPredictor(model, store.load(), compute)
+
+
+def extract_source(part: str | None, csv: str | None) -> tuple[pd.DataFrame, str]:
+    """The rows to extract and the store part they go to: a competition part, or ``csv-<file stem>`` for a new batch."""
+    from galaxus.data import load
+
+    if csv:
+        return load.read_part(csv), f"csv-{Path(csv).stem}"
+    reader = {"train": load.read_train, "dev": load.read_dev, "final": load.read_final}[part or ""]
+    return reader(), str(part)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """``python -m galaxus.model.heads extract|fit|label-errors``."""
     parser = argparse.ArgumentParser(prog="python -m galaxus.model.heads", description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
-    extract_cmd = sub.add_parser("extract", help="Apertus hidden states for one part (GPU)")
-    extract_cmd.add_argument("--part", required=True, choices=("train", "dev", "final"))
+    extract_cmd = sub.add_parser("extract", help="Apertus hidden states for one part, or any table of images (GPU)")
+    source = extract_cmd.add_mutually_exclusive_group(required=True)
+    source.add_argument("--part", choices=("train", "dev", "final"))
+    source.add_argument("--csv", help="any new batch: a table with image_id and image_path (relative to it) and, "
+                        "optionally, the catalog columns, read as dev.csv is (#218)")
     extract_cmd.add_argument("--limit", type=int, default=None)
+    extract_cmd.add_argument("--shard", default=None, help="i/n: this job's share of the part, for n parallel jobs")
     fit_cmd = sub.add_parser("fit", help="fit + calibrate heads on CPU, score the holdout, write the EXP row")
     fit_cmd.add_argument("--exp-id", default=None)
     fit_cmd.add_argument("--no-calibration", action="store_true")
@@ -471,7 +568,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     for command in (extract_cmd, fit_cmd, errors_cmd):
         command.add_argument("--model", default=os.environ.get(APERTUS_ENV, "swiss-ai/Apertus-v1.5-8B"))
         command.add_argument("--layers", default=",".join(map(str, default_layers())), help="e.g. -1 or -1,-9")
-        command.add_argument("--pool", default=DEFAULT_POOL, choices=("last", "mean"))
+        command.add_argument("--pool", default=DEFAULT_POOL, choices=POOLS)
     arguments = parser.parse_args(argv)
     layers = tuple(int(x) for x in arguments.layers.split(","))
     store = store_for(arguments.model, layers, arguments.pool)
@@ -480,11 +577,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     from galaxus.serve.items import items_from_frame
 
     if arguments.command == "extract":
-        reader = {"train": load.read_train, "dev": load.read_dev, "final": load.read_final}[arguments.part]
-        items = items_from_frame(reader(), arguments.limit)
+        frame, part = extract_source(arguments.part, arguments.csv)
+        tag = ""
+        if arguments.shard:
+            items, tag = shard_items(items_from_frame(frame, None), arguments.shard)
+            items = items[: arguments.limit] if arguments.limit is not None else items
+        else:
+            items = items_from_frame(frame, arguments.limit)
         forward = _backend_forward(arguments.model, layers, arguments.pool)
-        computed = extract(forward, items, store, arguments.part, _cached_image)
-        print(f"[heads] {arguments.part}: computed {computed}; store {store.root}")
+        pool = arguments.pool
+        computed = extract(forward, items, store, part, _cached_image,
+                           prompt=lambda context: prompt_for_pool(context, pool), shard_tag=tag)
+        print(f"[heads] {part}: computed {computed}; store {store.root}")
         return 0
 
     from galaxus.data import split

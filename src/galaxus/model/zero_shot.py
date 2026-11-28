@@ -109,6 +109,9 @@ PRESETS: dict[str, dict[str, Any]] = {
     # best on background and language, and dropping the context triples subject (EXP-0009). These combine them.
     "zero-shot-observe-first-768": {"observe_first": True, "image_size": 768},  # EXP-0024
     "zero-shot-observe-first-no-context": {"observe_first": True, "use_context": False},  # EXP-0025
+    # #237: the best prompt without product text (EXP-0025 on the 8B, EXP-0049 on the 70B) plus the retrieval hint
+    # line from $ZERO_SHOT_HINTS (Q-0003). EXP-0099 on the 8B.
+    "zero-shot-hints": {"observe_first": True, "use_context": False, "hints": True},
     "zero-shot-type-first": {"type_first": True},  # #133: the product type first; the EXP id is the next free one
     # #156: one request per dimension, each asking only that dimension with only its classes. BYMO (#145) measured
     # 0.229 -> 0.528 for the 8B on their own set with separate questions. No context is EXP-0025's best (0.360).
@@ -188,6 +191,16 @@ def answer_schema(
     return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
 
 
+#: #237 (Q-0003): retrieval hints (galaxus.model.hints). The image's hint line ends the user message, framed like
+#: EXP-0014's context line: a hint, not the answer. Apertus decides.
+HINTS = (
+    "The user message ends with how similar catalog images were labelled. It is a hint, not the answer: decide every "
+    "dimension from what you see in this image, and when the image and the hint disagree, trust the image."
+)
+#: The hints file (``python -m galaxus.model.hints write --part <part>``) the ``zero-shot-hints`` variant reads.
+HINTS_ENV = "ZERO_SHOT_HINTS"
+
+
 def system_prompt(
     guideline: str,
     dimensions: Sequence[str],
@@ -195,6 +208,7 @@ def system_prompt(
     macro_aware: bool = False,
     observe_first: bool = False,
     type_first: bool = False,
+    hints: bool = False,
 ) -> str:
     """The instruction, the extra lines the variant asks for (#106, #133), then the guideline.
 
@@ -202,7 +216,7 @@ def system_prompt(
     """
     instruction = INSTRUCTION.format(dimensions=", ".join(dimensions))
     for wanted, line in ((image_first, IMAGE_FIRST), (macro_aware, MACRO_AWARE), (observe_first, OBSERVE_FIRST),
-                         (type_first, TYPE_FIRST)):
+                         (type_first, TYPE_FIRST), (hints, HINTS)):
         if wanted:
             instruction += "\n" + line
     return instruction + "\n\n" + guideline.strip()
@@ -320,6 +334,7 @@ class ZeroShotPredictor:
         observe_first: bool = False,
         type_first: bool = False,
         per_dimension: bool = False,
+        hints: bool | Mapping[str, str] = False,
         image: str = "plain",
         drop_context: Sequence[str] = (),
         defaults: Mapping[str, str] | None = None,
@@ -351,6 +366,9 @@ class ZeroShotPredictor:
         self.observe_first = observe_first
         self.type_first = type_first
         self.per_dimension = per_dimension
+        #: #237: ``{image_id: hint line}``; ``True`` reads the file named by ``$ZERO_SHOT_HINTS``.
+        self.hint_lines = load_hints() if hints is True else (dict(hints) if hints else None)
+        self.hints_file = os.environ.get(HINTS_ENV) if hints is True else None
         self.image = image
         self.drop_context = tuple(drop_context)
         self.max_tokens = OBSERVE_MAX_TOKENS if observe_first else MAX_TOKENS
@@ -364,7 +382,7 @@ class ZeroShotPredictor:
         self.workers = workers
         guideline = guideline if guideline is not None else read_guideline()
         lines = {"image_first": image_first, "macro_aware": macro_aware, "observe_first": observe_first,
-                 "type_first": type_first}
+                 "type_first": type_first, "hints": self.hint_lines is not None}
         self.schema = answer_schema(self.dimensions, self.allowed, observe_first=observe_first)
         self.system = system_prompt(guideline, self.dimensions, **lines)
         #: #156: per dimension, the system prompt that names only it and the schema with only its classes.
@@ -401,6 +419,22 @@ class ZeroShotPredictor:
             context = {TYPE_FIELD: context[TYPE_FIELD], **{k: v for k, v in context.items() if k != TYPE_FIELD}}
         return context or None
 
+    def _user(self, item: ImageItem) -> str:
+        """The user message: the context (or the context-free line), then the image's hint line (#237).
+
+        Raises:
+            KeyError: with hints on, for an image the hints file has no line for: a hint missing for some images
+                would score a mix of two methods.
+        """
+        text = user_prompt(self._context(item))
+        if self.hint_lines is None:
+            return text
+        hint = self.hint_lines.get(str(item.image_id))
+        if hint is None:
+            raise KeyError(f"no hint for {item.image_id} in ${HINTS_ENV} ({self.hints_file}): write the hints for "
+                           "this part first (`python -m galaxus.model.hints write --part <part>`)")
+        return f"{text}\n\n{hint}"
+
     def _ask(
         self, messages: list[dict[str, str]], image: bytes, schema: Mapping[str, Any] | None = None,
         dimensions: Sequence[str] | None = None,
@@ -424,7 +458,7 @@ class ZeroShotPredictor:
         image = self._image(item)
         messages = [
             {"role": "system", "content": self.system},
-            {"role": "user", "content": user_prompt(self._context(item))},
+            {"role": "user", "content": self._user(item)},
         ]
         answers = self._ask(messages, image)
         retried = len(answers) < len(self.dimensions)
@@ -435,7 +469,7 @@ class ZeroShotPredictor:
     def _ask_dimension(self, item: ImageItem, image: bytes, dimension: str) -> tuple[dict[str, Any], int]:
         """#156: one dimension's question, asked once more if its answer is unusable; returns (answers, retries)."""
         system, schema = self.questions[dimension]
-        messages = [{"role": "system", "content": system}, {"role": "user", "content": user_prompt(self._context(item))}]
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": self._user(item)}]
         answer = self._ask(messages, image, schema, (dimension,))
         if answer:
             return answer, 0
@@ -499,6 +533,8 @@ class ZeroShotPredictor:
             "observe_first": self.observe_first,
             "type_first": self.type_first,
             "per_dimension": self.per_dimension,
+            "hints": self.hint_lines is not None,
+            "hints_lines": None if self.hint_lines is None else len(self.hint_lines),
             "image": self.image,
             "drop_context": list(self.drop_context),
             "temperature": 0.0,
@@ -507,6 +543,22 @@ class ZeroShotPredictor:
             "prompt_sha256": self.prompt_sha256(),
             **stats,
         }
+
+
+def load_hints(environment: Mapping[str, str] | None = None) -> dict[str, str]:
+    """``{image_id: hint line}`` from the file ``$ZERO_SHOT_HINTS`` names (#237).
+
+    Raises:
+        RuntimeError: when the variable is unset or the file is missing.
+    """
+    from galaxus.model.hints import read_jsonl
+
+    environment = os.environ if environment is None else environment
+    path = environment.get(HINTS_ENV, "").strip()
+    if not path or not os.path.isfile(path):
+        raise RuntimeError(f"zero-shot-hints needs ${HINTS_ENV}: the hints file of this part, written by "
+                           f"`python -m galaxus.model.hints write --part <part>` (got {path!r})")
+    return read_jsonl(path)
 
 
 def no_context() -> ZeroShotPredictor:
@@ -537,7 +589,7 @@ def mirror_tta_can_wrap(name: str) -> bool:
 
     Not a crop variant: its mirror would be cut from the 512 px cached mirror, not from the original as the crop is.
     """
-    return VARIANTS[name].get("image", "plain") != "crop"
+    return VARIANTS[name].get("image", "plain") != "crop" and not VARIANTS[name].get("hints")  # #237: a mirror has no hint line
 
 
 def from_preset() -> ZeroShotPredictor:

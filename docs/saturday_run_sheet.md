@@ -71,6 +71,69 @@ decryption or the resume. It prints the total time and the images per second; th
 memory and the cost per 100,000 images to `$GALAXUS_DATA/out/bench/<label>.jsonl`, for section 7 of the technical
 report.
 
+## Saturday 28 Nov: the frozen method EXP-0049 (Apertus only)
+
+**The rules changed at about 11:15 CET** (`decisions.md`, "The answer to the follow-up"; #137): only Apertus may pick a
+class. No helper model predicts a class, there is no weighted vote between Apertus and a helper, and the product-type
+prior is out because it overrules Apertus. So EXP-0056 and EXP-0061 below are **outside the rules**. The frozen
+method is **EXP-0049: Apertus v1.5 70B, observe first, no product text, 0.461 on the holdout**: the best compliant
+row on `main`. `TODO(neelshah261)`: confirm on #137.
+
+**Target: EXP-0095** (Parth, 28 Nov; confirmed by Neel on #137): `core=EXP-0092 70b=EXP-0049`, the two Apertus runs
+voting per dimension, **0.540 on the holdout** (#238). **EXP-0049 stays the safety file:** it is uploaded first, and it
+is the file selected if EXP-0095's final members are not done by 14:15. The EXP-0095 steps are #237's C and E:
+
+1. **Before 13:00:** the routing, and EXP-0095's dev file, once the EXP-0049 and EXP-0092 dev answers exist:
+   `uv run --env-file .env python -m galaxus.model.ensemble choose --members core=EXP-0092 70b=EXP-0049 --rule agree --out "$GALAXUS_DATA/out/ensemble/routing-EXP-0095.json"`
+   `uv run --env-file .env python -m galaxus.model.ensemble apply --routing "$GALAXUS_DATA/out/ensemble/routing-EXP-0095.json" --part dev --exp EXP-0095`
+2. **At 13:00, in parallel with the safety file's run below:**
+   - the Apertus final features (a person starts the GPU job, rule 7; `LAYERS=-1,-9 POOL=last`, as EXP-0092):
+     `read -rs PASSPHRASE && export PASSPHRASE && REF=main bash train/hf_job_apertus_features_start.sh final`
+   - the 70B's final answers: they come from the EXP-0049 run below (`predictions/EXP-0049/final.jsonl`).
+3. **Once the final features are untarred:** EXP-0092's final answers, then the combination, then the file:
+   `APERTUS_CORE_BASE=none uv run --extra local --env-file .env python -m galaxus.serve.submit --exp EXP-0092 --part final --run galaxus.model.apertus_core:from_env`
+   `uv run --env-file .env python -m galaxus.model.ensemble apply --routing "$GALAXUS_DATA/out/ensemble/routing-EXP-0095.json" --part final --exp EXP-0095`
+   `uv run --env-file .env python -m galaxus.serve.submit --exp EXP-0095 --part dev --part final`
+   Then the validator, the upload by a person, and **select it on Kaggle**.
+
+**If EXP-0097 lands first:** heads on the new `fields` features (#233; `APERTUS_CORE_LAYERS=-1,-17
+APERTUS_CORE_POOL=fields APERTUS_CORE_BASE=none`, three GPU jobs serving at about 12:15). It replaces EXP-0092 as
+`core` only if its row is on `main` and it beats 0.466, and then the final features must come from three `final` jobs
+with `SHARD=0/3`, `1/3`, `2/3` and the same `LAYERS` and `POOL`. The combination with the 70B gets its own EXP id and
+row before it is used. SigLIP 2 so400m (downloaded at 11:18) may not join any head or vote: since 11:15 a head reads
+only Apertus' hidden states.
+
+### Before 13:00 (once)
+
+- [ ] The 70B is the model the gateway client will use. This must print `apertus-v1-5-70b`:
+      `LLM_NAME=apertus-v1-5-70b uv run --env-file .env python -c "from galaxus.model.apertus.api import gateway_settings as g; print(g()['LLM_NAME'])"`
+- [ ] **An Apertus-only dev file.** The dev rows of the submitted file come from the same method. EXP-0049's dev answers
+      fed EXP-0051's dev file, so `predictions/EXP-0049/dev.jsonl` should exist on Neel's laptop. Then, with no
+      gateway call:
+      `uv run --env-file .env python -m galaxus.serve.submit --exp EXP-0049 --part dev`
+      If it doesn't exist, the same command with `--run galaxus.model.zero_shot:from_preset --workers 2` and the two
+      variables of the command below makes it (5,261 dev images at the 70B's measured 2.42 img/s).
+- [ ] `shasum -a 256 $GALAXUS_DATA/final_encrypted.bin` matches the SHA-256 in the hosts' README.
+
+### At 13:00: one command
+
+```bash
+ZERO_SHOT_PRESET=zero-shot-observe-first-no-context \
+LLM_NAME=apertus-v1-5-70b \
+uv run --extra local --env-file .env python -m galaxus.serve.final_run --predictor galaxus.model.zero_shot:from_preset \
+    --exp EXP-0049 --best-file $GALAXUS_DATA/out/submissions/EXP-0049_dev.csv --workers 2
+```
+
+- It asks for the passphrase (not echoed), decrypts, classifies the 5,292 final images with the 70B (measured 2.42
+  img/s on EXP-0049), merges them into the dev file, validates, and prints the `kaggle competitions submit …` command.
+- A person runs that command, then **selects this file on Kaggle**. Without a selection Kaggle takes the best public
+  score, which is a SigLIP file outside the rules (#137).
+- A 429 from the gateway: rerun the same command; finished batches are kept.
+
+## Superseded: the EXP-0056 plan (outside the rules since about 11:15 CET)
+
+Kept for the record only. Do not run it: it routes dimensions to SigLIP heads and uses the type prior.
+
 ## Saturday 28 Nov: the frozen method EXP-0056
 
 EXP-0056 is the SigLIP heads and Apertus v1.5 70B, combined per dimension: 0.733 on the holdout, **0.73546 public**
@@ -85,8 +148,9 @@ embedding cache, the routing file and the gateway key.
 - [ ] `shasum -a 256 $GALAXUS_DATA/final_encrypted.bin` matches the SHA-256 in the hosts' README.
 - [ ] The 70B is the model the gateway client will use. This must print `apertus-v1-5-70b`:
       `LLM_NAME=apertus-v1-5-70b uv run --env-file .env python -c "from galaxus.model.apertus.api import gateway_settings as g; print(g()['LLM_NAME'])"`
-- [ ] **Gateway credit for about 21M prompt tokens** (5,292 images × about 3,900; EXP-0049 used 9.5M on 2,444).
-      There is one key in `.env`. A second key as `LLM_API_KEY_2` is used automatically when the first runs out.
+- **Gateway credit is not a limit:** the Keera key has unlimited credits, and it stays as it is (Neel, 28 Nov). The
+  final run needs about 21M prompt tokens (5,292 images × about 3,900). A 429 (rate limit) is still possible:
+  rerun the same command.
 - [ ] **A fresh `ENSEMBLE_CACHE` folder for the final part.** The cache is keyed by member name only (#188 review),
       so a folder from a drill or from another member setup would serve stale answers.
 
@@ -106,6 +170,9 @@ uv run --extra local --env-file .env python -m galaxus.serve.final_run --predict
 
 - It asks for the passphrase (not echoed), decrypts, runs both members on each batch, combines them with the frozen
   routing, merges into the dev file, validates, and prints the `kaggle competitions submit …` command.
+- **Uncached final images are prepared on demand** (the data lane's 512 px cache). On Neel's laptop that runs at
+  **671.7 img/s** (#194, 8 workers, 300 uncached images), so about 8 s for all 5,292 images. No separate step is
+  needed here; the manual steps below fill the cache explicitly (step 1b).
 - **About 45 min:** the members run in turn per batch, so the time is the 70B's (2.38–2.42 img/s, EXP-0049) plus
   the SigLIP heads' (about 18–30 img/s). **Drill on Neel's laptop, 06:53:** this exact command passed decrypt,
   kill and resume, and validation. It ran 300 dev images at **1.978 img/s**, just under the 2.0 floor, with two
@@ -122,6 +189,8 @@ uv run --extra local --env-file .env python -m galaxus.serve.final_run --predict
 `ensemble apply` reads `predictions/<member EXP>/final.jsonl`, so the member runs must use exactly these EXP ids.
 
 1. Decrypt: `7zz x -o"$GALAXUS_DATA/final" "$GALAXUS_DATA/final_encrypted.bin"`. It asks for the passphrase.
+1b. Fill the 512 px cache for the final images (#194; resumable, about 8 s on this laptop):
+    `uv run --extra local --env-file .env python -m galaxus.data.images --part final --workers 8`
 2. Both members, in two terminals at the same time (each resumes if rerun):
 
    ```bash

@@ -59,3 +59,68 @@ def test_label_error_count_and_kaggle_score_parsing(tmp_path):
     output = "fileName,date,description,status,publicScore,privateScore\nf.csv,2026,x,complete,0.4321,\n"
     assert report.kaggle_public_score(lambda command: output) == "0.4321"
     assert report.kaggle_public_score(lambda command: "fileName,publicScore\n") is None
+
+
+def _method_rows():
+    gateway = dict(ROW, id="EXP-0049", model="apertus-v1-5-70b", model_revision=None, score=0.47,
+                   config={"prompt_tokens": 9_526_164, "completion_tokens": 238_221, "images": 2444},
+                   hardware={"system": "Darwin", "machine": "arm64", "gpu": None})
+    prior = dict(ROW, id="EXP-0051", model=None, score=0.49, config={"base": "EXP-0049"})
+    siglip = dict(ROW, id="EXP-0055", model="google/siglip-base-patch16-224", model_revision="7fd15f0",
+                  helpers=["google/siglip-base-patch16-224"], score=0.705, config={})
+    method = dict(ROW, id="EXP-0056", model=None, score=0.733, hardware={"system": "Darwin", "machine": "arm64"},
+                  config={"members": {"siglip": "EXP-0055", "70b": "EXP-0051"}, "base": "siglip"})
+    other = dict(ROW, id="EXP-0004", model="apertus-lora", score=0.343, config={})
+    return [gateway, prior, siglip, method, other], method
+
+
+def test_the_final_methods_models_come_from_its_members_recursively_not_every_row():
+    rows, method = _method_rows()
+    assert [r["id"] for r in report.method_rows(rows, method)] == ["EXP-0056", "EXP-0055", "EXP-0051", "EXP-0049"]
+    text = report.section7(rows, method, [], None)
+    runtime = next(line for line in text.splitlines() if "Runtime:" in line)
+    assert "apertus-v1-5-70b" in runtime and "siglip-base-patch16-224 @ 7fd15f0" in runtime
+    assert "apertus-lora" not in runtime  # a row outside the method is not a runtime model
+    assert "built from: EXP-0055, EXP-0051, EXP-0049" in text
+
+
+def test_resources_come_from_the_methods_newest_drill_and_its_gateway_tokens():
+    rows, method = _method_rows()
+    drills = [
+        {"exp": "EXP-0056", "predictor": "galaxus.model.ensemble:from_env", "part": "dev", "images": 300,
+         "images_per_second": 1.5, "meets_floor": False, "floor_images_per_second": 2.0,
+         "finished_at": "2026-11-28T05:00:00+00:00"},
+        {"exp": "EXP-0056", "predictor": "galaxus.model.ensemble:from_env", "part": "dev", "images": 300,
+         "images_per_second": 1.978, "meets_floor": False, "floor_images_per_second": 2.0,
+         "finished_at": "2026-11-28T05:53:00+00:00"},
+        {"exp": "EXP-0099", "images_per_second": 50.0, "finished_at": "2026-11-28T09:00:00+00:00"},  # another method
+    ]
+    text = report.section7(rows, method, [], None, drills=drills)
+    for expected in ("**1.978 images/s**", "is BELOW the 2.0 images/s floor", "about 45 min", "Darwin arm64, no GPU",
+                     "14.0 hours on that machine", "3,898 prompt and 97 answer tokens per image", "390M prompt tokens"):
+        assert expected in text, expected
+    assert "50.000" not in text and "galaxus.serve.bench" not in text
+
+
+def test_development_models_come_from_models_md_and_the_weights_are_written(tmp_path):
+    models = tmp_path / "MODELS.md"
+    models.write_text("# MODELS\n\n## Runtime\n\n| Model | Role |\n| --- | --- |\n| Apertus | runs |\n\n"
+                      "## Development only (never at runtime)\n\n| Model | Role | Where |\n| --- | --- | --- |\n"
+                      "| `gpt-6.2-astra` (closed) | reference | laptop |\n| Claude Code (Anthropic) | assistant | all |\n\n"
+                      "## Other\n\n| Model | x |\n| --- | --- |\n| not this one | x |\n")
+    assert report.development_models(models) == ["`gpt-6.2-astra` (closed)", "Claude Code (Anthropic)"]
+    assert report.development_models(tmp_path / "missing.md") == []
+    rows, method = _method_rows()
+    text = report.section7(rows, method, [], None, development=report.development_models(models),
+                           weights="noidea/heads @ abc123")
+    assert "Development only, never at runtime (source `MODELS.md`): `gpt-6.2-astra` (closed); Claude Code" in text
+    assert "weights: noidea/heads @ abc123." in text
+
+
+def test_drill_reports_are_read_and_a_broken_one_is_skipped(tmp_path):
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a" / "report.json").write_text(json.dumps({"exp": "EXP-0056", "images_per_second": 2.5}))
+    (tmp_path / "b").mkdir()
+    (tmp_path / "b" / "report.json").write_text("{not json")
+    assert [d["images_per_second"] for d in report.read_drills(tmp_path)] == [2.5]
+    assert report.read_drills(tmp_path / "missing") == []

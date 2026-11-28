@@ -180,6 +180,53 @@ def _helper_fused_text(rows: pd.DataFrame, data: DataLane, seed: int) -> Predict
     return helper.fused_factory(context=ContextFeatures())(rows, data, seed)
 
 
+def _teacher_setup():
+    """D (#211): the teacher and self-training switches; one of them must be on for a teacher row."""
+    from galaxus.model import teacher
+
+    setup = teacher.from_environ()
+    if setup is None:
+        raise RuntimeError(f"set ${teacher.TEACHER_ENV} to the teacher's dev.jsonl (EXP-0080) and/or "
+                           f"${teacher.SELF_TRAIN_ENV}=1")
+    return setup
+
+
+def _helper_teacher(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """D (#211): ``helper-siglip`` trained on the human rows plus the teacher's (and agreeing) dev rows."""
+    from galaxus.model import helper
+
+    return helper.factory(teacher=_teacher_setup())(rows, data, seed)
+
+
+def _helper_fused_teacher(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """D (#211): ``helper-fused`` trained on the human rows plus the teacher's (and agreeing) dev rows."""
+    from galaxus.model import helper
+
+    return helper.fused_factory(teacher=_teacher_setup())(rows, data, seed)
+
+
+def _helper_so400m(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """#220: heads on SigLIP 2 so400m (``$HELPER_SO400M``, pinned by ``$HELPER_SO400M_REVISION``) alone."""
+    from galaxus.model import encoders
+
+    return encoders.factory()(rows, data, seed)
+
+
+def _helper_fused_so400m(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """#220: heads on EXP-0059's three frozen encoders plus SigLIP 2 so400m, each at unit length."""
+    from galaxus.model import encoders
+
+    return encoders.factory(fused=True)(rows, data, seed)
+
+
+def _apertus_core(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """#219: heads on Apertus v1.5 8B hidden states (the core) and helper-fused's frozen encoders (the base), plus
+    ``$APERTUS_CORE_BASE_SCORES`` when set."""
+    from galaxus.model import apertus_core
+
+    return apertus_core.factory()(rows, data, seed)
+
+
 def _recalibrated(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
     """#42: $RECAL_BASE's saved holdout answers with confidence-gated recalibration, cross-fitted on product halves."""
     import os
@@ -231,6 +278,11 @@ PREDICTORS: dict[str, PredictorFactory] = {
     "helper-fused-mirror": _helper_fused_mirror,  # helper-fused with the mirror-aware perspective head
     "helper-siglip-text": _helper_text,  # A (#211): the catalog text as features next to SigLIP's (EXP-0070)
     "helper-fused-text": _helper_fused_text,  # A on EXP-0059's three encoders (EXP-0071)
+    "helper-siglip-teacher": _helper_teacher,  # D (#211): + teacher dev rows ($HELPER_TEACHER, $HELPER_SELF_TRAIN)
+    "helper-fused-teacher": _helper_fused_teacher,  # D (#211): helper-fused + teacher dev rows
+    "apertus-core": _apertus_core,  # #219: Apertus hidden states + the frozen encoders (+ optional base scores)
+    "helper-so400m": _helper_so400m,  # #220: SigLIP 2 so400m heads, pinned by $HELPER_SO400M_REVISION
+    "helper-fused-so400m": _helper_fused_so400m,  # #220: EXP-0059's three encoders + so400m
     "recalibrated": _recalibrated,  # #42: confidence-gated recalibration of $RECAL_BASE (e.g. EXP-0004)
     "type-prior": _type_prior,  # #133: the product-type prior on $TYPE_PRIOR_BASE's answers (e.g. EXP-0002)
     "majority": _majority,

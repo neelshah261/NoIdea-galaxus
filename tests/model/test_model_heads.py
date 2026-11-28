@@ -163,3 +163,40 @@ def test_out_of_fold_predictions_find_a_planted_label_error(tmp_path):
     assert list(report.columns) == ["image_id", "dimension", "label", "suggested_label"]
     hit = report[(report.image_id == planted) & (report.dimension == "subject")]
     assert len(hit) == 1 and hit.iloc[0]["label"] == "b" and hit.iloc[0]["suggested_label"] == "a"
+
+
+def test_shards_split_a_part_once_and_their_files_never_clash(tmp_path):
+    """#214: n parallel GPU jobs each take shard i/n; their feature files untar into one store."""
+    items = [ImageItem(f"img_{i}", f"/x/{i}.jpg", None) for i in (5, 2, 9, 0, 7, 3, 1)]
+    shards = [heads.shard_items(items, f"{i}/3") for i in range(3)]
+    ids = [[item.image_id for item in shard] for shard, _ in shards]
+    flat = [image_id for shard in ids for image_id in shard]
+    assert sorted(flat) == sorted(item.image_id for item in items), "every image in exactly one shard"
+    assert ids[0] == ["img_0", "img_3", "img_9"] and [tag for _, tag in shards] == ["s0of3-", "s1of3-", "s2of3-"]
+    for bad in ("3/3", "-1/2", "1/0", "x"):
+        with pytest.raises(ValueError):
+            heads.shard_items(items, bad)
+    store = heads.FeatureStore(tmp_path / "features")
+
+    def forward(images, prompt):
+        return np.ones((len(images), 1, 4))
+
+    for shard, tag in shards:
+        heads.extract(forward, shard, store, "train", lambda item: b"jpeg", shard_size=2, log=None, shard_tag=tag)
+    names = sorted(path.name for path in (tmp_path / "features" / "train").glob("shard_*.npz"))
+    assert len(names) == len(set(names)) == 4 and all(name.startswith("shard_s") for name in names)
+    assert sorted(store.load("train")) == sorted(item.image_id for item in items)
+
+
+def test_the_fields_pool_lists_each_dimension_s_classes_from_the_contract(monkeypatch):
+    from galaxus.data import classes
+
+    monkeypatch.setattr(classes, "dimensions", lambda: ("shape", "tone"))
+    monkeypatch.setattr(classes, "allowed_classes", lambda: {"shape": frozenset({"round", "flat"}),
+                                                             "tone": frozenset({"warm"})})
+    assert heads.fields_for("fields") == ("shape", "tone") and heads.fields_for("last") == ()
+    assert heads.blocks_per_layer("fields") == 4 and heads.blocks_per_layer("mean") == 1
+    plain = heads.prompt_for({"brand": "Acme"})
+    assert heads.prompt_for_pool({"brand": "Acme"}, "last") == plain
+    fields = heads.prompt_for_pool({"brand": "Acme"}, "fields")
+    assert fields.startswith(plain) and fields.endswith("Options: shape: flat, round; tone: warm.")
