@@ -71,6 +71,10 @@ def test_a_dead_gateway_stops_the_run_and_a_restart_completes_without_duplicates
 
 
 def test_more_workers_are_faster_over_a_slow_gateway(tmp_path, galaxus_data):
-    slow = load.run_load(load.FakeGateway(latency=0.02), 40, workers=1, batch_size=2, root=tmp_path / "a", keys=KEYS)
-    fast = load.run_load(load.FakeGateway(latency=0.02), 40, workers=8, batch_size=2, root=tmp_path / "b", keys=KEYS)
-    assert fast.images_per_second > 3 * slow.images_per_second
+    """#140: the proof is that requests overlap, counted at the gateway, not a wall-clock ratio, which a busy 2-core
+    ci runner turned into a coin flip (2.53x against a 3x bound on PR #130)."""
+    one, many = load.FakeGateway(latency=0.02), load.FakeGateway(latency=0.02)
+    load.run_load(one, 40, workers=1, batch_size=2, root=tmp_path / "a", keys=KEYS)
+    load.run_load(many, 40, workers=8, batch_size=2, root=tmp_path / "b", keys=KEYS)
+    assert one.requests == many.requests  # the same work
+    assert one.max_in_flight <= 2 < many.max_in_flight  # 1 worker: only its own batch; 8 workers: batches overlap
