@@ -110,3 +110,28 @@ def test_a_merged_file_is_what_the_loras_teacher_option_reads(tmp_path):
         {}, ("subject",), default="a")
     path = distill.write_records(merged, distill.teacher_file(tmp_path, "mixed"))
     assert load_records(path) == merged
+
+
+def test_dev_pseudo_labels_train_only_their_confident_cells():
+    import pandas as pd
+
+    from galaxus.model.lora import TrainingSet
+
+    dims = ("subject", "perspective")
+    dev = pd.DataFrame({"image_id": ["d1", "d2", "d3", "d4"], "image_file": ["/d1", "/d2", "/d3", "/d4"],
+                        "product_title": ["t", "t", "t", "t"]})
+    pseudo = {
+        "d1": {"labels": {"subject": "s1", "perspective": "p1"}, "confidence": {"subject": 0.95, "perspective": 0.4}},
+        "d2": {"labels": {"subject": "s2", "perspective": "p2"}, "confidence": {"subject": 0.3, "perspective": 0.2}},
+        "d3": {"labels": {"subject": "s3"}, "confidence": {"subject": 0.99}},  # a dimension missing: not a full target
+        "x9": {"labels": {"subject": "s9", "perspective": "p9"}, "confidence": {"subject": 1.0, "perspective": 1.0}},
+    }
+    examples, cells = distill.pseudo_examples(pseudo, dev, dims, min_confidence=0.8)
+    assert [e.image_id for e in examples] == ["d1"]  # d2 has no confident cell, d3 lacks a label, x9 is not a dev row
+    assert examples[0].target == {"subject": "s1", "perspective": "p1"}
+    assert examples[0].trained_dimensions == ("subject",)  # perspective stays masked
+    assert cells == {"subject": 1, "perspective": 0}
+
+    base = TrainingSet(examples=["train example"], stats={"examples_per_epoch": 1})
+    grown = distill.with_pseudo(base, examples, cells)
+    assert len(grown.examples) == 2 and grown.stats["examples_per_epoch"] == 2 and grown.stats["pseudo_added"] == 1

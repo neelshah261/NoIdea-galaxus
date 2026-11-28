@@ -160,6 +160,48 @@ def write_records(records: Mapping[str, Mapping[str, Any]], target: Path) -> Pat
     return target
 
 
+def pseudo_examples(
+    pseudo: Mapping[str, Mapping[str, Any]],
+    dev_rows: Any,
+    dimensions: Sequence[str],
+    min_confidence: float | None = None,
+) -> tuple[list[Any], dict[str, int]]:
+    """#172 D6: dev images as training examples, labelled by a teacher (FAQ.md:30-31 allows dev pseudo-labels).
+
+    ``pseudo`` is a teacher's dev answers (a ``galaxus.serve.submit --run`` pass, or ``merge --part dev``). The answer
+    is the whole target JSON, so a dev image needs a label for every dimension; only its cells at ``min_confidence``
+    or above enter the loss, the others are masked as prelabels are. An image with no confident cell is left out.
+    Only rows of ``dev_rows`` (dev.csv) become examples, so no train, holdout or final image can join this way.
+    Returns the examples and the number of cells per dimension that entered the loss.
+    """
+    from galaxus.model.lora import TEACHER_MIN_CONFIDENCE, Example, _context
+
+    floor = TEACHER_MIN_CONFIDENCE if min_confidence is None else min_confidence
+    examples, cells = [], dict.fromkeys(dimensions, 0)
+    for record in dev_rows.to_dict(orient="records"):
+        answer = pseudo.get(str(record[ID_COLUMN])) or {}
+        labels, confidence = answer.get("labels") or {}, answer.get("confidence") or {}
+        if any(d not in labels for d in dimensions):
+            continue
+        trained = tuple(d for d in dimensions if confidence.get(d) is not None and float(confidence[d]) >= floor)
+        if not trained:
+            continue
+        examples.append(Example(str(record[ID_COLUMN]), str(record.get("image_file", "")), False, _context(record),
+                                {d: str(labels[d]) for d in dimensions}, trained))
+        for d in trained:
+            cells[d] += 1
+    return examples, cells
+
+
+def with_pseudo(data: Any, examples: Sequence[Any], cells: Mapping[str, int]) -> Any:
+    """The training set plus the pseudo-labelled dev examples, with their counts in the stats."""
+    from galaxus.model.lora import TrainingSet
+
+    stats = {**data.stats, "pseudo_added": len(examples), "pseudo_cells": dict(cells),
+             "examples_per_epoch": len(data.examples) + len(examples)}
+    return TrainingSet(list(data.examples) + list(examples), stats)
+
+
 def _pairs(values: Sequence[str]) -> dict[str, str]:
     pairs = {}
     for value in values:
