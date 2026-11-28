@@ -57,4 +57,4 @@ named.
 | Q-0004 | May a committed prompt paraphrase labeling_guideline.md? | avoided: the guideline is read from `$GALAXUS_DATA` at runtime and only its hash is recorded | PLAN.md, PR #63 |
 | Q-0005 | Is a per-class logit bias, fitted out-of-fold on train, allowed? | open: for the hosts (Neel, Discord); blocks calibration in #51 | PLAN.md, #40, #88 |
 | Q-0006 | Which transformers loads Apertus 1.5? | **assumed `>=5.24`** (the vLLM guide; the `local` extra); confirmed by the GPU check in #76 | PLAN.md, PR #71 |
-| Q-0007 | Do small heads on Apertus v1.5 hidden states count as "Apertus classifying"? Are they fine as a development-time label-error tool? | open: for the hosts (Neel, Discord); gates #51 | BASE_ARCHITECTURE.md, #40, #88 |
+| Q-0007 | Do small heads on Apertus v1.5 hidden states count as "Apertus classifying"? Are they fine as a development-time label-error tool? | **(a) answered: yes.** The hosts, in a one-to-one talk with Neel; recorded by Neel on 2026-11-28. Heads on Apertus hidden states count as "Apertus classifying" and may be the final method (#51, #129 step 5). (b) development-time use: yes (#121). | BASE_ARCHITECTURE.md, #40, #88, #121 |
