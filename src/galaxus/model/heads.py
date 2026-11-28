@@ -272,11 +272,15 @@ def fit_heads(
     key: str = "",
     seed: int = 0,
     log: Callable[[str], None] | None = print,
+    calibration_mask: Callable[[pd.DataFrame, str], pd.Series] | None = None,
 ) -> HeadsModel:
     """Heads on the scored human labels of ``rows``; with ``folds``, calibrated on out-of-fold probabilities.
 
+    ``scored_mask`` picks the training cells. ``calibration_mask`` (default: the same) picks the held-out cells the
+    calibration bias is fitted on: D (#211) trains on human and teacher cells but calibrates on human cells only.
     Rows without features are an error: extract them first, so no image is silently left out of training.
     """
+    calibration_mask = calibration_mask or scored_mask
     missing = [str(i) for i in rows["image_id"] if str(i) not in features]
     if missing:
         raise KeyError(f"{len(missing)} training image(s) have no features, first: {missing[:3]}; run extract first")
@@ -292,7 +296,7 @@ def fit_heads(
             oof_rows: list[np.ndarray] = []
             for fit_part, held in folds(rows):
                 fit_scored = fit_part[scored_mask(fit_part, dimension)]
-                held_scored = held[scored_mask(held, dimension)]
+                held_scored = held[calibration_mask(held, dimension)]
                 if held_scored.empty or fit_scored.empty:
                     continue
                 fold_head = fit_head(
@@ -305,7 +309,8 @@ def fit_heads(
                 oof_rows.append(full)
                 oof_ids.extend(str(i) for i in held_scored["image_id"])
             if oof_rows:
-                truth = scored.set_index(scored["image_id"].astype(str)).loc[oof_ids, dimension].astype(str)
+                calibrated = rows[calibration_mask(rows, dimension)]
+                truth = calibrated.set_index(calibrated["image_id"].astype(str)).loc[oof_ids, dimension].astype(str)
                 true_index = np.searchsorted(head.classes, truth.to_numpy())
                 head.bias = fit_bias(np.vstack(oof_rows), true_index)
                 report[dimension] = {"bias": dict(zip(head.classes, head.bias.round(2).tolist()))}
