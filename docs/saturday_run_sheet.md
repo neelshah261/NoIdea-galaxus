@@ -123,6 +123,8 @@ uv run --extra local --env-file .env python -m galaxus.serve.final_run --predict
 `ensemble apply` reads `predictions/<member EXP>/final.jsonl`, so the member runs must use exactly these EXP ids.
 
 1. Decrypt: `7zz x -o"$GALAXUS_DATA/final" "$GALAXUS_DATA/final_encrypted.bin"`. It asks for the passphrase.
+1b. Fill the 512 px cache for the final images (#194; resumable, about 8 s on this laptop):
+    `uv run --extra local --env-file .env python -m galaxus.data.images --part final --workers 8`
 2. Both members, in two terminals at the same time (each resumes if rerun):
 
    ```bash
