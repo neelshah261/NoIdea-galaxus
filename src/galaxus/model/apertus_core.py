@@ -41,10 +41,10 @@ APERTUS_8B = "swiss-ai/Apertus-v1.5-8B"
 LAYERS_ENV = "APERTUS_CORE_LAYERS"
 POOL_ENV = "APERTUS_CORE_POOL"
 BASE_SCORES_ENV = "APERTUS_CORE_BASE_SCORES"
-#: Which frozen encoders join Apertus: ``fused`` (EXP-0059's three, the default) or ``none`` (Apertus alone, through
-#: these heads).
+#: Which frozen encoders join Apertus: ``fused`` (EXP-0059's three, the default), ``fused-so400m`` (those + SigLIP 2
+#: so400m, ``galaxus.model.encoders``), ``so400m`` alone, or ``none`` (Apertus alone, through these heads).
 BASE_ENV = "APERTUS_CORE_BASE"
-BASES = ("fused", "none")
+BASES = ("fused", "fused-so400m", "so400m", "none")
 #: ``factory``'s default: the base named by ``$APERTUS_CORE_BASE``.
 FROM_ENV = object()
 #: The last layer and about three quarters of the depth (layer 24 of 32), where another team found frozen Apertus 8B
@@ -193,7 +193,18 @@ def base_from_env(
         raise ValueError(f"${BASE_ENV} must be one of {', '.join(BASES)}, not {choice!r}")
     if choice == "fused":
         return helper.fused_embeddings, tuple(helper.FUSED_ENCODERS), choice
-    return None, (), choice
+    if choice == "none":
+        return None, (), choice
+    from galaxus.model import encoders
+
+    if choice == "fused-so400m":
+        embed, names = encoders.fused_so400m(environ)
+        return embed, names, choice
+
+    def so400m(pairs: Iterable[tuple[str, str]]) -> dict[str, np.ndarray]:
+        return encoders.so400m_embeddings(pairs, environ=environ)
+
+    return so400m, (encoders.so400m_name(environ),), choice
 
 
 def factory(
@@ -226,12 +237,14 @@ def factory(
             embed, names, choice = base, tuple(encoders), "given"
         predictor = helper.factory(encoder_name=NAME, embed=core_embeddings(features, embed, extra))(rows, data, seed)
         # What the EXP row records: Apertus classifies; the encoders (and the optional scores) are its helpers.
+        from galaxus.model.encoders import revision_of
+
         predictor.model = features.model
         predictor.model_revision = None  # Apertus unchanged, as the gateway serves it: the commit names the method
         predictor.helpers = names + ((f"base-scores:{extra.path.name}",) if extra is not None else ())
         predictor.heads_model.meta.update({
             "core": features.model, "layers": list(features.layer_ids), "pool": features.pool,
-            "base": choice, "base_encoders": list(names), "base_revisions": [helper.REVISIONS.get(n) for n in names],
+            "base": choice, "base_encoders": list(names), "base_revisions": [revision_of(n, env) for n in names],
             "base_scores": str(extra.path) if extra is not None else None,
         })
         return predictor
