@@ -180,5 +180,900 @@
     "usd_per_hour": null,
     "cost_per_100k_usd": null,
     "note": "EXP-0002 A/B: zero-shot Apertus 8B via Keera, 512 px, no product context"
+  },
+  {
+    "id": "EXP-0015",
+    "created": "2026-11-27T22:16:24+01:00",
+    "predictor": "zero-shot",
+    "commit": "7e71510c0a3873bf298ef38ef5386db112cfe7be",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "backend": "api",
+      "image_size": 512,
+      "context": true,
+      "temperature": 0.0,
+      "max_tokens": 200,
+      "workers": 8,
+      "prompt_sha256": "372f09de6450bf02",
+      "images": 2444,
+      "retries": 0,
+      "defaulted_cells": 0,
+      "no_confidence_cells": 0,
+      "prompt_tokens": 9529103,
+      "completion_tokens": 130991
+    },
+    "model": "apertus-v1-5-70b",
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.326953351170508,
+    "macro_f1": {
+      "subject": 0.05868973346239811,
+      "background": 0.44690420820546056,
+      "perspective": 0.11083895455658752,
+      "individuals": 0.7341166834208274,
+      "text_classification": 0.2895132515144252,
+      "text_language": 0.3216572758633492
+    },
+    "weighted_f1": {
+      "subject": 0.4268407031829405,
+      "background": 0.7994796871073114,
+      "perspective": 0.22208141182353816,
+      "individuals": 0.945833630572596,
+      "text_classification": 0.7377432214654782,
+      "text_language": 0.4199779856413757
+    },
+    "overall_weighted_f1": 0.6198248816320072,
+    "images_per_second": 1.951732011303085,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": "zero-shot Apertus 70B via Keera, 512 px, with product context"
+  },
+  {
+    "id": "EXP-0014",
+    "created": "2026-11-27T23:16:55+01:00",
+    "predictor": "zero-shot-image-first",
+    "commit": "9fc0071d0f2697bcd49f93c462d4f7cca83f67e0",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "backend": "api",
+      "image_size": 512,
+      "context": true,
+      "image_first": true,
+      "macro_aware": false,
+      "observe_first": false,
+      "image": "plain",
+      "drop_context": [],
+      "temperature": 0.0,
+      "max_tokens": 200,
+      "workers": 8,
+      "prompt_sha256": "f96de9156471484d",
+      "images": 2444,
+      "retries": 0,
+      "defaulted_cells": 0,
+      "no_confidence_cells": 0,
+      "prompt_tokens": 9663523,
+      "completion_tokens": 112204
+    },
+    "model": "apertus-v1-5-8b",
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.29529363435866596,
+    "macro_f1": {
+      "subject": 0.06152440972782432,
+      "background": 0.4448442197831239,
+      "perspective": 0.09471977796673692,
+      "individuals": 0.5143236488597313,
+      "text_classification": 0.24945681763278493,
+      "text_language": 0.40689293218179445
+    },
+    "weighted_f1": {
+      "subject": 0.419205655179986,
+      "background": 0.7688538805241217,
+      "perspective": 0.1965512003442979,
+      "individuals": 0.9101390922515177,
+      "text_classification": 0.7893547405374016,
+      "text_language": 0.6066586047205572
+    },
+    "overall_weighted_f1": 0.6304130101253609,
+    "images_per_second": 5.712154311342984,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": ""
+  },
+  {
+    "id": "EXP-0006",
+    "created": "2026-11-27T23:31:19+01:00",
+    "predictor": "mirror-tta:zero-shot",
+    "commit": "9fc0071d0f2697bcd49f93c462d4f7cca83f67e0",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "backend": "api",
+      "image_size": 512,
+      "context": true,
+      "image_first": false,
+      "macro_aware": false,
+      "observe_first": false,
+      "image": "plain",
+      "drop_context": [],
+      "temperature": 0.0,
+      "max_tokens": 200,
+      "workers": 8,
+      "prompt_sha256": "372f09de6450bf02",
+      "images": 4754,
+      "retries": 0,
+      "defaulted_cells": 0,
+      "no_confidence_cells": 0,
+      "prompt_tokens": 18534126,
+      "completion_tokens": 214427,
+      "mirror_tta": {
+        "dimension": "perspective",
+        "images": 2444,
+        "skipped_text": 134,
+        "agreements": 2092,
+        "disagreements": 218,
+        "flips": 110
+      }
+    },
+    "model": "apertus-v1-5-8b",
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.3057630974418644,
+    "macro_f1": {
+      "subject": 0.0578705879101136,
+      "background": 0.45992052908070874,
+      "perspective": 0.11249093075524437,
+      "individuals": 0.5285816639440575,
+      "text_classification": 0.25063907494943277,
+      "text_language": 0.42507579801162965
+    },
+    "weighted_f1": {
+      "subject": 0.42244051999361815,
+      "background": 0.7679667906382702,
+      "perspective": 0.21038392032040312,
+      "individuals": 0.912162100806742,
+      "text_classification": 0.789867878910081,
+      "text_language": 0.642614526751749
+    },
+    "overall_weighted_f1": 0.6366865484850407,
+    "images_per_second": 2.8311886372595465,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": ""
+  },
+  {
+    "id": "EXP-0017",
+    "created": "2026-11-27T23:42:48+01:00",
+    "predictor": "zero-shot-768",
+    "commit": "9fc0071d0f2697bcd49f93c462d4f7cca83f67e0",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "backend": "api",
+      "image_size": 768,
+      "context": true,
+      "image_first": false,
+      "macro_aware": false,
+      "observe_first": false,
+      "image": "plain",
+      "drop_context": [],
+      "temperature": 0.0,
+      "max_tokens": 200,
+      "workers": 8,
+      "prompt_sha256": "372f09de6450bf02",
+      "images": 2444,
+      "retries": 0,
+      "defaulted_cells": 0,
+      "no_confidence_cells": 0,
+      "prompt_tokens": 12700820,
+      "completion_tokens": 111333
+    },
+    "model": "apertus-v1-5-8b",
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.312079591647415,
+    "macro_f1": {
+      "subject": 0.06750940223137201,
+      "background": 0.47265933751885253,
+      "perspective": 0.09910408042910164,
+      "individuals": 0.5217393832609365,
+      "text_classification": 0.2282199336906178,
+      "text_language": 0.4832454127536095
+    },
+    "weighted_f1": {
+      "subject": 0.4234400765400086,
+      "background": 0.7173254690356807,
+      "perspective": 0.21064298803790088,
+      "individuals": 0.9113031785441957,
+      "text_classification": 0.7839426423402618,
+      "text_language": 0.6315172744680941
+    },
+    "overall_weighted_f1": 0.6254485592174902,
+    "images_per_second": 3.5484573103440336,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": ""
+  },
+  {
+    "id": "EXP-0018",
+    "created": "2026-11-27T23:49:03+01:00",
+    "predictor": "zero-shot-no-title",
+    "commit": "9fc0071d0f2697bcd49f93c462d4f7cca83f67e0",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "backend": "api",
+      "image_size": 512,
+      "context": true,
+      "image_first": false,
+      "macro_aware": false,
+      "observe_first": false,
+      "image": "plain",
+      "drop_context": [
+        "product_title"
+      ],
+      "temperature": 0.0,
+      "max_tokens": 200,
+      "workers": 8,
+      "prompt_sha256": "372f09de6450bf02",
+      "images": 2444,
+      "retries": 0,
+      "defaulted_cells": 0,
+      "no_confidence_cells": 0,
+      "prompt_tokens": 9491272,
+      "completion_tokens": 110396
+    },
+    "model": "apertus-v1-5-8b",
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.29578635816502064,
+    "macro_f1": {
+      "subject": 0.06009299888656014,
+      "background": 0.4529157222084381,
+      "perspective": 0.09689424102601865,
+      "individuals": 0.5217393832609365,
+      "text_classification": 0.2541642991716259,
+      "text_language": 0.3889115044365446
+    },
+    "weighted_f1": {
+      "subject": 0.4215543147279251,
+      "background": 0.7699515282314916,
+      "perspective": 0.19996973185628422,
+      "individuals": 0.9113031785441957,
+      "text_classification": 0.7924117550973522,
+      "text_language": 0.6444576244724509
+    },
+    "overall_weighted_f1": 0.6359231035842834,
+    "images_per_second": 6.527524071275771,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": ""
+  },
+  {
+    "id": "EXP-0019",
+    "created": "2026-11-28T00:13:00+01:00",
+    "predictor": "zero-shot-macro-aware",
+    "commit": "9fc0071d0f2697bcd49f93c462d4f7cca83f67e0",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "backend": "api",
+      "image_size": 512,
+      "context": true,
+      "image_first": false,
+      "macro_aware": true,
+      "observe_first": false,
+      "image": "plain",
+      "drop_context": [],
+      "temperature": 0.0,
+      "max_tokens": 200,
+      "workers": 8,
+      "prompt_sha256": "febaa14d621b6600",
+      "images": 2444,
+      "retries": 0,
+      "defaulted_cells": 0,
+      "no_confidence_cells": 0,
+      "prompt_tokens": 9617087,
+      "completion_tokens": 110421
+    },
+    "model": "apertus-v1-5-8b",
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.30586805749410045,
+    "macro_f1": {
+      "subject": 0.05912512198226484,
+      "background": 0.4713807325124714,
+      "perspective": 0.09961731916714335,
+      "individuals": 0.5285816639440575,
+      "text_classification": 0.24649119349904755,
+      "text_language": 0.430012313859618
+    },
+    "weighted_f1": {
+      "subject": 0.42130414699619817,
+      "background": 0.7703029001415894,
+      "perspective": 0.19845793744661058,
+      "individuals": 0.912162100806742,
+      "text_classification": 0.7888628011485109,
+      "text_language": 0.6533407407227624
+    },
+    "overall_weighted_f1": 0.6360004143773825,
+    "images_per_second": 4.6644282916952795,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": ""
+  },
+  {
+    "id": "EXP-0021",
+    "created": "2026-11-28T00:21:56+01:00",
+    "predictor": "zero-shot-observe-first",
+    "commit": "9fc0071d0f2697bcd49f93c462d4f7cca83f67e0",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "backend": "api",
+      "image_size": 512,
+      "context": true,
+      "image_first": false,
+      "macro_aware": false,
+      "observe_first": true,
+      "image": "plain",
+      "drop_context": [],
+      "temperature": 0.0,
+      "max_tokens": 400,
+      "workers": 8,
+      "prompt_sha256": "5f37f44309f84c2c",
+      "images": 2444,
+      "retries": 6,
+      "defaulted_cells": 18,
+      "no_confidence_cells": 0,
+      "prompt_tokens": 9640849,
+      "completion_tokens": 244407
+    },
+    "model": "apertus-v1-5-8b",
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.34309103245912015,
+    "macro_f1": {
+      "subject": 0.16368732119695079,
+      "background": 0.42183564932969714,
+      "perspective": 0.21879377102626668,
+      "individuals": 0.5139627878668054,
+      "text_classification": 0.32973360322854345,
+      "text_language": 0.4105330621064574
+    },
+    "weighted_f1": {
+      "subject": 0.46658993129198295,
+      "background": 0.7474121157646348,
+      "perspective": 0.3233451868734613,
+      "individuals": 0.9098609538050769,
+      "text_classification": 0.8109261606217771,
+      "text_language": 0.6351014653101997
+    },
+    "overall_weighted_f1": 0.6610615647348991,
+    "images_per_second": 4.560127848539202,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": ""
+  },
+  {
+    "id": "EXP-0027",
+    "created": "2026-11-28T02:13:20+01:00",
+    "predictor": "type-prior",
+    "commit": "4968ef98b6e4ed891717e5764370e4abbc7727b0",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "method": "product-type prior, gated by confidence, learned on one product half and applied to the other (#133)",
+      "base": "EXP-0021",
+      "rules_full_holdout": {
+        "subject": {
+          "below": 1.01,
+          "share": 0.6
+        },
+        "background": {
+          "below": 1.01,
+          "share": 0.9
+        },
+        "perspective": {
+          "below": 1.01,
+          "share": 0.6
+        },
+        "individuals": {
+          "below": 1.01,
+          "share": 0.6
+        },
+        "text_classification": {
+          "below": 1.01,
+          "share": 0.7
+        },
+        "text_language": {
+          "below": 1.01,
+          "share": 0.6
+        }
+      },
+      "min_type_cells": 20,
+      "types_in_table": {
+        "subject": 115,
+        "background": 105,
+        "perspective": 67,
+        "individuals": 105,
+        "text_classification": 121,
+        "text_language": 43
+      }
+    },
+    "model": null,
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.38782502476296904,
+    "macro_f1": {
+      "subject": 0.19278524610688855,
+      "background": 0.4293531312888809,
+      "perspective": 0.27681001582394804,
+      "individuals": 0.6421064679229531,
+      "text_classification": 0.3697241135157088,
+      "text_language": 0.41617117391943453
+    },
+    "weighted_f1": {
+      "subject": 0.4937263412921644,
+      "background": 0.7727801961173211,
+      "perspective": 0.359426332326656,
+      "individuals": 0.9303576012283482,
+      "text_classification": 0.829145555578476,
+      "text_language": 0.6477207729676956
+    },
+    "overall_weighted_f1": 0.6848097966999295,
+    "images_per_second": 4.560127848539202,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": ""
+  },
+  {
+    "id": "EXP-0024",
+    "created": "2026-11-28T02:32:46+01:00",
+    "predictor": "zero-shot-observe-first-768",
+    "commit": "4968ef98b6e4ed891717e5764370e4abbc7727b0",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "backend": "api",
+      "image_size": 768,
+      "context": true,
+      "image_first": false,
+      "macro_aware": false,
+      "observe_first": true,
+      "type_first": false,
+      "image": "plain",
+      "drop_context": [],
+      "temperature": 0.0,
+      "max_tokens": 400,
+      "workers": 8,
+      "prompt_sha256": "5f37f44309f84c2c",
+      "images": 2444,
+      "retries": 493,
+      "defaulted_cells": 2442,
+      "no_confidence_cells": 0,
+      "prompt_tokens": 15361321,
+      "completion_tokens": 559132
+    },
+    "model": "apertus-v1-5-8b",
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.3406953586404325,
+    "macro_f1": {
+      "subject": 0.11664225442141074,
+      "background": 0.39761221893521076,
+      "perspective": 0.16783366923730347,
+      "individuals": 0.5217393832609365,
+      "text_classification": 0.3208747460666613,
+      "text_language": 0.5194698799210725
+    },
+    "weighted_f1": {
+      "subject": 0.44005610392895433,
+      "background": 0.6878739437637804,
+      "perspective": 0.2828973948127832,
+      "individuals": 0.9113031785441957,
+      "text_classification": 0.8166912730528656,
+      "text_language": 0.6298337033051524
+    },
+    "overall_weighted_f1": 0.6400836335499716,
+    "images_per_second": 2.096033704141347,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": ""
+  },
+  {
+    "id": "EXP-0025",
+    "created": "2026-11-28T02:41:37+01:00",
+    "predictor": "zero-shot-observe-first-no-context",
+    "commit": "4968ef98b6e4ed891717e5764370e4abbc7727b0",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "backend": "api",
+      "image_size": 512,
+      "context": false,
+      "image_first": false,
+      "macro_aware": false,
+      "observe_first": true,
+      "type_first": false,
+      "image": "plain",
+      "drop_context": [],
+      "temperature": 0.0,
+      "max_tokens": 400,
+      "workers": 8,
+      "prompt_sha256": "5f37f44309f84c2c",
+      "images": 2444,
+      "retries": 46,
+      "defaulted_cells": 168,
+      "no_confidence_cells": 0,
+      "prompt_tokens": 9700691,
+      "completion_tokens": 248983
+    },
+    "model": "apertus-v1-5-8b",
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.35992835131393,
+    "macro_f1": {
+      "subject": 0.2331444914868766,
+      "background": 0.3928714946577039,
+      "perspective": 0.21780441244197535,
+      "individuals": 0.5139627878668054,
+      "text_classification": 0.30196009913467664,
+      "text_language": 0.4998268222955419
+    },
+    "weighted_f1": {
+      "subject": 0.5176775415348295,
+      "background": 0.7627385982508738,
+      "perspective": 0.31964917191479236,
+      "individuals": 0.9098609538050769,
+      "text_classification": 0.7982908592514341,
+      "text_language": 0.5995986697818071
+    },
+    "overall_weighted_f1": 0.6680799931431709,
+    "images_per_second": 4.607071196591557,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": ""
+  },
+  {
+    "id": "EXP-0029",
+    "created": "2026-11-28T02:55:11+01:00",
+    "predictor": "type-prior",
+    "commit": "0ea10293bdfd7118b2e3d164110498224cabcc9b",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "method": "product-type prior, gated by confidence, learned on one product half and applied to the other (#133)",
+      "base": "EXP-0025",
+      "rules_full_holdout": {
+        "subject": {
+          "below": 1.01,
+          "share": 0.6
+        },
+        "background": {
+          "below": 0.8,
+          "share": 0.8
+        },
+        "perspective": {
+          "below": 1.01,
+          "share": 0.6
+        },
+        "individuals": {
+          "below": 1.01,
+          "share": 0.6
+        },
+        "text_classification": {
+          "below": 1.01,
+          "share": 0.7
+        },
+        "text_language": {
+          "below": 1.01,
+          "share": 0.8
+        }
+      },
+      "min_type_cells": 20,
+      "types_in_table": {
+        "subject": 115,
+        "background": 105,
+        "perspective": 67,
+        "individuals": 105,
+        "text_classification": 121,
+        "text_language": 43
+      }
+    },
+    "model": null,
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.39258947953430695,
+    "macro_f1": {
+      "subject": 0.23497732198036322,
+      "background": 0.39412575524818494,
+      "perspective": 0.2775994512210465,
+      "individuals": 0.6421064679229531,
+      "text_classification": 0.3360764318905048,
+      "text_language": 0.47065144894278893
+    },
+    "weighted_f1": {
+      "subject": 0.526618115927203,
+      "background": 0.77175044521517,
+      "perspective": 0.356693797712934,
+      "individuals": 0.9303576012283482,
+      "text_classification": 0.8169537178502652,
+      "text_language": 0.6199375021159221
+    },
+    "overall_weighted_f1": 0.6860514131973121,
+    "images_per_second": 4.607071196591557,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": ""
+  },
+  {
+    "id": "EXP-0043",
+    "created": "2026-11-28T02:55:12+01:00",
+    "predictor": "ensemble-agree",
+    "commit": "0ea10293bdfd7118b2e3d164110498224cabcc9b",
+    "dirty": false,
+    "seed": 0,
+    "config": {
+      "batch_size": 256,
+      "method": "per-dimension routing under the halves-agree rule (#106): the base member everywhere, except where both product halves of the choosing data pick the same other option; chosen on one half of the holdout (its two product quarters must agree) and scored on the other",
+      "members": {
+        "noctx": "EXP-0025",
+        "ctx": "EXP-0021"
+      },
+      "routing_chosen_on_half": [
+        {
+          "subject": "noctx",
+          "background": "ctx",
+          "perspective": "noctx",
+          "individuals": "noctx",
+          "text_classification": "ctx",
+          "text_language": "noctx"
+        },
+        {
+          "subject": "noctx",
+          "background": "noctx",
+          "perspective": "noctx",
+          "individuals": "ctx",
+          "text_classification": "noctx",
+          "text_language": "noctx"
+        }
+      ],
+      "routing_full_holdout": {
+        "subject": "noctx",
+        "background": "ctx",
+        "perspective": "noctx",
+        "individuals": "noctx",
+        "text_classification": "ctx",
+        "text_language": "noctx"
+      },
+      "speed": "images_per_second is the members' combined speed: every image goes through every member",
+      "rule": "agree",
+      "base": "noctx",
+      "routing_full_holdout_by_half": [
+        {
+          "subject": "noctx",
+          "background": "ctx",
+          "perspective": "vote",
+          "individuals": "noctx",
+          "text_classification": "ctx",
+          "text_language": "noctx"
+        },
+        {
+          "subject": "noctx",
+          "background": "ctx",
+          "perspective": "noctx",
+          "individuals": "ctx",
+          "text_classification": "ctx",
+          "text_language": "noctx"
+        }
+      ]
+    },
+    "model": "apertus-v1-5-8b",
+    "model_revision": null,
+    "docker_digest": null,
+    "helpers": [],
+    "holdout": {
+      "images": 2444,
+      "products": 1452,
+      "sha256": "b782f7d24464c091",
+      "training_images": 9432
+    },
+    "score": 0.36493160251573475,
+    "macro_f1": {
+      "subject": 0.2331444914868766,
+      "background": 0.41400460872402123,
+      "perspective": 0.21780441244197535,
+      "individuals": 0.5064901593252109,
+      "text_classification": 0.3183191208207827,
+      "text_language": 0.4998268222955419
+    },
+    "weighted_f1": {
+      "subject": 0.5176775415348295,
+      "background": 0.7556127696996906,
+      "perspective": 0.31964917191479236,
+      "individuals": 0.9086897227717036,
+      "text_classification": 0.8054821890446094,
+      "text_language": 0.5995986697818071
+    },
+    "overall_weighted_f1": 0.6680170969955859,
+    "images_per_second": 2.291739664465889,
+    "hardware": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.13.18",
+      "gpu": null,
+      "peak_gpu_memory_gb": null
+    },
+    "usd_per_hour": null,
+    "cost_per_100k_usd": null,
+    "note": ""
   }
 ]
