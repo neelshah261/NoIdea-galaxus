@@ -36,7 +36,10 @@ from galaxus.model.apertus.backend import (
 MODEL_CLASSES = ("AutoModelForImageTextToText", "AutoModelForVision2Seq", "AutoModelForCausalLM")
 #: ``dtype="auto"``: bf16 where it is fast, fp16 on Apple GPUs, fp32 on the CPU.
 AUTO_DTYPES = {"cuda": "bfloat16", "mps": "float16", "cpu": "float32"}
-POOLS = ("last", "mean")
+#: ``fields`` (#214): one pass that also reads where Apertus would write each field's class, see ``forward``.
+POOLS = ("last", "mean", "fields")
+#: Inputs shaped like ``input_ids`` that ``fields`` knows how to extend for the cue tokens, with the value to append.
+CUE_FILL = {"attention_mask": 1, "token_type_ids": 0, "mm_token_type_ids": 0}
 
 
 def import_stack() -> tuple[Any, Any]:
@@ -71,6 +74,15 @@ def _numpy(tensor: Any) -> np.ndarray:
     if hasattr(tensor, "detach"):
         return tensor.detach().float().cpu().numpy()
     return np.asarray(tensor, dtype=np.float32)
+
+
+def _field_rows(hidden: Any, ends: Sequence[int]) -> list[np.ndarray]:
+    """``pool="fields"`` of one layer (``hidden`` is tokens x units): the prompt's last token, the prompt's mean, then
+    each cue's last token. Rows are picked on the device, so only a few vectors are copied, never the whole layer."""
+    prompt_end = ends[0] + 1
+    prompt = hidden[:prompt_end]
+    mean = _numpy(prompt.float().mean(0)) if hasattr(prompt, "float") else np.asarray(prompt, np.float32).mean(axis=0)
+    return [_numpy(hidden[ends[0]]), mean, *(_numpy(hidden[end]) for end in ends[1:])]
 
 
 #: Where Apertus 1.5 keeps its VQ image tokenizer. It stays in float32 when the rest of the model runs in bf16 or fp16:
@@ -180,25 +192,76 @@ class LocalBackend:
         )
 
     def forward(
-        self, images: Sequence[ImageInput], prompt: str, *, layers: Sequence[int] = (-1,), pool: str = "last"
+        self,
+        images: Sequence[ImageInput],
+        prompt: str,
+        *,
+        layers: Sequence[int] = (-1,),
+        pool: str = "last",
+        fields: Sequence[str] = (),
     ) -> np.ndarray:
-        """Hidden states of ``prompt`` with each image, shape ``(images, layers, hidden size)``.
+        """Hidden states of ``prompt`` with each image, shape ``(images, layers * blocks, hidden size)``.
 
-        ``pool="last"`` takes the last token, the one the answer would start from; ``"mean"`` averages all tokens.
-        One image per pass, so a feature never depends on padding.
+        ``pool="last"`` takes the last token, the one the answer would start from; ``"mean"`` averages all tokens
+        (one block per layer). ``pool="fields"`` (#214) appends one cue per field after the answer start, ``"<field>:"``
+        on its own line, as Apertus would begin writing it, in the same pass. Per layer it gives ``2 + len(fields)``
+        blocks: the last prompt token and the prompt's mean (the ``last`` and ``mean`` features), then each cue's last
+        token, where Apertus would write that field's class. One image per pass, so a feature never depends on padding.
         """
         if pool not in POOLS:
             raise ValueError(f"pool must be one of {', '.join(POOLS)}, got {pool!r}")
+        if pool == "fields" and not fields:
+            raise ValueError("pool 'fields' needs the field names (galaxus.data.classes.dimensions())")
         features = []
         for image in images:
             inputs = self._inputs([{"role": "user", "content": prompt}], [image])
+            ends: list[int] = []
+            if pool == "fields":
+                inputs, ends = self._with_cues(inputs, fields)
             with self.torch.inference_mode():
                 states = self.network(**inputs, output_hidden_states=True).hidden_states
             picked = []
             for layer in layers:
+                if pool == "fields":
+                    picked.extend(_field_rows(states[layer][0], ends))
+                    continue
                 hidden = _numpy(states[layer][0])
                 picked.append(hidden[-1] if pool == "last" else hidden.mean(axis=0))
             features.append(np.stack(picked))
         if not features:
             return np.empty((0, len(layers), 0), dtype=np.float32)
         return np.stack(features)
+
+    def _with_cues(self, inputs: Mapping[str, Any], fields: Sequence[str]) -> tuple[dict[str, Any], list[int]]:
+        """``inputs`` with one cue per field appended, and the positions read: the prompt's last token, then each cue's
+        last token. Each cue is tokenized on its own, so its end is exact whatever the tokenizer merges."""
+        ids = inputs["input_ids"]
+        length = int(ids.shape[1])
+        tokenizer = getattr(self.processor, "tokenizer", self.processor)
+        appended: list[int] = []
+        ends = [length - 1]
+        for index, field in enumerate(fields):
+            cue = [int(token) for token in tokenizer(("\n" if index else "") + f"{field}:", add_special_tokens=False)["input_ids"]]
+            if not cue:
+                raise BackendError(f"local: the cue of field {field!r} has no tokens")
+            appended.extend(cue)
+            ends.append(length + len(appended) - 1)
+        extended: dict[str, Any] = {}
+        for key, value in inputs.items():
+            shape = tuple(getattr(value, "shape", ()))
+            if key == "input_ids":
+                extended[key] = self._append(value, appended)
+            elif len(shape) == 2 and shape == (1, length):
+                if key not in CUE_FILL:
+                    raise BackendError(f"local: pool 'fields' does not know how to extend the input {key!r}")
+                extended[key] = self._append(value, [CUE_FILL[key]] * len(appended))
+            else:
+                extended[key] = value
+        return extended, ends
+
+    def _append(self, value: Any, tokens: Sequence[int]) -> Any:
+        """``value`` (1 x n) with ``tokens`` appended along the sequence, as a numpy array or a tensor on its device."""
+        if isinstance(value, np.ndarray):
+            return np.concatenate([value, np.asarray([tokens], dtype=value.dtype)], axis=1)
+        extra = self.torch.tensor([list(tokens)], dtype=value.dtype, device=value.device)
+        return self.torch.cat([value, extra], dim=1)

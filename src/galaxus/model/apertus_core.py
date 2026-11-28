@@ -95,7 +95,8 @@ class ApertusFeatures:
             if missing:
                 raise UnreadableImage(f"{len(missing)} image(s) could not be read by the feature job; their rows keep "
                                       "the constant answer")
-            return {str(i): per_layer_unit(self._vectors[str(i)], len(self.layer_ids)) for i in ids}
+            blocks = len(self.layer_ids) * heads.blocks_per_layer(self.pool)  # ``fields`` stores several per layer
+            return {str(i): per_layer_unit(self._vectors[str(i)], blocks) for i in ids}
 
 
 def features_from_env(environ: Mapping[str, str] | None = None) -> ApertusFeatures:
