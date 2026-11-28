@@ -293,12 +293,20 @@ def drill(
     from galaxus.data.classes import ID_COLUMN
     from galaxus.data.validate import SubmissionInvalid, validate_submission
     from galaxus.serve.items import load_predictor
-    from galaxus.serve.runner import items_for_part, predictions_path, read_labels, read_predictions, run
+    from galaxus.serve.runner import (
+        default_fallback,
+        items_for_part,
+        predictions_path,
+        read_labels,
+        read_predictions,
+        run,
+    )
     from galaxus.serve.submit import git_revision, submit_command, write_file
 
     if batch_size < 1:
         raise ValueError(f"batch_size must be at least 1, got {batch_size}")
     name = drill_part or f"drill-{part}-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
+    fallback = default_fallback(log)  # as on Saturday: an unreadable image keeps the constant answer (#216)
     folder = drill_dir(name, root)
     revision = git_revision()
     steps: list[DrillStep] = []
@@ -345,7 +353,8 @@ def drill(
             )
         else:
             try:
-                run(_StopAfter(load_predictor(predictor_spec), kill_after), items, exp, name, batch_size, root, None)
+                run(_StopAfter(load_predictor(predictor_spec), kill_after), items, exp, name, batch_size, root, None,
+                    fallback=fallback)
             except KeyboardInterrupt:
                 prediction_seconds += time.perf_counter() - started
             else:
@@ -363,7 +372,7 @@ def drill(
             )
 
         started = time.perf_counter()
-        resume = run(load_predictor(predictor_spec), items, exp, name, batch_size, root, None)
+        resume = run(load_predictor(predictor_spec), items, exp, name, batch_size, root, None, fallback=fallback)
         prediction_seconds += resume.seconds
         done = resume.already_done + resume.predicted
         if not resume.complete:
@@ -507,7 +516,7 @@ def _log_drill(report: DrillReport, path: Path, log: Callable[[str], None] | Non
 def main(argv: list[str] | None = None, passphrase_prompt: Any = getpass.getpass) -> int:
     """``python -m galaxus.serve.final_run``: the whole Saturday sequence, or its rehearsal with ``--dry-run``."""
     from galaxus.serve.items import load_predictor
-    from galaxus.serve.runner import items_for_part, predictions_path, read_labels, run
+    from galaxus.serve.runner import default_fallback, items_for_part, predictions_path, read_labels, run
     from galaxus.serve.submit import git_revision, submit_command, write_file
 
     parser = argparse.ArgumentParser(prog="python -m galaxus.serve.final_run", description=__doc__.split("\n")[0])
@@ -564,7 +573,10 @@ def main(argv: list[str] | None = None, passphrase_prompt: Any = getpass.getpass
         print("[final] warning: no --best-file; the other rows keep sample_submission.csv's values", file=sys.stderr)
 
     predictor = load_predictor(arguments.predictor)
-    report = run(predictor, items, arguments.exp, part, arguments.batch_size, workers=arguments.workers)
+    report = run(predictor, items, arguments.exp, part, arguments.batch_size, workers=arguments.workers,
+                 fallback=default_fallback())
+    if report.fallbacks:
+        print(f"[final] {report.fallbacks} image(s) could not be read and keep sample_submission.csv's constant answer")
     if not report.complete:
         print(f"[final] {report.already_done + report.predicted}/{report.requested} predicted; start again to resume")
         return 1
