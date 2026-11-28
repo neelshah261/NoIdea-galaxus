@@ -107,6 +107,27 @@ idx = merged / "model.safetensors.index.json"
 merged_keys = set(json.loads(idx.read_text())["weight_map"]) if idx.exists() else None
 if base_keys is not None and merged_keys is not None:
     print(f"[merge] tensors: base {len(base_keys)}, merged {len(merged_keys)}, same names: {base_keys == merged_keys}", flush=True)
+    # AutoModelForMultimodalLM loads Apertus without its audio tokenizer, so the merged save lacks those tensors
+    # (first serving run: 924 -> 764, all model.audio_tokenizer.*). The LoRA never touched them: copy them unchanged from
+    # the base shards into one extra shard and list them in the index, so vLLM finds the full base layout.
+    missing = sorted(base_keys - merged_keys)
+    if missing:
+        from safetensors import safe_open
+        from safetensors.torch import save_file
+        base_map = json.loads((base_dir / "model.safetensors.index.json").read_text())["weight_map"]
+        extra = {}
+        for shard in sorted({base_map[k] for k in missing}):
+            with safe_open(base_dir / shard, framework="pt") as handle:
+                for key in missing:
+                    if base_map[key] == shard:
+                        extra[key] = handle.get_tensor(key)
+        save_file(extra, merged / "model-base-extra.safetensors", metadata={"format": "pt"})
+        index = json.loads(idx.read_text())
+        index["weight_map"].update({key: "model-base-extra.safetensors" for key in missing})
+        idx.write_text(json.dumps(index, indent=2))
+        merged_keys = set(index["weight_map"])
+        print(f"[merge] copied {len(missing)} untouched base tensors (e.g. {missing[0]}); now same names: "
+              f"{base_keys == merged_keys}", flush=True)
     if base_keys != merged_keys:
         print("[merge] WARNING names differ, e.g.", sorted(base_keys ^ merged_keys)[:4], flush=True)
 print("[merge] done", flush=True)
