@@ -117,15 +117,23 @@ def _zero_shot(**options: Any) -> PredictorFactory:
     return factory
 
 
-def _ensemble(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
-    """BUILD_PLAN.md phase 2 step 3 (#87): the members in $ENSEMBLE_MEMBERS, routed per dimension, cross-fitted."""
-    from galaxus.model import ensemble
+def _ensemble(rule: str = "best") -> PredictorFactory:
+    """BUILD_PLAN.md phase 2 step 3 (#87): the members in $ENSEMBLE_MEMBERS, routed per dimension, cross-fitted.
 
-    holdout = data.split_holdout(data.read_train())[1]
-    return ensemble.from_saved(
-        ensemble.members_from_env(), holdout, data.dimensions(), data.solution_frame, data.evaluate,
-        data.out_dir(), read_rows(RESULTS_FILE), seed,
-    )
+    ``rule="agree"`` (#106): a dimension leaves the first member only where both product halves pick the same other
+    option (``ensemble.agree``).
+    """
+
+    def factory(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+        from galaxus.model import ensemble
+
+        holdout = data.split_holdout(data.read_train())[1]
+        return ensemble.from_saved(
+            ensemble.members_from_env(), holdout, data.dimensions(), data.solution_frame, data.evaluate,
+            data.out_dir(), read_rows(RESULTS_FILE), seed, rule=rule,
+        )
+
+    return factory
 
 
 def _recalibrated(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
@@ -171,7 +179,8 @@ def _mirror_tta(inner: str) -> PredictorFactory:
 
 #: The predictors this script runs, by name. A new method registers its factory here and changes nothing else.
 PREDICTORS: dict[str, PredictorFactory] = {
-    "ensemble": _ensemble,
+    "ensemble": _ensemble(),
+    "ensemble-agree": _ensemble("agree"),  # #106: the first member unless both product halves agree on another
     "recalibrated": _recalibrated,  # #42: confidence-gated recalibration of $RECAL_BASE (e.g. EXP-0004)
     "type-prior": _type_prior,  # #133: the product-type prior on $TYPE_PRIOR_BASE's answers (e.g. EXP-0002)
     "majority": _majority,

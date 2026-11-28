@@ -14,9 +14,14 @@ them per dimension without running any model again (#87):
 * **An EXP row:** ``python -m galaxus.model.eval ensemble`` runs :class:`EnsemblePredictor`, so the number lands in
   ``results/metrics.json`` with commit, config and holdout hash.
 * For dev and final, ``apply`` uses the routing chosen on the whole holdout.
+* **Two rules** pick the routing. ``best`` takes each dimension's best option. ``agree`` (#106) keeps the
+  **first member listed** (the base) on every dimension, except where both product halves of the choosing data pick
+  the same other option: a winner that flips between halves is noise, so that dimension stays on the base. Chosen
+  on one half of the holdout, the rule splits that half into two product quarters, so the row stays honest.
 
     ENSEMBLE_MEMBERS="zeroshot=EXP-0002 zeroshot_noctx=EXP-0009" python -m galaxus.model.eval ensemble
-    python -m galaxus.model.ensemble choose --members zeroshot=EXP-0002 zeroshot_noctx=EXP-0009
+    ENSEMBLE_MEMBERS="zeroshot=EXP-0002 zeroshot_noctx=EXP-0009" python -m galaxus.model.eval ensemble-agree
+    python -m galaxus.model.ensemble choose --members zeroshot=EXP-0002 zeroshot_noctx=EXP-0009 --rule agree
     python -m galaxus.model.ensemble apply --routing <routing.json> --part dev --exp EXP-0020
 
 Dimensions and classes come from ``galaxus.data.classes``; nothing here names one.
@@ -44,6 +49,9 @@ MEMBERS_ENV = "ENSEMBLE_MEMBERS"
 #: BUILD_PLAN.md phase 2's methods that exist today (#87 step 5); the LoRA (EXP-0004) joins once it is scored.
 DEFAULT_MEMBERS = "zeroshot=EXP-0002 zeroshot_noctx=EXP-0009"
 HALVES = 2
+#: ``best``: each dimension's best option. ``agree`` (#106): the base member unless both product halves agree on another.
+BEST, AGREE = "best", "agree"
+RULES = (BEST, AGREE)
 Records = dict[str, dict[str, Any]]
 #: ``evaluate(solution, submission)`` -> metric.py's result: ``{dimension: {"f1_macro": ...}, "overall": ...}``.
 Evaluate = Callable[[pd.DataFrame, pd.DataFrame], Mapping[str, Any]]
@@ -145,6 +153,61 @@ def choose(
     }
 
 
+def agree(
+    members: Mapping[str, Records],
+    part: pd.DataFrame,
+    dimensions: Sequence[str],
+    solution_frame: SolutionFrame,
+    evaluate: Evaluate,
+    folds: pd.Series,
+    base: str,
+) -> dict[str, Any]:
+    """#106's rule on ``part``: ``base`` on every dimension, except where both folds choose the same other option.
+
+    ``folds`` is 0 or 1 per row of ``part``, grouped by product. Each fold chooses its best option per dimension on
+    its own rows; a dimension switches away from ``base`` only when the two folds pick the same option. The scores
+    and the vote weights returned are those of the whole of ``part``.
+    """
+    if base not in members:
+        raise ValueError(f"the base {base!r} is not one of the members {sorted(members)}")
+    fold_of_row = folds.to_numpy()
+    on_fold = [choose(members, part[fold_of_row == fold], dimensions, solution_frame, evaluate) for fold in range(HALVES)]
+    whole = choose(members, part, dimensions, solution_frame, evaluate)
+    routing = {}
+    for dimension in whole["dimensions"]:
+        picks = {fold["routing"][dimension] for fold in on_fold}
+        routing[dimension] = picks.pop() if len(picks) == 1 else base
+    return {
+        **whole,
+        "routing": routing,
+        "rule": AGREE,
+        "base": base,
+        "routing_on_folds": [fold["routing"] for fold in on_fold],
+    }
+
+
+def choose_by_rule(
+    members: Mapping[str, Records],
+    part: pd.DataFrame,
+    dimensions: Sequence[str],
+    solution_frame: SolutionFrame,
+    evaluate: Evaluate,
+    rule: str = BEST,
+    seed: int = 0,
+    folds: pd.Series | None = None,
+) -> dict[str, Any]:
+    """The routing ``rule`` picks on ``part``; ``agree`` splits ``part`` into product halves unless given ``folds``.
+
+    Under ``agree`` the base is the first member, so the order of ``$ENSEMBLE_MEMBERS`` decides it.
+    """
+    if rule == BEST:
+        return choose(members, part, dimensions, solution_frame, evaluate)
+    if rule == AGREE:
+        folds = holdout_halves(part, seed) if folds is None else folds
+        return agree(members, part, dimensions, solution_frame, evaluate, folds, next(iter(members)))
+    raise ValueError(f"the rule must be one of {RULES}, got {rule!r}")
+
+
 def combine(choice: Mapping[str, Any], members: Mapping[str, Records], image_id: str) -> Prediction:
     """One image's answer under a routing: each dimension from its chosen member, or from the vote."""
     labels: dict[str, str] = {}
@@ -183,18 +246,25 @@ def crossfit(
     solution_frame: SolutionFrame,
     evaluate: Evaluate,
     halves: pd.Series,
+    rule: str = BEST,
+    seed: int = 0,
 ) -> dict[str, Any]:
-    """A routing chosen on each half (applied to the other one), and the routing chosen on the whole holdout."""
+    """A routing chosen on each half (applied to the other one), and the routing chosen on the whole holdout.
+
+    Under ``agree`` a half's routing needs the two product quarters of that half to agree, so no holdout answer is
+    scored by a routing that saw it; the whole-holdout routing (dev and final) needs these two halves to agree.
+    """
     half_of_row = halves.to_numpy()
     chosen_on_half = [
-        choose(members, holdout[half_of_row == half], dimensions, solution_frame, evaluate) for half in range(HALVES)
+        choose_by_rule(members, holdout[half_of_row == half], dimensions, solution_frame, evaluate, rule, seed)
+        for half in range(HALVES)
     ]
     # Holdout image -> index of the half whose routing answers it: always the other half.
     answered_by = {str(i): HALVES - 1 - int(h) for i, h in zip(holdout[ID_COLUMN], half_of_row, strict=True)}
     return {
         "chosen_on_half": chosen_on_half,
         "answered_by": answered_by,
-        "full": choose(members, holdout, dimensions, solution_frame, evaluate),
+        "full": choose_by_rule(members, holdout, dimensions, solution_frame, evaluate, rule, seed, folds=halves),
     }
 
 
@@ -211,6 +281,7 @@ class EnsemblePredictor:
     images_per_second: float | None = None
     model: str | None = None
     helpers: tuple[str, ...] = field(default_factory=tuple)
+    rule: str = BEST
 
     def predict(self, batch: Sequence[ImageItem]) -> list[Prediction]:
         ids = [str(item.image_id) for item in batch]
@@ -223,13 +294,23 @@ class EnsemblePredictor:
         return predictions
 
     def config(self) -> dict[str, Any]:
-        return {
+        config = {
             "method": "per-dimension routing, chosen on one product half of the holdout and scored on the other (#87)",
             "members": dict(self.member_exps),
             "routing_chosen_on_half": [c["routing"] for c in self.fitted["chosen_on_half"]],
             "routing_full_holdout": self.fitted["full"]["routing"],
             "speed": "images_per_second is the members' combined speed: every image goes through every member",
         }
+        if self.rule == AGREE:
+            config.update(
+                rule=AGREE,
+                base=self.fitted["full"]["base"],
+                method="per-dimension routing under the halves-agree rule (#106): the base member everywhere, except "
+                "where both product halves of the choosing data pick the same other option; chosen on one half of "
+                "the holdout (its two product quarters must agree) and scored on the other",
+                routing_full_holdout_by_half=self.fitted["full"]["routing_on_folds"],
+            )
+        return config
 
 
 def combined_speed(rates: Sequence[float | None]) -> float | None:
@@ -262,10 +343,13 @@ def from_saved(
     out_dir: Path,
     result_rows: Sequence[Mapping[str, Any]] = (),
     seed: int = 0,
+    rule: str = BEST,
 ) -> EnsemblePredictor:
     """The predictor from the members' saved holdout answers; speed and model from their EXP rows."""
+    if rule not in RULES:
+        raise ValueError(f"the rule must be one of {RULES}, got {rule!r}")
     members = load_members(member_exps, out_dir)
-    fitted = crossfit(members, holdout, dimensions, solution_frame, evaluate, holdout_halves(holdout, seed))
+    fitted = crossfit(members, holdout, dimensions, solution_frame, evaluate, holdout_halves(holdout, seed), rule, seed)
     rows = {str(row.get("id")): row for row in result_rows}
     member_rows = [rows.get(exp, {}) for exp in member_exps.values()]
     models = sorted({str(row["model"]) for row in member_rows if row.get("model")})
@@ -275,6 +359,7 @@ def from_saved(
         fitted=fitted,
         images_per_second=combined_speed([row.get("images_per_second") for row in member_rows]),
         model=", ".join(models) or None,
+        rule=rule,
     )
 
 
@@ -282,6 +367,31 @@ def members_from_env(environ: Mapping[str, str] | None = None) -> dict[str, str]
     """``$ENSEMBLE_MEMBERS``, or BUILD_PLAN.md's two zero-shot runs when it is unset."""
     environ = os.environ if environ is None else environ
     return parse_members(environ.get(MEMBERS_ENV) or DEFAULT_MEMBERS)
+
+
+def summary(fitted: Mapping[str, Any], member_exps: Mapping[str, str], rule: str = BEST) -> list[str]:
+    """``choose``'s printout: whole-holdout macro F1 per option, and what each half picked."""
+    full = fitted["full"]
+    names = [*member_exps, VOTE]
+    width = max(len(n) for n in names) + 2
+    if rule == AGREE:
+        picked = f"   best on half 0 / half 1 -> routing (base: {full['base']})"
+    else:
+        picked = "   chosen: whole / half 0 / half 1"
+    lines = [f"{'dimension':22}" + "".join(f"{n:>{width}}" for n in names) + picked]
+    for d in full["dimensions"]:
+        row = "".join(f"{full['scores'][d].get(n, float('nan')):>{width}.3f}" for n in names)
+        if rule == AGREE:
+            halves = " / ".join(routing[d] for routing in full["routing_on_folds"])
+            lines.append(f"{d:22}{row}   {halves} -> {full['routing'][d]}")
+        else:
+            halves = " / ".join(c["routing"][d] for c in fitted["chosen_on_half"])
+            lines.append(f"{d:22}{row}   {full['routing'][d]} / {halves}")
+    spec = " ".join(f"{k}={v}" for k, v in member_exps.items())
+    predictor = "ensemble-agree" if rule == AGREE else "ensemble"
+    lines += ["", "These columns are chosen and scored on the same images, so they are optimistic. The honest number is",
+              f'the EXP row: {MEMBERS_ENV}="{spec}" python -m galaxus.model.eval {predictor}']
+    return lines
 
 
 def _write(records: Sequence[Prediction], target: Path) -> None:
@@ -298,6 +408,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     choose_cmd = sub.add_parser("choose", help="score the options per dimension and save the whole-holdout routing")
     choose_cmd.add_argument("--members", nargs="+", default=DEFAULT_MEMBERS.split(), help="name=EXP-#### ...")
     choose_cmd.add_argument("--seed", type=int, default=0, help="seed of the product halves")
+    choose_cmd.add_argument("--rule", choices=RULES, default=BEST,
+                            help="best: each dimension's best option; agree (#106): the first member listed, unless "
+                                 "both product halves pick the same other option")
     choose_cmd.add_argument("--out", type=Path, default=None)
     apply_cmd = sub.add_parser("apply", help="apply the whole-holdout routing to the members' dev or final answers")
     apply_cmd.add_argument("--routing", type=Path, required=True)
@@ -312,19 +425,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         member_exps = parse_members(arguments.members)
         holdout = split.split_holdout(load.read_train())[1]
         predictor = from_saved(member_exps, holdout, classes.dimensions(), split.solution_frame, metric.evaluate,
-                               out_dir(), seed=arguments.seed)
+                               out_dir(), seed=arguments.seed, rule=arguments.rule)
         full = predictor.fitted["full"]
-        names = [*member_exps, VOTE]
-        width = max(len(n) for n in names) + 2
-        print(f"{'dimension':22}" + "".join(f"{n:>{width}}" for n in names) + "   chosen: whole / half 0 / half 1")
-        for d in full["dimensions"]:
-            row = "".join(f"{full['scores'][d].get(n, float('nan')):>{width}.3f}" for n in names)
-            halves = " / ".join(c["routing"][d] for c in predictor.fitted["chosen_on_half"])
-            print(f"{d:22}{row}   {full['routing'][d]} / {halves}")
-        spec = " ".join(f"{k}={v}" for k, v in member_exps.items())
-        print("\nThese columns are chosen and scored on the same images, so they are optimistic. The honest number is"
-              f'\nthe EXP row: {MEMBERS_ENV}="{spec}" python -m galaxus.model.eval ensemble')
-        target = arguments.out or out_dir() / "ensemble" / ("routing-" + "-".join(sorted(member_exps)) + ".json")
+        print("\n".join(summary(predictor.fitted, member_exps, arguments.rule)))
+        prefix = "routing-agree-" if arguments.rule == AGREE else "routing-"
+        target = arguments.out or out_dir() / "ensemble" / (prefix + "-".join(sorted(member_exps)) + ".json")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps({**full, "member_exps": member_exps}, indent=2), encoding="utf-8")
         print(f"routing saved to {target}")
