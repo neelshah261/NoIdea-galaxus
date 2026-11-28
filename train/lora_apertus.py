@@ -15,6 +15,10 @@ Real run, on the GPU machine (AGENTS.md product rule 7: a human starts it, with 
     uv run --with peft --with "transformers>=5.24" --with accelerate --with bitsandbytes \
         python train/lora_apertus.py --model swiss-ai/Apertus-v1.5-8B --epochs 2 --dollars-per-hour <price> --merge
 
+Loss options (#135, the hosts' idea 5): ``--class-weighting tempered`` weights each class-value token by its class's
+tempered inverse frequency (the heads' formula, #51), ``--focal-gamma 2`` puts focal loss on those tokens. Both are off by
+default, so the recipe above is unchanged; ``--plan`` prints the weights, ``--smoke`` takes the same flags.
+
 After about 50 optimizer steps it prints the **measured** examples/s and the projected total time and cost; stop it
 (Ctrl+C) if the projection is over budget. Adapters are saved every 100 steps (``--save-steps``) and at the end under
 ``$GALAXUS_DATA/out/lora/<run>/``; ``--resume`` continues from the last checkpoint. ``--merge`` writes merged bf16
@@ -41,13 +45,19 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from galaxus.model.lora import (
+    CLASS_WEIGHTINGS,
     CONTEXT_DROPOUT,
     IMAGE_SIZE,
     MAX_REPEATS,
     RARE_CLASS_TARGET,
+    TEACHER_MIN_CONFIDENCE,
     Example,
+    LossOptions,
     Plan,
     build_training_set,
+    combine_token_losses,
+    loss_options,
+    loss_weights,
     system_prompt,
     tokens_per_example,
     training_labels,
@@ -57,6 +67,8 @@ from galaxus.model.lora import (
 #: Recipe (reference notebook, deep-dive slide 18): LoRA r32/a32 on all linear layers, lr 2e-4, cosine, 5% warmup,
 #: effective batch 16, 2-4 epochs (their holdout loss was flat after about 2).
 RANK, ALPHA, LEARNING_RATE, WARMUP, WEIGHT_DECAY, EPOCHS, SEED = 32, 32, 2e-4, 0.05, 0.01, 2, 3407
+#: WARMUP is a share of the total steps: transformers 5 dropped ``warmup_ratio`` and reads a float ``warmup_steps`` in
+#: [0, 1) as that ratio (second GPU run, 27 Nov: "unexpected keyword argument 'warmup_ratio'").
 #: One image per step: images of other aspect ratios give pixel tensors of other shapes; 1 x 16 = the recipe's 16.
 BATCH, ACCUMULATION = 1, 16
 #: Checkpoint interval (#76, Neel): 1 epoch is 851 steps, so a save about every 20-30 min on one L40S.
@@ -68,19 +80,30 @@ TARGET_MODULES = r".*(?<!vision_tokenizer)\.(q_proj|k_proj|v_proj|o_proj|up_proj
 REFERENCE_TOKENS_PER_SECOND_L40S = 14_000 * 700 * 3 / (73 * 60) / 2.5
 
 
-def training_set(context_dropout: float = CONTEXT_DROPOUT):
-    """Train minus the official holdout, with the data lane's mirrored rows (#29) and context dropout (#101 item 2)."""
+def training_set(teacher_path: str | None = None, teacher_min_confidence: float = TEACHER_MIN_CONFIDENCE,
+                 context_dropout: float = CONTEXT_DROPOUT):
+    """Train minus the official holdout, with the data lane's mirrored rows (#29), context dropout (#101 item 2) and,
+    with ``teacher_path``, a teacher's labels on the masked prelabel cells (#132)."""
     from galaxus.data import classes, load, mirror, split
+    from galaxus.model.ensemble import load_records
 
     dimensions = tuple(classes.dimensions())
-    rows, _holdout = split.split_holdout(load.read_train())
+    rows, holdout = split.split_holdout(load.read_train())
     mirrored = mirror.mirrored_rows(rows)
-    return (dimensions, build_training_set(rows, dimensions, mirrored, context_dropout=context_dropout),
-            classes.allowed_classes())
+    teacher = None
+    if teacher_path:
+        teacher = load_records(teacher_path)
+        leaked = set(teacher) & set(holdout["image_id"].astype(str))
+        if leaked:
+            raise ValueError(f"the teacher file has {len(leaked)} holdout images: it must cover train minus the holdout")
+    data = build_training_set(rows, dimensions, mirrored, context_dropout=context_dropout, teacher=teacher,
+                              teacher_min_confidence=teacher_min_confidence)
+    return dimensions, data, classes.allowed_classes()
 
 
 def plan(arguments) -> int:
-    _, data, _ = training_set(arguments.context_dropout)
+    _, data, _ = training_set(arguments.teacher, arguments.teacher_min_confidence,
+                              context_dropout=arguments.context_dropout)
     p = Plan(data.stats["examples_per_epoch"], arguments.epochs, BATCH, ACCUMULATION, tokens_per_example(),
              REFERENCE_TOKENS_PER_SECOND_L40S, arguments.dollars_per_hour or 1.8)
     print(json.dumps(data.stats, indent=2))
@@ -91,10 +114,19 @@ def plan(arguments) -> int:
     print(f"recipe: LoRA r{RANK}/a{ALPHA}, lr {LEARNING_RATE}, cosine, warmup {WARMUP}, rare classes towards "
           f"{RARE_CLASS_TARGET} (max {MAX_REPEATS}x), mirrored rows, human labels only, holdout left out, "
           f"context dropout {arguments.context_dropout:.0%} ({data.stats['context_dropped']} examples)")
+    options = loss_options(data.examples, arguments.class_weighting, arguments.focal_gamma)
+    print(f"loss: {options.describe()}")
+    if options.class_weights:
+        print(json.dumps({d: {c: round(w, 3) for c, w in sorted(v.items(), key=lambda x: -x[1])}
+                          for d, v in options.class_weights.items()}, indent=2))
     return 0
 
 
 # ---------------------------------------------------------------- torch side (imported lazily)
+
+
+#: Per-token lists from ``loss_weights`` (#135), padded with no weight; only present when a loss option is on.
+PADDED_LOSS_KEYS = {"loss_weights": 0.0, "value_mask": 0}
 
 
 def make_collator(pad_id: int):
@@ -108,7 +140,11 @@ def make_collator(pad_id: int):
             "attention_mask": torch.tensor([[1] * len(f["input_ids"]) + [0] * (longest - len(f["input_ids"]))
                                             for f in features]),
         }
-        extra = [k for k in features[0] if k not in ("input_ids", "labels", "attention_mask")]
+        for key, fill in PADDED_LOSS_KEYS.items():
+            if key in features[0]:
+                batch[key] = torch.tensor([f[key] + [fill] * (longest - len(f[key])) for f in features],
+                                          dtype=torch.float32 if isinstance(fill, float) else torch.long)
+        extra = [k for k in features[0] if k not in ("input_ids", "labels", "attention_mask", *PADDED_LOSS_KEYS)]
         for key in extra:  # pixel / image-token tensors from the processor; batch 1 keeps shapes simple
             values = [f[key] for f in features]
             batch[key] = torch.cat(values) if hasattr(values[0], "shape") else values
@@ -130,8 +166,25 @@ class LazyDataset:
         return self.encode(self.examples[index])
 
 
-def apertus_encoder(processor, classes):
-    """Example -> model inputs + labels with Apertus' processor. Unverified until the first GPU run (see top)."""
+def chat_messages(system: str, image: Any, context: dict[str, str] | None, answer: str) -> list[dict[str, Any]]:
+    """One training conversation in the shape Apertus 1.5's chat template accepts (chat_template.jinja):
+
+    the system and the assistant content are plain strings (a list of parts raises "Invalid system message" /
+    "Invalid assistant content"); the user content is a list of parts, the image first, then the text, which is also
+    the order the vLLM backend sends at inference. Checked on the real processor in the HF job's setup rehearsal (#76).
+    """
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": user_prompt(context)}]},
+        {"role": "assistant", "content": answer},
+    ]
+
+
+def apertus_encoder(processor, classes, options: LossOptions | None = None):
+    """Example -> model inputs + labels with Apertus' processor. Unverified until the first GPU run (see top).
+
+    With a loss option on (#135), each example also carries its per-token ``loss_weights`` and ``value_mask``.
+    """
     from PIL import Image as PillowImage
 
     from galaxus.data.images import cached_jpeg
@@ -146,16 +199,13 @@ def apertus_encoder(processor, classes):
     def encode(example: Example) -> dict[str, Any]:
         image = PillowImage.open(io.BytesIO(cached_jpeg(example.image_id, example.image_file, mirrored=example.mirrored,
                                                         image_size=IMAGE_SIZE))).convert("RGB")
-        messages = [
-            {"role": "system", "content": [{"type": "text", "text": system}]},
-            {"role": "user", "content": [{"type": "image", "image": image},
-                                         {"type": "text", "text": user_prompt(example.context)}]},
-            {"role": "assistant", "content": [{"type": "text", "text": example.answer}]},
-        ]
+        messages = chat_messages(system, image, example.context, example.answer)
         inputs = processor.apply_chat_template(messages, tokenize=True, return_dict=True, return_tensors="pt")
         ids = inputs["input_ids"][0].tolist()
         features = {"input_ids": ids, "labels": training_labels(ids, example.answer, example.trained_dimensions,
                                                                 with_offsets)}
+        if options is not None and not options.plain:
+            features.update(loss_weights(ids, example, with_offsets, options.class_weights))
         for key, value in inputs.items():
             if key not in ("input_ids", "attention_mask"):
                 features[key] = value
@@ -184,6 +234,43 @@ class ProjectionCallback:
             print(f"[lora] measured {rate:.2f} examples/s -> about {hours:.1f} h for the whole run{cost}. "
                   "Ctrl+C now if that is over budget; the adapters so far are saved at the next checkpoint.",
                   flush=True)
+
+
+def weighted_lm_loss(logits, labels, weights, value_mask, focal_gamma: float):
+    """#135: the causal-LM loss with class weights and focal loss on the class-value tokens, as (sum, token count).
+
+    Shifted like transformers' own loss: the logits at position i predict the label at i + 1.
+    """
+    import torch
+    from torch.nn import functional
+
+    logits, labels = logits[:, :-1].float(), labels[:, 1:]
+    token_loss = functional.cross_entropy(logits.reshape(-1, logits.size(-1)), labels.reshape(-1), ignore_index=-100,
+                                          reduction="none").view_as(labels)
+    return combine_token_losses(token_loss, (labels != -100).to(token_loss.dtype), weights[:, 1:].to(token_loss.dtype),
+                                value_mask[:, 1:], focal_gamma, torch)
+
+
+def weighted_trainer(focal_gamma: float):
+    """A ``Trainer`` that computes the #135 loss itself from the per-token weights the collator padded."""
+    import torch
+    from transformers import Trainer
+
+    class WeightedLossTrainer(Trainer):
+        def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+            weights, values = inputs.pop("loss_weights"), inputs.pop("value_mask")
+            labels = inputs.pop("labels")
+            outputs = model(**inputs)
+            total, count = weighted_lm_loss(outputs.logits, labels, weights, values, focal_gamma)
+            # The model's own loss is normalised in the same way: over the tokens of the whole accumulated batch when
+            # the Trainer passes that count (it then skips its own division by the accumulation steps), else per
+            # micro-batch (and the Trainer divides by the accumulation steps).
+            accumulated = num_items_in_batch is not None and getattr(self, "model_accepts_loss_kwargs", False)
+            denominator = torch.as_tensor(num_items_in_batch if accumulated else count, device=total.device)
+            loss = total / denominator.clamp(min=1)
+            return (loss, outputs) if return_outputs else loss
+
+    return WeightedLossTrainer
 
 
 def trainer_callbacks(total: int, price: float | None):
@@ -220,7 +307,9 @@ def train(arguments) -> int:
     import transformers
     from transformers import Trainer, TrainingArguments
 
-    _dimensions, data, classes = training_set(arguments.context_dropout)
+    _dimensions, data, classes = training_set(arguments.teacher, arguments.teacher_min_confidence,
+                                              context_dropout=arguments.context_dropout)
+    options = loss_options(data.examples, arguments.class_weighting, arguments.focal_gamma)
     out = Path(arguments.output or _out_dir() / f"lora-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}")
     print(f"[lora] {data.stats['examples_per_epoch']} examples per epoch; output {out}; transformers "
           f"{transformers.__version__}, torch {torch.__version__}, cuda {torch.cuda.is_available()}", flush=True)
@@ -233,18 +322,19 @@ def train(arguments) -> int:
         model.gradient_checkpointing_enable()
     model = lora_wrap(model, arguments.rank, arguments.alpha, TARGET_MODULES)
     model.print_trainable_parameters()
-    encode = apertus_encoder(processor, classes)
+    print(f"[lora] loss: {options.describe()}", flush=True)
+    encode = apertus_encoder(processor, classes, options)
     first = encode(data.examples[0])
     print(f"[lora] first example: {len(first['input_ids'])} tokens, "
           f"{sum(1 for x in first['labels'] if x != -100)} in the loss", flush=True)
     pad = getattr(getattr(processor, "tokenizer", processor), "pad_token_id", None) or 0
     total = data.stats["examples_per_epoch"] * arguments.epochs
-    trainer = Trainer(
+    trainer = (Trainer if options.plain else weighted_trainer(options.focal_gamma))(
         model=model,
         args=TrainingArguments(
             output_dir=str(out), per_device_train_batch_size=BATCH, gradient_accumulation_steps=ACCUMULATION,
             num_train_epochs=arguments.epochs, max_steps=arguments.max_steps or -1, learning_rate=arguments.lr,
-            lr_scheduler_type="cosine", warmup_ratio=WARMUP, weight_decay=WEIGHT_DECAY, bf16=torch.cuda.is_available(),
+            lr_scheduler_type="cosine", warmup_steps=WARMUP, weight_decay=WEIGHT_DECAY, bf16=torch.cuda.is_available(),
             logging_steps=10, save_steps=arguments.save_steps, save_total_limit=2, seed=SEED, report_to="none",
             remove_unused_columns=False, dataloader_num_workers=4,
             optim="adamw_bnb_8bit" if _has("bitsandbytes") else "adamw_torch",
@@ -257,7 +347,12 @@ def train(arguments) -> int:
     model.save_pretrained(out / "adapter")
     processor.save_pretrained(out / "adapter")
     (out / "run.json").write_text(json.dumps({"model": arguments.model, "epochs": arguments.epochs,
-                                              "stats": data.stats, "transformers": transformers.__version__}, indent=2))
+                                              "stats": data.stats, "transformers": transformers.__version__,
+                                              "teacher": arguments.teacher,
+                                              "teacher_min_confidence": arguments.teacher_min_confidence,
+                                              "loss": {"class_weighting": arguments.class_weighting,
+                                                       "focal_gamma": arguments.focal_gamma,
+                                                       "class_weights": options.class_weights}}, indent=2))
     if arguments.merge:
         merged = model.merge_and_unload()
         merged.save_pretrained(out / "merged")
@@ -304,13 +399,19 @@ def smoke_examples(dimensions: tuple[str, ...]) -> list[Example]:
     return examples
 
 
-def smoke(steps: int = 30) -> int:
-    """Masking + LoRA + Trainer on a tiny random Llama (no download): loss must fall, prelabels must be masked."""
+def smoke(steps: int = 30, class_weighting: str = "none", focal_gamma: float = 0.0) -> int:
+    """Masking + LoRA + Trainer on a tiny random Llama (no download): loss must fall, prelabels must be masked.
+
+    With ``class_weighting`` or ``focal_gamma`` it trains with the #135 loss instead, after checking that the #135 loss
+    with both options off equals the model's own loss on the first batch.
+    """
     import torch
     from transformers import LlamaConfig, LlamaForCausalLM, Trainer, TrainingArguments
 
     torch.manual_seed(SEED)
-    dimensions = ("subject", "background", "perspective", "individuals", "text_classification", "text_language")
+    from galaxus.data.classes import dimensions as contract_dimensions
+
+    dimensions = contract_dimensions()  # contracts/classes.json: no dimension name is typed here (#83)
     tokenizer = CharTokenizer()
 
     def with_offsets(text):
@@ -320,9 +421,14 @@ def smoke(steps: int = 30) -> int:
     def encode(example: Example) -> dict[str, Any]:
         prompt = f"<img> {user_prompt(example.context)}\n"
         ids = tokenizer(prompt + example.answer)["input_ids"]
-        return {"input_ids": ids, "labels": training_labels(ids, example.answer, example.trained_dimensions, with_offsets)}
+        features = {"input_ids": ids,
+                    "labels": training_labels(ids, example.answer, example.trained_dimensions, with_offsets)}
+        if not options.plain:
+            features.update(loss_weights(ids, example, with_offsets, options.class_weights))
+        return features
 
     examples = smoke_examples(dimensions)
+    options = loss_options(examples, class_weighting, focal_gamma)
     masked = encode(examples[0])  # i=0: only the first three dimensions are human
     value_pos = [p for d in dimensions[3:] for p in __import__("galaxus.model.lora", fromlist=["x"]).value_positions(
         masked["input_ids"], examples[0].answer, with_offsets)[1][d]]
@@ -330,6 +436,14 @@ def smoke(steps: int = 30) -> int:
     config = LlamaConfig(vocab_size=260, hidden_size=64, intermediate_size=128, num_hidden_layers=2,
                          num_attention_heads=4, num_key_value_heads=4, max_position_embeddings=1024)
     model = lora_wrap(LlamaForCausalLM(config), 8, 16, ["q_proj", "v_proj", "up_proj", "down_proj"])
+    if not options.plain:
+        batch = make_collator(0)([encode(e) for e in examples[:4]])
+        weights, values, labels = batch.pop("loss_weights"), batch.pop("value_mask"), batch.pop("labels")
+        with torch.no_grad():
+            outputs = model(**batch, labels=labels)
+            total, count = weighted_lm_loss(outputs.logits, labels, torch.ones_like(weights), values, 0.0)
+        assert torch.allclose(total / count, outputs.loss, atol=1e-5), "the #135 loss with both options off is not plain"
+        print(f"[smoke] loss: {options.describe()}; with both off it equals the model's own ({outputs.loss.item():.4f})")
     losses: list[float] = []
 
     from transformers import TrainerCallback
@@ -340,7 +454,7 @@ def smoke(steps: int = 30) -> int:
                 losses.append(logs["loss"])
 
     with __import__("tempfile").TemporaryDirectory() as folder:
-        Trainer(
+        (Trainer if options.plain else weighted_trainer(options.focal_gamma))(
             model=model,
             args=TrainingArguments(output_dir=folder, per_device_train_batch_size=4, max_steps=steps,
                                    learning_rate=5e-3, logging_steps=5, report_to="none", save_strategy="no",
@@ -355,7 +469,7 @@ def smoke(steps: int = 30) -> int:
     return 0 if ok else 1
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python train/lora_apertus.py", description=__doc__.split("\n")[0])
     parser.add_argument("--plan", action="store_true")
     parser.add_argument("--smoke", action="store_true")
@@ -374,9 +488,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--save-steps", type=int, default=SAVE_STEPS,
                         help=f"optimizer steps between checkpoints (default {SAVE_STEPS}; #76: a crash loses one interval)")
     parser.add_argument("--dollars-per-hour", type=float, default=None)
+    parser.add_argument("--class-weighting", choices=CLASS_WEIGHTINGS, default="none",
+                        help="#135: 'tempered' weights each class-value token by (n / (k * count)) ** 0.5 (default none)")
+    parser.add_argument("--focal-gamma", type=float, default=0.0,
+                        help="#135: focal loss on the class-value tokens, e.g. 2 (default 0 = off)")
+    parser.add_argument("--teacher", default=None,
+                        help="#132: a teacher's answers on train (galaxus.model.distill's train.jsonl); masked "
+                             "prelabels take its confident labels")
+    parser.add_argument("--teacher-min-confidence", type=float, default=TEACHER_MIN_CONFIDENCE,
+                        help=f"#132: the teacher's confidence a label needs (default {TEACHER_MIN_CONFIDENCE})")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
     arguments = parser.parse_args(argv)
+    if arguments.focal_gamma < 0:
+        parser.error("--focal-gamma is >= 0 (0 = off)")
     if arguments.smoke:
-        return smoke()
+        return smoke(class_weighting=arguments.class_weighting, focal_gamma=arguments.focal_gamma)
     if arguments.plan:
         return plan(arguments)
     if not arguments.model:

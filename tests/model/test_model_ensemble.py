@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -14,8 +16,8 @@ import pytest
 from model_synthetic import FakeMetric, fake_data_lane, train_table
 
 from galaxus.model import ensemble
-from galaxus.model.contract import ImageItem
 from galaxus.model.eval import run_eval
+from galaxus.types import ImageItem
 
 DIMS = ("subject", "perspective")
 
@@ -193,3 +195,144 @@ def test_the_eval_script_writes_an_exp_row_with_the_members_speed(tmp_path, monk
 def test_a_missing_member_file_says_where_it_must_come_from(tmp_path):
     with pytest.raises(FileNotFoundError, match="EXP-0002's holdout answers"):
         ensemble.load_members({"zeroshot": "EXP-0002"}, tmp_path)
+
+
+# The halves-agree rule (#106): leave the base member only where both product halves pick the same other option.
+
+
+def _good_on_one_half(frame, halves, half, good=0.95, bad=0.55):
+    rows = list(frame["image_id"])
+    in_half = set(frame.loc[halves.to_numpy() == half, "image_id"])
+    return lambda i: good if rows[i] in in_half else bad
+
+
+def test_agree_takes_a_stable_switch_and_leaves_a_flipping_winner_on_the_base():
+    # #106's case: no context wins subject on both halves; perspective's winner flips between halves (noise).
+    frame = holdout()
+    halves = ensemble.holdout_halves(frame)
+    members = {"ctx": member(frame, {"subject": 0.3, "perspective": _good_on_one_half(frame, halves, 1)}, 1),
+               "noctx": member(frame, {"subject": 0.9, "perspective": _good_on_one_half(frame, halves, 0)}, 2)}
+    choice = ensemble.agree(members, frame, DIMS, solution_frame, evaluate, halves, base="ctx")
+    assert choice["routing_on_folds"] == [{"subject": "noctx", "perspective": "noctx"},
+                                          {"subject": "noctx", "perspective": "ctx"}]
+    assert choice["routing"] == {"subject": "noctx", "perspective": "ctx"}
+    assert choice["rule"] == ensemble.AGREE and choice["base"] == "ctx"
+    # The best-option rule on the same answers takes perspective too: the decision the halves do not support.
+    assert ensemble.choose(members, frame, DIMS, solution_frame, evaluate)["routing"]["perspective"] == "noctx"
+
+
+def test_under_agree_the_base_is_the_first_member_listed():
+    frame = holdout()
+    halves = ensemble.holdout_halves(frame)
+    members = {"ctx": member(frame, {"subject": 0.3, "perspective": _good_on_one_half(frame, halves, 1)}, 1),
+               "noctx": member(frame, {"subject": 0.9, "perspective": _good_on_one_half(frame, halves, 0)}, 2)}
+    reordered = {"noctx": members["noctx"], "ctx": members["ctx"]}
+    first = ensemble.choose_by_rule(members, frame, DIMS, solution_frame, evaluate, ensemble.AGREE, folds=halves)
+    second = ensemble.choose_by_rule(reordered, frame, DIMS, solution_frame, evaluate, ensemble.AGREE, folds=halves)
+    assert first["routing"]["perspective"] == "ctx" and second["routing"]["perspective"] == "noctx"
+    assert first["routing"]["subject"] == second["routing"]["subject"] == "noctx"
+
+
+def test_the_agree_row_is_honest_each_half_is_routed_by_the_quarters_of_the_other_half():
+    frame = holdout(80)
+    halves = ensemble.holdout_halves(frame)
+    rows = list(frame["image_id"])
+    first = set(frame.loc[halves.to_numpy() == 0, "image_id"])
+    # As in the best-option test above: "a" is perfect on half 0 and useless on half 1 for subject, "b" the reverse.
+    good_on_0 = {"subject": lambda i: 1.0 if rows[i] in first else 0.0, "perspective": 0.8}
+    good_on_1 = {"subject": lambda i: 0.0 if rows[i] in first else 1.0, "perspective": 0.8}
+    members = {"a": member(frame, good_on_0, 1), "b": member(frame, good_on_1, 2)}
+    fitted = ensemble.crossfit(members, frame, DIMS, solution_frame, evaluate, halves, rule=ensemble.AGREE)
+    # Both quarters of half 1 agree on "b", so half 1's routing leaves the base; it then answers half 0.
+    assert fitted["chosen_on_half"][0]["routing"]["subject"] == "a"
+    assert fitted["chosen_on_half"][1]["routing"]["subject"] == "b"
+    predictor = ensemble.EnsemblePredictor(members, {"a": "EXP-1", "b": "EXP-2"}, fitted, rule=ensemble.AGREE)
+    answers = predictor.predict([ImageItem(i, f"/{i}.jpg") for i in rows])
+    truth = frame.set_index("image_id")["subject"]
+    assert sum(p.labels["subject"] == truth[p.image_id] for p in answers) < 0.6 * len(rows)
+    # Dev and final: the two halves disagree on subject, so the whole-holdout routing stays on the base.
+    assert fitted["full"]["routing_on_folds"][0]["subject"] == "a"
+    assert fitted["full"]["routing_on_folds"][1]["subject"] == "b"
+    assert fitted["full"]["routing"]["subject"] == "a"
+    config = predictor.config()
+    assert config["rule"] == ensemble.AGREE and config["base"] == "a"
+    assert config["routing_full_holdout"]["subject"] == "a"
+
+
+def test_agree_needs_a_base_among_the_members_and_a_known_rule():
+    frame = holdout(10)
+    members = {"a": member(frame, {"subject": 1, "perspective": 1}, 1)}
+    with pytest.raises(ValueError, match="base"):
+        ensemble.agree(members, frame, DIMS, solution_frame, evaluate, ensemble.holdout_halves(frame), base="z")
+    with pytest.raises(ValueError, match="rule"):
+        ensemble.choose_by_rule(members, frame, DIMS, solution_frame, evaluate, rule="median")
+    with pytest.raises(ValueError, match="rule"):
+        ensemble.from_saved({"a": "EXP-1"}, frame, DIMS, solution_frame, evaluate, Path("/nowhere"), rule="median")
+
+
+def test_the_choose_printout_names_the_rule_and_its_honest_row():
+    frame = holdout()
+    halves = ensemble.holdout_halves(frame)
+    members = {"ctx": member(frame, {"subject": 0.3, "perspective": _good_on_one_half(frame, halves, 1)}, 1),
+               "noctx": member(frame, {"subject": 0.9, "perspective": _good_on_one_half(frame, halves, 0)}, 2)}
+    exps = {"ctx": "EXP-0021", "noctx": "EXP-0025"}
+    agreed = "\n".join(ensemble.summary(
+        ensemble.crossfit(members, frame, DIMS, solution_frame, evaluate, halves, rule=ensemble.AGREE),
+        exps, ensemble.AGREE))
+    assert "noctx: yes / yes -> noctx" in agreed and ": no -> ctx" in agreed.replace("yes / no", "no") \
+        and "(base: ctx)" in agreed
+    assert 'ENSEMBLE_MEMBERS="ctx=EXP-0021 noctx=EXP-0025" python -m galaxus.model.eval ensemble-agree' in agreed
+    best = "\n".join(ensemble.summary(ensemble.crossfit(members, frame, DIMS, solution_frame, evaluate, halves), exps))
+    assert "chosen: whole / half 0 / half 1" in best and best.rstrip().endswith("python -m galaxus.model.eval ensemble")
+
+
+def test_the_eval_script_writes_an_agree_row_with_its_rule_and_base(tmp_path, monkeypatch):
+    train = train_table(products=40)
+    out = tmp_path / "out"
+
+    def eight_products_held_out(table):  # the agree rule splits each half into two product quarters
+        held_out = table["product_id"].isin(sorted(table["product_id"].unique())[:8])
+        return table[~held_out], table[held_out]
+
+    data = dataclasses.replace(fake_data_lane(train, out, FakeMetric()), split_holdout=eight_products_held_out)
+    for exp in ("EXP-0021", "EXP-0025"):
+        path = out / "predictions" / exp / "holdout.jsonl"
+        path.parent.mkdir(parents=True)
+        lines = [json.dumps({"image_id": i, "labels": {d: f"{d}_a" for d in data.dimensions()}, "confidence": None})
+                 for i in data.split_holdout(train)[1]["image_id"]]
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    results = tmp_path / "metrics.json"
+    results.write_text(json.dumps([{"id": "EXP-0021", "images_per_second": 4.6, "model": "m"},
+                                   {"id": "EXP-0025", "images_per_second": 4.6, "model": "m"}]), encoding="utf-8")
+    monkeypatch.setattr("galaxus.model.eval.RESULTS_FILE", results)
+    monkeypatch.setenv("ENSEMBLE_MEMBERS", "observe=EXP-0021 observe_noctx=EXP-0025")
+    row = run_eval("ensemble-agree", data, results_path=results, exp_id="EXP-0099", allow_dirty=True)
+    assert row["predictor"] == "ensemble-agree" and row["images_per_second"] == pytest.approx(2.3)
+    assert row["config"]["rule"] == "agree" and row["config"]["base"] == "observe"
+    assert row["config"]["members"] == {"observe": "EXP-0021", "observe_noctx": "EXP-0025"}
+
+
+def test_agree_is_not_split_by_two_alternatives_that_both_beat_the_base(monkeypatch):
+    # Vernika's run on #106: on subject the vote and the no-context member score alike and each fold named a different
+    # one best, so "the folds pick the same option" kept the base although both folds wanted to leave it.
+    scores = {
+        "whole": {"subject": {"ctx": 0.056, "noctx": 0.168, "vote": 0.169},
+                  "perspective": {"ctx": 0.097, "noctx": 0.104, "vote": 0.105}},
+        0: {"subject": {"ctx": 0.05, "noctx": 0.16, "vote": 0.17}, "perspective": {"ctx": 0.09, "noctx": 0.11, "vote": 0.12}},
+        1: {"subject": {"ctx": 0.06, "noctx": 0.17, "vote": 0.16}, "perspective": {"ctx": 0.10, "noctx": 0.11, "vote": 0.095}},
+    }
+    frame = holdout()
+    halves = ensemble.holdout_halves(frame)
+    half_of = dict(zip(frame["image_id"], halves.to_numpy(), strict=True))
+
+    def canned(members, part, dimensions, solution_frame, evaluate):
+        per = scores["whole"] if len(part) == len(frame) else scores[int(half_of[part["image_id"].iloc[0]])]
+        routing = {d: max(per[d], key=per[d].get) for d in per}
+        return {"dimensions": list(per), "routing": routing, "weights": {}, "scores": per, "images": len(part)}
+
+    monkeypatch.setattr(ensemble, "choose", canned)
+    choice = ensemble.agree({"ctx": {}, "noctx": {}}, frame, DIMS, solution_frame, evaluate, halves, base="ctx")
+    assert choice["routing_on_folds"] == [{"subject": "vote", "perspective": "vote"},
+                                          {"subject": "noctx", "perspective": "noctx"}]
+    assert choice["routing"] == {"subject": "vote", "perspective": "ctx"}  # vote loses to ctx on fold 1's perspective
+    assert choice["beats_base_on_folds"] == {"subject": [True, True], "perspective": [True, False]}

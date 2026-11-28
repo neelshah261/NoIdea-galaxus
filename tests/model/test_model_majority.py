@@ -7,7 +7,7 @@ import pytest
 from model_synthetic import DIMENSIONS, fake_scored_mask, train_table
 
 from galaxus.model.baselines import MajorityPredictor
-from galaxus.model.contract import ImageItem, Predictor
+from galaxus.types import ImageItem, Predictor
 
 
 def table(cells: list[tuple[str, str, str]]) -> pd.DataFrame:

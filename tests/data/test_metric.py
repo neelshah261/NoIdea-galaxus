@@ -222,9 +222,15 @@ def test_parity_unscored_cells_are_skipped_dimension_by_dimension():
 
     Changing predictions *inside* unscored cells can, where the class distribution is balanced, move the penalty
     from one class to another and leave the mean untouched - so that check alone can pass against a ``metric.py``
-    that wrongly counts unscored cells. This one scores a single dimension twice: once over every row, once with
-    that dimension's unscored rows removed outright. If nulls are skipped the two are identical; if they are
+    that wrongly counts unscored cells. This one reads one dimension's own f1 twice: once over every row, once
+    with that dimension's unscored rows removed outright. If nulls are skipped the two are identical; if they are
     counted, they differ.
+
+    The dimension cannot be isolated by slicing columns, which is how this test was first written. The real
+    metric.py indexes ``[[id_column, *DIMENSIONS]]`` and raises on a frame holding only one of them; the synthetic
+    double this ran against until the data arrived was more permissive, so the mistake stayed invisible. Rows are
+    dropped instead, and the one dimension is read out of ``evaluate``, whose per-dimension keys the parity test
+    above pins. The other dimensions move when rows go - only this one's number is compared.
     """
     _, solution, submission, names, _ = _real_holdout_and_submission()
     checked = 0
@@ -233,10 +239,10 @@ def test_parity_unscored_cells_are_skipped_dimension_by_dimension():
         if not unscored.any() or unscored.all():
             continue
         checked += 1
-        one = solution[["image_id", name]]
-        with_nulls = score(one, submission)
-        kept = one[~unscored.to_numpy()].reset_index(drop=True)
-        without = score(kept, submission[submission["image_id"].isin(kept["image_id"])].reset_index(drop=True))
+        with_nulls = evaluate(solution, submission)[name]["f1_macro"]
+        kept = solution[~unscored.to_numpy()].reset_index(drop=True)
+        kept_submission = submission[submission["image_id"].isin(kept["image_id"])].reset_index(drop=True)
+        without = evaluate(kept, kept_submission)[name]["f1_macro"]
         assert without == with_nulls, (
             f"{name}: scoring it over every row gives {with_nulls}, but dropping its unscored rows gives "
             f"{without}. metric.py is counting cells our solution leaves empty, so our local score and the "

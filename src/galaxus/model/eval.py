@@ -31,7 +31,6 @@ from typing import Any
 import pandas as pd
 
 from galaxus.model.baselines import MajorityPredictor
-from galaxus.model.contract import ImageItem, Prediction, Predictor
 from galaxus.model.lora import eval_factory as _lora
 from galaxus.model.results import (
     REPOSITORY,
@@ -42,8 +41,9 @@ from galaxus.model.results import (
     next_exp_id,
     read_rows,
 )
-from galaxus.model.zero_shot import PRESETS as ZERO_SHOT_PRESETS
-from galaxus.model.zero_shot import ZeroShotPredictor
+from galaxus.model.zero_shot import VARIANTS as ZERO_SHOT_VARIANTS
+from galaxus.model.zero_shot import ZeroShotPredictor, mirror_tta_can_wrap
+from galaxus.types import ImageItem, Prediction, Predictor
 
 ID_COLUMN = "image_id"
 IMAGE_FILE_COLUMN = "image_file"
@@ -106,7 +106,7 @@ def _zero_shot(**options: Any) -> PredictorFactory:
     """The zero-shot predictor with ``options`` (context, prompt lines, image mode; see ``zero_shot.PRESETS``)."""
 
     def factory(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
-        # shortcut: always the gateway (api); add a --backend flag when a vLLM run needs this script.
+        # The gateway, or our own vLLM endpoint when $ZERO_SHOT_BACKEND=vllm (#43: bf16 vs FP8, same prompt).
         return ZeroShotPredictor(
             defaults=MajorityPredictor.fit(rows, data.dimensions(), data.scored_mask).answer,
             dimensions=data.dimensions(),
@@ -117,15 +117,128 @@ def _zero_shot(**options: Any) -> PredictorFactory:
     return factory
 
 
-def _ensemble(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
-    """BUILD_PLAN.md phase 2 step 3 (#87): the members in $ENSEMBLE_MEMBERS, routed per dimension, cross-fitted."""
-    from galaxus.model import ensemble
+def _ensemble(rule: str = "best") -> PredictorFactory:
+    """BUILD_PLAN.md phase 2 step 3 (#87): the members in $ENSEMBLE_MEMBERS, routed per dimension, cross-fitted.
 
+    ``rule="agree"`` (#106): a dimension leaves the first member only where both product halves pick the same other
+    option (``ensemble.agree``).
+    """
+
+    def factory(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+        from galaxus.model import ensemble
+
+        holdout = data.split_holdout(data.read_train())[1]
+        return ensemble.from_saved(
+            ensemble.members_from_env(), holdout, data.dimensions(), data.solution_frame, data.evaluate,
+            data.out_dir(), read_rows(RESULTS_FILE), seed, rule=rule,
+        )
+
+    return factory
+
+
+def _helper(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """A helper image model picks the class (``galaxus.model.helper``): heads on SigLIP embeddings."""
+    from galaxus.model import helper
+
+    return helper.factory()(rows, data, seed)
+
+
+def _helper_mirror(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """``helper-siglip`` with the mirror-aware perspective head (#176, #182): mirrored training copies, mirror TTA."""
+    from galaxus.model import helper
+
+    return helper.factory(mirror=True)(rows, data, seed)
+
+
+def _helper_fused(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """EXP-0059's ``helper-fused`` (#182): heads on SigLIP base, DINOv2 base and SigLIP 2 base, each at unit length."""
+    from galaxus.model import helper
+
+    return helper.fused_factory()(rows, data, seed)
+
+
+def _helper_fused_mirror(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """``helper-fused`` with the mirror-aware perspective head (#176, #189)."""
+    from galaxus.model import helper
+
+    return helper.fused_factory(mirror=True)(rows, data, seed)
+
+
+def _teacher_setup():
+    """D (#211): the teacher and self-training switches; one of them must be on for a teacher row."""
+    from galaxus.model import teacher
+
+    setup = teacher.from_environ()
+    if setup is None:
+        raise RuntimeError(f"set ${teacher.TEACHER_ENV} to the teacher's dev.jsonl (EXP-0080) and/or "
+                           f"${teacher.SELF_TRAIN_ENV}=1")
+    return setup
+
+
+def _helper_teacher(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """D (#211): ``helper-siglip`` trained on the human rows plus the teacher's (and agreeing) dev rows."""
+    from galaxus.model import helper
+
+    return helper.factory(teacher=_teacher_setup())(rows, data, seed)
+
+
+def _helper_fused_teacher(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """D (#211): ``helper-fused`` trained on the human rows plus the teacher's (and agreeing) dev rows."""
+    from galaxus.model import helper
+
+    return helper.fused_factory(teacher=_teacher_setup())(rows, data, seed)
+
+
+def _helper_so400m(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """#220: heads on SigLIP 2 so400m (``$HELPER_SO400M``, pinned by ``$HELPER_SO400M_REVISION``) alone."""
+    from galaxus.model import encoders
+
+    return encoders.factory()(rows, data, seed)
+
+
+def _helper_fused_so400m(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """#220: heads on EXP-0059's three frozen encoders plus SigLIP 2 so400m, each at unit length."""
+    from galaxus.model import encoders
+
+    return encoders.factory(fused=True)(rows, data, seed)
+
+
+def _apertus_core(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """#219: heads on Apertus v1.5 8B hidden states (the core) and helper-fused's frozen encoders (the base), plus
+    ``$APERTUS_CORE_BASE_SCORES`` when set."""
+    from galaxus.model import apertus_core
+
+    return apertus_core.factory()(rows, data, seed)
+
+
+def _recalibrated(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """#42: $RECAL_BASE's saved holdout answers with confidence-gated recalibration, cross-fitted on product halves."""
+    import os
+
+    from galaxus.model import recalibrate
+
+    base = os.environ.get(recalibrate.BASE_ENV)
+    if not base:
+        raise RuntimeError(f"set ${recalibrate.BASE_ENV} to the EXP whose holdout answers carry confidences, e.g. EXP-0004")
     holdout = data.split_holdout(data.read_train())[1]
-    return ensemble.from_saved(
-        ensemble.members_from_env(), holdout, data.dimensions(), data.solution_frame, data.evaluate,
-        data.out_dir(), read_rows(RESULTS_FILE), seed,
-    )
+    allowed = {d: sorted(v) for d, v in data.allowed_classes().items()}
+    return recalibrate.from_saved(base, holdout, data.dimensions(), allowed, data.solution_frame, data.evaluate,
+                                  data.out_dir(), read_rows(RESULTS_FILE), seed)
+
+
+def _type_prior(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """#133: $TYPE_PRIOR_BASE's saved holdout answers with the product-type prior, cross-fitted on product halves."""
+    import os
+
+    from galaxus.model import type_prior
+
+    base = os.environ.get(type_prior.BASE_ENV)
+    if not base:
+        raise RuntimeError(f"set ${type_prior.BASE_ENV} to the EXP whose holdout answers carry confidences, "
+                           "e.g. EXP-0002")
+    holdout = data.split_holdout(data.read_train())[1]
+    return type_prior.from_saved(base, rows, holdout, data.dimensions(), data.scored_mask, data.solution_frame,
+                                 data.evaluate, data.out_dir(), read_rows(RESULTS_FILE), seed)
 
 
 def _mirror_tta(inner: str) -> PredictorFactory:
@@ -141,15 +254,27 @@ def _mirror_tta(inner: str) -> PredictorFactory:
 
 #: The predictors this script runs, by name. A new method registers its factory here and changes nothing else.
 PREDICTORS: dict[str, PredictorFactory] = {
-    "ensemble": _ensemble,
+    "ensemble": _ensemble(),
+    "ensemble-agree": _ensemble("agree"),  # #106: the first member unless both product halves agree on another
+    "helper-siglip": _helper,  # heads on SigLIP embeddings; see galaxus.model.helper for the rule it touches
+    "helper-siglip-mirror": _helper_mirror,  # the same, perspective trained on mirrored copies and averaged with the mirror
+    "helper-fused": _helper_fused,  # EXP-0059: SigLIP base + DINOv2 base + SigLIP 2 base, unit length, concatenated
+    "helper-fused-mirror": _helper_fused_mirror,  # helper-fused with the mirror-aware perspective head
+    "helper-siglip-teacher": _helper_teacher,  # D (#211): + teacher dev rows ($HELPER_TEACHER, $HELPER_SELF_TRAIN)
+    "helper-fused-teacher": _helper_fused_teacher,  # D (#211): helper-fused + teacher dev rows
+    "apertus-core": _apertus_core,  # #219: Apertus hidden states + the frozen encoders (+ optional base scores)
+    "helper-so400m": _helper_so400m,  # #220: SigLIP 2 so400m heads, pinned by $HELPER_SO400M_REVISION
+    "helper-fused-so400m": _helper_fused_so400m,  # #220: EXP-0059's three encoders + so400m
+    "recalibrated": _recalibrated,  # #42: confidence-gated recalibration of $RECAL_BASE (e.g. EXP-0004)
+    "type-prior": _type_prior,  # #133: the product-type prior on $TYPE_PRIOR_BASE's answers (e.g. EXP-0002)
     "majority": _majority,
-    "zero-shot": _zero_shot(use_context=True),
-    "zero-shot-no-context": _zero_shot(use_context=False),
-    "zero-shot-image-first": _zero_shot(use_context=True, image_first=True),  # EXP-0014 (#106)
-    # The score sprint's prompt and image variants (#106), one holdout run each; ids reserved on #106.
-    **{name: _zero_shot(**options) for name, options in ZERO_SHOT_PRESETS.items()},
+    # Every zero-shot variant (zero_shot.VARIANTS): EXP-0002, EXP-0009, EXP-0014 and the score sprint's (#106).
+    **{name: _zero_shot(**options) for name, options in ZERO_SHOT_VARIANTS.items()},
     "lora": _lora(),  # EXP-0004 (#49): the merged LoRA served by vLLM at $LORA_BASE_URL
-    "mirror-tta:zero-shot": _mirror_tta("zero-shot"),  # EXP-0006 (#48)
+    # Mirror TTA (#48) around every variant it can wrap; mirror-tta:zero-shot is EXP-0006.
+    **{f"mirror-tta:{name}": _mirror_tta(name) for name in ZERO_SHOT_VARIANTS if mirror_tta_can_wrap(name)},
+    # Mirror TTA around the served LoRA (#145 S2): the mirror reaches it through the same 512 px cache as zero-shot.
+    "mirror-tta:lora": _mirror_tta("lora"),
 }
 
 

@@ -9,10 +9,16 @@ Sources, each optional:
 - EXP rows: ``results/metrics.json`` (``--results`` to point elsewhere): scores per dimension, weighted F1, the model,
   the commit, the hardware and the cost per 100k.
 - Benchmarks: ``$GALAXUS_DATA/out/bench/*.jsonl`` from ``galaxus.serve.bench``: images/s, peak memory, cost per 100k.
+- Final-run drills: ``$GALAXUS_DATA/out/drill/*/report.json`` from ``final_run --drill`` (#32, #181): the speed of the
+  final method end to end, on the machine that runs it, for the method named by ``--exp``.
+- The method's members: an ensemble or type-prior row names its members' EXP ids in its config; the models, revisions
+  and gateway tokens of the final method are read from those rows, recursively, not from every row ever written.
+- MODELS.md's "Development only" table: the names of the models used while building, never at runtime.
 - Label errors: ``$GALAXUS_DATA/out/label_errors.csv``: only the row count is reported, never the rows.
 - Kaggle: the public score of a submission (read-only CLI) when ``--kaggle`` is given; otherwise TODO(owner).
 
     python -m galaxus.serve.report --exp EXP-0010 --out docs/report_section7.md
+    python -m galaxus.serve.report --exp EXP-0061 --weights "<HF repo> @ <revision>"
 """
 
 from __future__ import annotations
@@ -20,6 +26,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
@@ -100,6 +107,72 @@ def _run(command: list[str]) -> str:
     return subprocess.run(command, capture_output=True, text=True, timeout=60, check=False).stdout
 
 
+#: The final images, from challenge_description.md "Timeline" (Sat 28 Nov, 13:00): "the 5,292 images".
+FINAL_IMAGES = 5292
+EXP_ID = re.compile(r"^EXP-\d{4}$")
+
+
+def method_rows(rows: Sequence[Mapping[str, Any]], selected: Mapping[str, Any] | None) -> list[Mapping[str, Any]]:
+    """``selected`` and every row it is built from: an ensemble's ``config.members`` and a prior's ``config.base``,
+    followed while they name EXP ids, so the final method's models come from its own rows only."""
+    if not selected:
+        return []
+    by_id = {str(row.get("id")): row for row in rows}
+    found, todo, seen = [], [selected], {str(selected.get("id"))}
+    while todo:
+        row = todo.pop(0)
+        found.append(row)
+        config = row.get("config") or {}
+        named = list((config.get("members") or {}).values()) + [config.get("base")]
+        for exp in (str(e) for e in named if e):
+            if EXP_ID.match(exp) and exp not in seen and exp in by_id:
+                seen.add(exp)
+                todo.append(by_id[exp])
+    return found
+
+
+def read_drills(directory: Path) -> list[dict[str, Any]]:
+    """Every ``final_run --drill`` report under ``directory`` (``$GALAXUS_DATA/out/drill``)."""
+    drills = []
+    for path in sorted(directory.glob("*/report.json")) if directory.is_dir() else []:
+        try:
+            drills.append(json.loads(path.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            continue
+    return drills
+
+
+def development_models(models_file: Path) -> list[str]:
+    """The first column of MODELS.md's "Development only" table, in its order."""
+    if not models_file.is_file():
+        return []
+    names, inside = [], False
+    for line in models_file.read_text(encoding="utf-8").splitlines():
+        if line.startswith("## "):
+            inside = line.strip().lower().startswith("## development only")
+            continue
+        if not (inside and line.startswith("|")):
+            continue
+        first = line.strip().strip("|").split("|")[0].strip()
+        if first and first != "Model" and not set(first) <= {"-", " ", ":"}:
+            names.append(first)
+    return names
+
+
+def gateway_tokens(members: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Prompt and answer tokens per image of each member that called a model over the gateway, from its config."""
+    lines = []
+    for row in members:
+        config = row.get("config") or {}
+        prompt, answer, images = config.get("prompt_tokens"), config.get("completion_tokens"), config.get("images")
+        if isinstance(prompt, (int, float)) and isinstance(images, (int, float)) and images:
+            per_image = prompt / images
+            answers = f" and {answer / images:,.0f} answer" if isinstance(answer, (int, float)) else ""
+            lines.append(f"{row.get('model') or row.get('id')} ({row.get('id')}): {per_image:,.0f} prompt{answers} "
+                         f"tokens per image, about {per_image * 100_000 / 1e6:,.0f}M prompt tokens per 100,000 images")
+    return lines
+
+
 def section7(
     rows: Sequence[Mapping[str, Any]],
     selected: Mapping[str, Any] | None,
@@ -108,6 +181,9 @@ def section7(
     public_score: str | None = None,
     team: str | None = None,
     results_name: str = "results/metrics.json",
+    drills: Sequence[Mapping[str, Any]] = (),
+    development: Sequence[str] = (),
+    weights: str | None = None,
 ) -> str:
     """The section as Markdown, in the template's order."""
     out = ["## 7. Galaxus challenge: results and resources", ""]
@@ -149,21 +225,28 @@ def section7(
     else:
         out += ["  TODO(model): no EXP rows yet.", ""]
 
+    members = method_rows(rows, selected)
+    sources = members or rows
     models = sorted({str(r["model"]) + (f" @ {r['model_revision']}" if r.get("model_revision") else "")
-                     for r in rows if r.get("model")})
-    helpers = sorted({str(h) for r in rows for h in r.get("helpers", [])})
-    out += ["- **Models:**", ""]
+                     for r in sources if r.get("model")})
+    helpers = sorted({str(h) for r in sources for h in r.get("helpers", [])})
+    built_from = ", ".join(str(r.get("id")) for r in members[1:]) or "none"
+    scope = f" (the final method {selected['id']} and the rows it is built from: {built_from})" if members else ""
+    out += [f"- **Models**{scope}:", ""]
     out += [f"  - Runtime: {', '.join(models) if models else 'TODO(model): Apertus checkpoint and revision'}"
             + (f"; helpers: {', '.join(helpers)}" if helpers else "; no helper models")]
-    development = (
-        "  - Development only: TODO(owner): every tool and model used while building (coding assistants, "
-        "any model used for targets), with version and role."
-    )
-    out += [development, ""]
+    if development:
+        out += [f"  - Development only, never at runtime (source `MODELS.md`): {'; '.join(development)}", ""]
+    else:
+        out += [("  - Development only: TODO(owner): every tool and model used while building (coding assistants, "
+                 "any model used for targets), with version and role."), ""]
 
     real = [b for b in bench if b.get("device")]
-    out += ["- **Resources** (source `$GALAXUS_DATA/out/bench/`, `galaxus.serve.bench`):", ""]
-    if real:
+    mine = [d for d in drills if selected and d.get("exp") == selected.get("id") and d.get("images_per_second")]
+    if mine:
+        out += resources_from_drill(max(mine, key=lambda d: str(d.get("finished_at", ""))), members)
+    elif real:
+        out += ["- **Resources** (source `$GALAXUS_DATA/out/bench/`, `galaxus.serve.bench`):", ""]
         best = max(real, key=lambda b: b.get("images_per_second") or 0)
         per_day = 100_000 / best["images_per_second"] / 3600 if best.get("images_per_second") else None
         memory = f"{_f(best.get('peak_memory_gb'), 1)} GB ({best.get('memory_note', '')})"
@@ -176,12 +259,14 @@ def section7(
             "",
         ]
     else:
-        out += ["  TODO(serve): no benchmark on the GPU yet (`python -m galaxus.serve.bench`, #16, #33).", ""]
+        out += ["- **Resources:**", "",
+                ("  TODO(serve): no drill of the final method (`final_run --drill`) and no benchmark "
+                 "(`python -m galaxus.serve.bench`) yet."), ""]
 
     commit = selected.get("commit") if selected else None
     dirty = " (dirty checkout: re-run from a clean commit)" if selected and selected.get("dirty") else ""
     commit_text = commit[:12] if commit else "TODO(owner)"
-    weights = "TODO(owner): Hugging Face repository and revision, published by 14:30"
+    weights = weights or "TODO(owner): Hugging Face repository and revision, published by 14:30"
     out += [f"- **Commit and weights:** commit `{commit_text}`{dirty}; weights: {weights}.", ""]
 
     if label_errors is None:
@@ -192,12 +277,33 @@ def section7(
     return "\n".join(out)
 
 
+def resources_from_drill(drill: Mapping[str, Any], members: Sequence[Mapping[str, Any]]) -> list[str]:
+    """The final method's speed from its newest drill; the machine from its rows; gateway tokens from its members."""
+    speed = float(drill["images_per_second"])
+    hardware = next((r.get("hardware") for r in members if r.get("hardware")), None) or {}
+    machine = " ".join(str(hardware[k]) for k in ("system", "machine") if hardware.get(k)) or "TODO(serve): machine"
+    verdict = "clears" if drill.get("meets_floor") else "is BELOW"
+    end_to_end = (f"  - The final method end to end ({drill.get('predictor')}, {drill.get('images')} "
+                  f"{drill.get('part')} images, kill and resume included, {str(drill.get('finished_at', ''))[:16]} "
+                  f"UTC): **{speed:.3f} images/s**, which {verdict} the {drill.get('floor_images_per_second', 2.0)} "
+                  f"images/s floor; the {FINAL_IMAGES:,} final images take about {FINAL_IMAGES / speed / 60:.0f} min "
+                  "at that speed")
+    machine_line = (f"  - Hardware: {machine}, {hardware.get('gpu') or 'no GPU'}; 100,000 images a day at this speed: "
+                    f"{100_000 / speed / 3600:.1f} hours on that machine, no GPU hours bought")
+    lines = ["- **Resources** (source `$GALAXUS_DATA/out/drill/`, `final_run --drill`, and the method's rows):", "",
+             end_to_end, machine_line]
+    lines += [f"  - Gateway: {line}" for line in gateway_tokens(members)]
+    return lines + [""]
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m galaxus.serve.report", description=__doc__.split("\n")[0])
     parser.add_argument("--results", type=Path, default=Path("results/metrics.json"))
     parser.add_argument("--exp", default=None, help="the EXP of the final submission (default: best holdout score)")
     parser.add_argument("--team", default=None, help="Kaggle team name")
     parser.add_argument("--kaggle", action="store_true", help="read the public score from Kaggle (read-only)")
+    parser.add_argument("--weights", default=None, help="the published weights: <Hugging Face repo> @ <revision>")
+    parser.add_argument("--models-file", type=Path, default=Path("MODELS.md"))
     parser.add_argument("--out", type=Path, default=None, help="write here (default: print)")
     arguments = parser.parse_args(argv)
 
@@ -213,6 +319,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         kaggle_public_score() if arguments.kaggle else None,
         arguments.team,
         str(arguments.results).replace("\\", "/"),
+        read_drills(out / "drill"),
+        development_models(arguments.models_file),
+        arguments.weights,
     )
     if arguments.out:
         arguments.out.parent.mkdir(parents=True, exist_ok=True)

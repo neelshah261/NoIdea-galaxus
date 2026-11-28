@@ -14,8 +14,8 @@ from PIL import Image
 from galaxus.data.classes import no_overlay_class, overlay_dimension
 from galaxus.data.images import cached_image, cached_jpeg, prepared_jpeg
 from galaxus.model import eval as model_eval
-from galaxus.model.contract import ImageItem, Prediction
 from galaxus.model.mirror_tta import MirrorTTA
+from galaxus.types import ImageItem, Prediction
 
 pytestmark = pytest.mark.real_contract
 
@@ -174,6 +174,42 @@ def test_registered_in_eval_around_the_inner_predictor(monkeypatch):
     monkeypatch.setitem(model_eval.PREDICTORS, "zero-shot", lambda rows, data, seed: inner)
 
     built = model_eval.PREDICTORS["mirror-tta:zero-shot"](None, SimpleNamespace(allowed_classes=lambda: ALLOWED), 0)
+
+    assert isinstance(built, MirrorTTA)
+    assert built.inner is inner
+
+
+def test_registered_in_eval_around_the_lora(monkeypatch):
+    inner = FakeInner()
+    monkeypatch.setitem(model_eval.PREDICTORS, "lora", lambda rows, data, seed: inner)
+
+    built = model_eval.PREDICTORS["mirror-tta:lora"](None, SimpleNamespace(allowed_classes=lambda: ALLOWED), 0)
+
+    assert isinstance(built, MirrorTTA)
+    assert built.inner is inner
+
+
+def test_the_lora_reads_the_mirror_from_the_cache_by_its_mirror_id(monkeypatch):
+    """The LoRA asks the cache by item id and path, as zero-shot does, so MirrorTTA's ``<id>.mirror`` item gets the
+    prepared mirror itself."""
+    from galaxus.model import lora
+
+    seen = []
+    monkeypatch.setattr("galaxus.data.images.cached_jpeg",
+                        lambda image_id, path, image_size: seen.append((image_id, path, image_size)) or b"jpeg")
+    lora._cached_image(ImageItem(image_id="img_1.mirror", path="/cache/img_1.mirror.jpg"))
+    assert seen == [("img_1.mirror", "/cache/img_1.mirror.jpg", lora.IMAGE_SIZE)]
+
+
+def test_submit_and_final_run_reach_mirror_tta_around_the_lora_by_reference(monkeypatch):
+    """``submit --run`` and ``final_run --predictor`` take a ``package.module:name``; the LoRA's TTA needs one too."""
+    from galaxus.model import lora
+    from galaxus.serve.items import load_predictor
+
+    inner = FakeInner()
+    monkeypatch.setattr(lora, "from_env", lambda: inner)
+
+    built = load_predictor("galaxus.model.mirror_tta:lora_from_env")
 
     assert isinstance(built, MirrorTTA)
     assert built.inner is inner

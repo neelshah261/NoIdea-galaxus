@@ -1,0 +1,161 @@
+{
+  "dimensions": [
+    "subject",
+    "background",
+    "perspective",
+    "individuals",
+    "text_classification",
+    "text_language"
+  ],
+  "routing": {
+    "subject": "vote",
+    "background": "vote",
+    "perspective": "fused",
+    "individuals": "siglip",
+    "text_classification": "vote",
+    "text_language": "vote"
+  },
+  "weights": {
+    "subject": {
+      "hinted": 0.5710268241822087,
+      "siglip": 0.70157187475976,
+      "fused": 0.7433139374871941,
+      "70b": 0.25265791509532154
+    },
+    "background": {
+      "hinted": 0.7391933599177868,
+      "siglip": 0.878469749855137,
+      "fused": 0.8811613997617253,
+      "70b": 0.4826905238295836
+    },
+    "perspective": {
+      "hinted": 0.4564770358466016,
+      "siglip": 0.5200977978852588,
+      "fused": 0.6473719274446808,
+      "70b": 0.26830629276227025
+    },
+    "individuals": {
+      "hinted": 0.8561422800181674,
+      "siglip": 0.9766252723750041,
+      "fused": 0.9661263086795002,
+      "70b": 0.720578972868217
+    },
+    "text_classification": {
+      "hinted": 0.6109192112999665,
+      "siglip": 0.6665302049828853,
+      "fused": 0.6172357522901649,
+      "70b": 0.38938838829059197
+    },
+    "text_language": {
+      "hinted": 0.5436470892939833,
+      "siglip": 0.48634225330046515,
+      "fused": 0.6443797109908103,
+      "70b": 0.6545903927223033
+    }
+  },
+  "scores": {
+    "subject": {
+      "hinted": 0.571,
+      "siglip": 0.7016,
+      "fused": 0.7433,
+      "70b": 0.2527,
+      "vote": 0.7437
+    },
+    "background": {
+      "hinted": 0.7392,
+      "siglip": 0.8785,
+      "fused": 0.8812,
+      "70b": 0.4827,
+      "vote": 0.8864
+    },
+    "perspective": {
+      "hinted": 0.4565,
+      "siglip": 0.5201,
+      "fused": 0.6474,
+      "70b": 0.2683,
+      "vote": 0.6305
+    },
+    "individuals": {
+      "hinted": 0.8561,
+      "siglip": 0.9766,
+      "fused": 0.9661,
+      "70b": 0.7206,
+      "vote": 0.9746
+    },
+    "text_classification": {
+      "hinted": 0.6109,
+      "siglip": 0.6665,
+      "fused": 0.6172,
+      "70b": 0.3894,
+      "vote": 0.7195
+    },
+    "text_language": {
+      "hinted": 0.5436,
+      "siglip": 0.4863,
+      "fused": 0.6444,
+      "70b": 0.6546,
+      "vote": 0.7497
+    }
+  },
+  "images": 2444,
+  "rule": "agree",
+  "base": "hinted",
+  "candidates": {
+    "subject": "vote",
+    "background": "vote",
+    "perspective": "fused",
+    "individuals": "siglip",
+    "text_classification": "vote",
+    "text_language": "vote"
+  },
+  "beats_base_on_folds": {
+    "subject": [
+      true,
+      true
+    ],
+    "background": [
+      true,
+      true
+    ],
+    "perspective": [
+      true,
+      true
+    ],
+    "individuals": [
+      true,
+      true
+    ],
+    "text_classification": [
+      true,
+      true
+    ],
+    "text_language": [
+      true,
+      true
+    ]
+  },
+  "routing_on_folds": [
+    {
+      "subject": "vote",
+      "background": "vote",
+      "perspective": "fused",
+      "individuals": "vote",
+      "text_classification": "vote",
+      "text_language": "vote"
+    },
+    {
+      "subject": "fused",
+      "background": "fused",
+      "perspective": "fused",
+      "individuals": "siglip",
+      "text_classification": "vote",
+      "text_language": "vote"
+    }
+  ],
+  "member_exps": {
+    "hinted": "EXP-0098",
+    "siglip": "EXP-0055",
+    "fused": "EXP-0059",
+    "70b": "EXP-0049"
+  }
+}

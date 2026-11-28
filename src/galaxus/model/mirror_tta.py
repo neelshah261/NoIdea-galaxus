@@ -1,6 +1,7 @@
 """EXP-0006, mirror test-time augmentation for perspective (#48): classify the image and its mirror, then combine.
 
     uv run --env-file .env python -m galaxus.model.eval mirror-tta:zero-shot --exp-id EXP-0006
+    ZERO_SHOT_PRESET=zero-shot-image-first python -m galaxus.serve.final_run --predictor galaxus.model.mirror_tta:from_env ...
 
 - Only text-free images are mirrored (PLAN.md EXP-0006): the original answer's overlay dimension must be the
   no-overlay class, because mirrored text is not text. Every other image keeps the original answer.
@@ -23,7 +24,7 @@ from typing import Any
 from galaxus.data.classes import allowed_classes, no_overlay_class, overlay_dimension
 from galaxus.data.images import IMAGE_SIZE, MIRROR_SUFFIX, cached_image
 from galaxus.data.mirror import mirror_class, mirrorable_dimension
-from galaxus.model.contract import ImageItem, Prediction, Predictor
+from galaxus.types import ImageItem, Prediction, Predictor
 
 
 class MirrorTTA:
@@ -97,3 +98,28 @@ class MirrorTTA:
         with self._lock:
             stats = dict(self.stats)
         return {**(inner() if callable(inner) else {}), "mirror_tta": {"dimension": self.dimension, **stats}}
+
+
+def from_env() -> MirrorTTA:
+    """Mirror TTA around the zero-shot variant ``$ZERO_SHOT_PRESET`` names, for the runner, submit and final_run.
+
+    Raises:
+        ValueError: for a variant TTA cannot wrap (``zero_shot.mirror_tta_can_wrap``) or a name that is not one.
+    """
+    from galaxus.model import zero_shot
+
+    name = zero_shot.preset_name()
+    if not zero_shot.mirror_tta_can_wrap(name):
+        raise ValueError(f"mirror TTA cannot wrap {name!r} yet: a crop variant's mirror would not be cropped the same way")
+    return MirrorTTA(zero_shot.from_preset())
+
+
+def lora_from_env() -> MirrorTTA:
+    """Mirror TTA around the served LoRA (``galaxus.model.lora.from_env``), for the runner, submit and final_run.
+
+    ``python -m galaxus.model.eval mirror-tta:lora`` scores this wrapper on the holdout (#161). By reference
+    (``galaxus.model.mirror_tta:lora_from_env``), the same wrapper writes the dev and final files.
+    """
+    from galaxus.model import lora
+
+    return MirrorTTA(lora.from_env())

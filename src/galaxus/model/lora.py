@@ -29,11 +29,16 @@ import pandas as pd
 
 #: Recipe values from the reference notebook (and slide 18 of the deep dive, #17).
 RARE_CLASS_TARGET = 200
+#: #132 distillation: a teacher label replaces a masked prelabel only at this confidence or above.
+TEACHER_MIN_CONFIDENCE = 0.8
 MAX_REPEATS = 3
 #: #101 item 2: share of training examples shown without product context, and the seed that picks them.
 CONTEXT_DROPOUT = 0.3
 CONTEXT_DROPOUT_SEED = 3407
 IMAGE_SIZE = 512
+#: Requests in flight per batch ($LORA_WORKERS overrides it). The runner's --workers multiplies it, as for zero-shot.
+WORKERS = 8
+WORKERS_ENV = "LORA_WORKERS"
 #: Apertus' vision tokenizer turns 16 x 16 pixels into one token (Q-0002 measures it; this is the plan's number).
 PIXELS_PER_TOKEN_SIDE = 16
 
@@ -169,6 +174,8 @@ def build_training_set(
     max_repeats: int = MAX_REPEATS,
     context_dropout: float = 0.0,
     seed: int = CONTEXT_DROPOUT_SEED,
+    teacher: Mapping[str, Mapping[str, Any]] | None = None,
+    teacher_min_confidence: float = TEACHER_MIN_CONFIDENCE,
 ) -> TrainingSet:
     """Examples for one epoch: every row once, rows of rare human classes repeated, plus the mirrored rows.
 
@@ -176,12 +183,35 @@ def build_training_set(
     ``context_dropout`` (#101 item 2): that share of the examples, drawn with ``seed``, loses its product context, so
     its prompt is exactly ``user_prompt(None)``, the one inference uses when the catalog has none. Labels and the
     number of examples do not change; each repeated or mirrored copy is drawn on its own.
+
+    ``teacher`` (#132, distillation): ``{image_id: {"labels": ..., "confidence": ...}}``, a bigger model's answers on
+    these rows (``galaxus.model.distill``, the same records as ``eval.write_predictions``). A cell that is a model
+    prelabel, masked otherwise, takes the teacher's label when its confidence is at least ``teacher_min_confidence``
+    and enters the loss. Human cells never change; rare-class repeats still count human cells only; the mirrored rows
+    keep their own labels (the teacher saw the original image).
     """
     if not 0.0 <= context_dropout <= 1.0:
         raise ValueError(f"context_dropout must be between 0 and 1, got {context_dropout}")
     records = rows.to_dict(orient="records")
     human = [tuple(d for d in dimensions if r.get(f"{d}_source") == "human") for r in records]
     counts = Counter((d, r[d]) for r, dims in zip(records, human) for d in dims)
+    taught: dict[str, int] = dict.fromkeys(dimensions, 0)
+
+    def with_teacher(record: Mapping[str, Any], dims: tuple[str, ...]) -> tuple[dict[str, str], tuple[str, ...]]:
+        target = {d: str(record[d]) for d in dimensions}
+        answer = (teacher or {}).get(str(record["image_id"]))
+        if not answer:
+            return target, dims
+        labels, confidence = answer.get("labels") or {}, answer.get("confidence") or {}
+        added = []
+        for d in dimensions:
+            value = confidence.get(d)
+            if d in dims or d not in labels or value is None or float(value) < teacher_min_confidence:
+                continue
+            target[d] = str(labels[d])
+            added.append(d)
+            taught[d] += 1
+        return target, tuple(d for d in dimensions if d in dims or d in added)
 
     def repeats(record: Mapping[str, Any], dims: Sequence[str]) -> int:
         rarest = min((counts[(d, record[d])] for d in dims), default=rare_target)
@@ -189,13 +219,14 @@ def build_training_set(
 
     examples: list[Example] = []
     for record, dims in zip(records, human):
+        target, trained = with_teacher(record, dims)
         example = Example(
             image_id=str(record["image_id"]),
             image_file=str(record.get("image_file", "")),
             mirrored=False,
             context=_context(record),
-            target={d: str(record[d]) for d in dimensions},
-            trained_dimensions=dims,
+            target=target,
+            trained_dimensions=trained,
         )
         examples.extend([example] * repeats(record, dims))
     added_mirrors = 0
@@ -223,9 +254,103 @@ def build_training_set(
         "context_dropout": context_dropout,
         "context_dropped": dropped,
         "human_labels_in_loss": {d: sum(d in dims for dims in human) for d in dimensions},
-        "prelabels_masked": {d: sum(d not in dims for dims in human) for d in dimensions},
+        "prelabels_masked": {d: sum(d not in dims for dims in human) - taught[d] for d in dimensions},
+        "teacher_cells": taught,
     }
     return TrainingSet(examples, stats)
+
+
+# ---------------------------------------------------------------- #135: class weights and focal loss (#17, idea 5)
+
+#: (n / (k * count)) ** power, the heads' tempered class weights (#51): 0 = none, 1 = fully balanced, 0.5 tempers it.
+CLASS_WEIGHT_POWER = 0.5
+CLASS_WEIGHTINGS = ("none", "tempered")
+
+
+def class_weights(examples: Sequence[Example], power: float = CLASS_WEIGHT_POWER) -> dict[str, dict[str, float]]:
+    """Per dimension, a loss weight per class: ``(n / (k * count)) ** power``, scaled so the weight averaged over the
+    trained cells is 1 (the loss keeps its size; rare classes weigh more, common ones less). The same formula as the
+    heads (#51).
+
+    Counted on the epoch as built: train minus the official holdout, with the rare-class repeats and the mirrored rows,
+    on the trained (human) dimensions only. So the weights correct what the loss actually sees, and the repeats are not
+    counted twice.
+    """
+    counts: dict[str, Counter] = {}
+    for example in examples:
+        for dimension in example.trained_dimensions:
+            counts.setdefault(dimension, Counter())[example.target[dimension]] += 1
+    weights: dict[str, dict[str, float]] = {}
+    for dimension, counter in counts.items():
+        n, k = sum(counter.values()), len(counter)
+        raw = {name: (n / (k * count)) ** power for name, count in counter.items()}
+        mean = sum(raw[name] * count for name, count in counter.items()) / n
+        weights[dimension] = {name: value / mean for name, value in raw.items()}
+    return weights
+
+
+@dataclass(frozen=True)
+class LossOptions:
+    """What the LoRA loss adds to plain cross-entropy (#135). The default is the plain loss, the current recipe."""
+
+    class_weights: dict[str, dict[str, float]] | None = None
+    focal_gamma: float = 0.0
+
+    @property
+    def plain(self) -> bool:
+        return self.class_weights is None and self.focal_gamma == 0
+
+    def describe(self) -> str:
+        if self.plain:
+            return "plain cross-entropy"
+        weighting = f"tempered class weights (power {CLASS_WEIGHT_POWER})" if self.class_weights else "no class weights"
+        return f"{weighting}, focal gamma {self.focal_gamma:g} on the class-value tokens"
+
+
+def loss_options(examples: Sequence[Example], class_weighting: str = "none", focal_gamma: float = 0.0,
+                 power: float = CLASS_WEIGHT_POWER) -> LossOptions:
+    """The ``--class-weighting`` and ``--focal-gamma`` flags of ``train/lora_apertus.py``, checked."""
+    if class_weighting not in CLASS_WEIGHTINGS:
+        raise ValueError(f"class weighting {class_weighting!r} is not one of {', '.join(CLASS_WEIGHTINGS)}")
+    if focal_gamma < 0:
+        raise ValueError("the focal gamma is >= 0 (0 = off)")
+    weights = class_weights(examples, power) if class_weighting == "tempered" else None
+    return LossOptions(weights, float(focal_gamma))
+
+
+def loss_weights(
+    input_ids: Sequence[int],
+    example: Example,
+    encode_with_offsets: Callable[[str], tuple[list[int], list[tuple[int, int]]]],
+    weights: Mapping[str, Mapping[str, float]] | None = None,
+) -> dict[str, list]:
+    """Per position of ``input_ids``: ``loss_weights``, the class weight on each class-value token of a trained
+    dimension and 1 everywhere else, and ``value_mask``, 1 on those same tokens (where focal loss applies).
+
+    Prompt, image and prelabel positions keep weight 1, but their labels are -100 (``training_labels``), so they carry no
+    loss: the masking is unchanged.
+    """
+    _, positions = value_positions(input_ids, example.answer, encode_with_offsets)
+    weight, mask = [1.0] * len(input_ids), [0] * len(input_ids)
+    for dimension in example.trained_dimensions:
+        value = weights.get(dimension, {}).get(example.target[dimension], 1.0) if weights else 1.0
+        for place in positions.get(dimension, ()):
+            weight[place], mask[place] = value, 1
+    return {"loss_weights": weight, "value_mask": mask}
+
+
+def combine_token_losses(token_loss: Any, valid: Any, weight: Any, value_mask: Any, focal_gamma: float, xp: Any):
+    """(sum of the weighted per-token losses, number of tokens in the loss) for one batch.
+
+    ``token_loss`` is the plain cross-entropy per position (``-log p`` of the label, 0 where the label is -100) and
+    ``valid`` marks the positions in the loss. When ``focal_gamma`` > 0, focal loss ``(1 - p) ** gamma * -log p`` replaces
+    it on the class-value tokens. Gamma 0 with weights of 1 gives back the plain loss. ``xp`` is ``numpy`` or ``torch``:
+    the same arithmetic runs on both, so ci tests it without torch.
+    """
+    if focal_gamma > 0:
+        focal = (1 - xp.exp(-token_loss)) ** focal_gamma * token_loss
+        token_loss = xp.where(value_mask > 0, focal, token_loss)
+    return (token_loss * weight * valid).sum(), valid.sum()
 
 
 # ---------------------------------------------------------------- the launch plan and its cost
@@ -274,7 +399,9 @@ class LoraPredictor:
     name = "lora"
 
     def __init__(self, backend: Any, classes: Mapping[str, Sequence[str]], fallback: Mapping[str, str],
-                 image_bytes: Callable[[Any], bytes], model: str | None = None) -> None:
+                 image_bytes: Callable[[Any], bytes], model: str | None = None, workers: int = WORKERS) -> None:
+        import threading
+
         from galaxus.model.zero_shot import answer_schema
 
         self.backend = backend
@@ -285,30 +412,53 @@ class LoraPredictor:
         self.system = system_prompt(self.classes)
         self.schema = answer_schema(list(self.classes), {d: frozenset(v) for d, v in self.classes.items()})
         self.fallbacks = 0
+        self.no_confidence_cells = 0
+        self.workers = max(1, int(workers))
+        self._lock = threading.Lock()
 
-    def predict(self, batch: Sequence[Any]) -> list[Any]:
-        """One ``galaxus.types.Prediction`` per item, in order (the contract ``eval``, ``runner`` and ``submit`` read)."""
+    def _predict_one(self, item: Any) -> Any:
+        from galaxus.model.zero_shot import value_confidence
         from galaxus.types import Prediction
 
-        answers = []
-        for item in batch:
-            generation = self.backend.generate(
-                [{"role": "system", "content": self.system},
-                 {"role": "user", "content": user_prompt(getattr(item, "context", None))}],
-                [self.image_bytes(item)],
-                json_schema=self.schema,
-                max_tokens=160,
-                temperature=0.0,
-            )
-            labels = parse_answer(generation.text, self.classes)
-            if labels is None:
-                self.fallbacks += 1
-                labels = dict(self.fallback)
-            answers.append(Prediction(image_id=item.image_id, labels=labels, confidence=None))
-        return answers
+        generation = self.backend.generate(
+            [{"role": "system", "content": self.system},
+             {"role": "user", "content": user_prompt(getattr(item, "context", None))}],
+            [self.image_bytes(item)],
+            json_schema=self.schema,
+            max_tokens=160,
+            temperature=0.0,
+        )
+        labels = parse_answer(generation.text, self.classes)
+        confidence: dict[str, float] = {}
+        fell_back = labels is None
+        if fell_back:
+            labels = dict(self.fallback)
+        else:
+            # #75: P(class | answer so far) from the answer's token logprobs, as the zero-shot predictor does.
+            # None when the backend sent none; a fallback answer never gets a made-up number.
+            confidence = value_confidence(getattr(generation, "logprobs", None), labels)
+        with self._lock:
+            self.fallbacks += int(fell_back)
+            self.no_confidence_cells += len(labels) - len(confidence)
+        return Prediction(image_id=item.image_id, labels=labels, confidence=confidence or None)
+
+    def predict(self, batch: Sequence[Any]) -> list[Any]:
+        """One ``galaxus.types.Prediction`` per item, in order (the contract ``eval``, ``runner`` and ``submit`` read).
+
+        Up to ``workers`` requests are in flight at once, as the zero-shot predictor does: one request at a time spends
+        most of its time waiting on the network, and vLLM batches the concurrent ones on the GPU.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
+        if self.workers <= 1 or len(batch) <= 1:
+            return [self._predict_one(item) for item in batch]
+        with ThreadPoolExecutor(max_workers=self.workers, thread_name_prefix="lora") as pool:
+            return list(pool.map(self._predict_one, batch))
 
     def config(self) -> dict[str, object]:
-        return {"fallbacks": self.fallbacks, "image_size": IMAGE_SIZE, "json_schema": "enum per dimension"}
+        return {"fallbacks": self.fallbacks, "no_confidence_cells": self.no_confidence_cells, "workers": self.workers,
+                "image_size": IMAGE_SIZE,
+                "json_schema": "enum per dimension", "confidence": "token logprobs of the class name (#75)"}
 
 
 # ---------------------------------------------------------------- EXP-0004: the eval script's "lora" predictor
@@ -317,6 +467,9 @@ class LoraPredictor:
 BASE_URL_ENV = "LORA_BASE_URL"
 SERVED_NAME_ENV = "LORA_SERVED_MODEL"
 DEFAULT_SERVED_NAME = "apertus-lora"
+#: A bearer token for an endpoint behind an authenticating proxy, e.g. an HF Job's exposed port (#76), which takes
+#: an HF token with read access to the job's namespace. Read from the environment, never logged.
+API_KEY_ENV = "LORA_API_KEY"
 #: Same as the Saturday run sheet (#58): a 429 burst longer than 2 retries stops a run.
 RETRIES = 4
 
@@ -339,13 +492,16 @@ def eval_factory(environ: Mapping[str, str] | None = None, backend: Any = None) 
         allowed = data.allowed_classes()
         fallback = MajorityPredictor.fit(rows, dimensions, data.scored_mask).answer
         return LoraPredictor(chosen, {d: sorted(allowed[d]) for d in dimensions}, fallback, _cached_image,
-                             model=getattr(chosen, "model", None))
+                             model=getattr(chosen, "model", None), workers=int(settings.get(WORKERS_ENV) or WORKERS))
 
     return factory
 
 
 def _vllm_backend(settings: Mapping[str, str]) -> Any:
-    """The vLLM endpoint from ``$LORA_BASE_URL``. Checked first, so a missing endpoint is the first, clearest error."""
+    """The vLLM endpoint from ``$LORA_BASE_URL`` (and ``$LORA_API_KEY`` when it sits behind a proxy that wants one).
+
+    Checked first, so a missing endpoint is the first, clearest error.
+    """
     base_url = settings.get(BASE_URL_ENV)
     if not base_url:
         raise RuntimeError(
@@ -354,7 +510,9 @@ def _vllm_backend(settings: Mapping[str, str]) -> Any:
         )
     from galaxus.model.apertus.vllm import VllmBackend
 
-    return VllmBackend(base_url, settings.get(SERVED_NAME_ENV, DEFAULT_SERVED_NAME), retries=RETRIES)
+    return VllmBackend(base_url, settings.get(SERVED_NAME_ENV, DEFAULT_SERVED_NAME),
+                       api_key=settings.get(API_KEY_ENV) or None, retries=RETRIES,
+                       extra_body={"logprobs": True})  # #75: confidences, for mirror TTA (#48) and calibration (#42)
 
 
 def from_env(environ: Mapping[str, str] | None = None, backend: Any = None) -> LoraPredictor:
@@ -379,7 +537,7 @@ def from_env(environ: Mapping[str, str] | None = None, backend: Any = None) -> L
     allowed = allowed_classes()
     fallback = MajorityPredictor().answer
     return LoraPredictor(chosen, {d: sorted(allowed[d]) for d in names}, fallback, _cached_image,
-                         model=getattr(chosen, "model", None))
+                         model=getattr(chosen, "model", None), workers=int(settings.get(WORKERS_ENV) or WORKERS))
 
 
 def _cached_image(item: Any) -> bytes:

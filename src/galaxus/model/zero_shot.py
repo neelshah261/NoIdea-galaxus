@@ -27,13 +27,14 @@ import hashlib
 import itertools
 import json
 import math
+import os
 import re
 import threading
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from galaxus.model.contract import ImageItem, Prediction
+from galaxus.types import ImageItem, Prediction
 
 GUIDELINE_FILE = "labeling_guideline.md"
 IMAGE_SIZE = 512
@@ -69,6 +70,15 @@ OBSERVE_FIRST = (
     "object, what surrounds it, the viewing angle and any visible text."
 )
 OBSERVE_MAX_TOKENS = 400
+#: #133 (the hosts' idea 3, #17): the product type says what the product is (#17 point 9: accessory vs product) and
+#: which shot is its hero shot (point 1). The type goes first in the context, and this line asks the model to read it
+#: first. Without a product type in the context, the user message is exactly the plain one.
+TYPE_FIELD = "product_type"
+TYPE_FIRST = (
+    "The product context starts with the product type from the catalog. Read it first: it tells you what the product "
+    "is, so whether the image shows that product or something else, and which side is its front. Then decide every "
+    "dimension from what you see in the image."
+)
 #: Image processing (#106, EXP-0016): white margins are cropped away so the product fills the image. A pixel is
 #: content when one of its channels differs from white by more than ``CROP_WHITE_THRESHOLD`` (JPEG noise on white
 #: stays white); the box around the content grows by ``CROP_MARGIN`` of its size on each side. An image whose box
@@ -79,6 +89,9 @@ CROP_MARGIN = 0.06
 CROP_MAX_FRACTION = 0.9
 CROP_MIN_FRACTION = 0.01
 IMAGE_MODES = ("plain", "crop")
+#: #156: one question per dimension sends six requests per image, so it keeps more in flight to stay near 2 img/s.
+#: The gateway took 32 in flight on #106 (the runner's --workers 4, 8 each, 9.5 img/s); lower it if it refuses.
+PER_DIMENSION_WORKERS = 24
 #: The score sprint's variants (#106): one holdout run each, ``python -m galaxus.model.eval <name> --exp-id <id>``.
 #: The ids are reserved on #106; a variant that wins a dimension becomes an ensemble member there.
 PRESETS: dict[str, dict[str, Any]] = {
@@ -88,7 +101,69 @@ PRESETS: dict[str, dict[str, Any]] = {
     "zero-shot-macro-aware": {"macro_aware": True},  # EXP-0019: rare classes count as much
     "zero-shot-observe-first": {"observe_first": True},  # EXP-0021: one sentence, then the labels
     "zero-shot-image-first-crop": {"image_first": True, "image": "crop"},  # EXP-0022: the two together
+    # EXP-0023: the most vision tokens on the product. Apertus turns each 16 x 16 patch into one token (measured on
+    # #76: 448 x 608 px gave 28 x 38), so cropping and 768 px together give the product about 2.25 times the tokens
+    # of plain 512 px, at about that cost in speed.
+    "zero-shot-crop-768": {"image": "crop", "image_size": 768},
+    # After the sprint's first rows (#106): observe first (EXP-0021) is the best run at 0.343, 768 px (EXP-0017) is
+    # best on background and language, and dropping the context triples subject (EXP-0009). These combine them.
+    "zero-shot-observe-first-768": {"observe_first": True, "image_size": 768},  # EXP-0024
+    "zero-shot-observe-first-no-context": {"observe_first": True, "use_context": False},  # EXP-0025
+    # #237: the best prompt without product text (EXP-0025 on the 8B, EXP-0049 on the 70B) plus the retrieval hint
+    # line from $ZERO_SHOT_HINTS (Q-0003). EXP-0099 on the 8B.
+    "zero-shot-hints": {"observe_first": True, "use_context": False, "hints": True},
+    "zero-shot-type-first": {"type_first": True},  # #133: the product type first; the EXP id is the next free one
+    # #156: one request per dimension, each asking only that dimension with only its classes. BYMO (#145) measured
+    # 0.229 -> 0.528 for the 8B on their own set with separate questions. No context is EXP-0025's best (0.360).
+    "zero-shot-per-dimension": {"per_dimension": True, "workers": PER_DIMENSION_WORKERS},
+    "zero-shot-per-dimension-observe-first": {
+        "per_dimension": True, "observe_first": True, "workers": PER_DIMENSION_WORKERS,
+    },
+    "zero-shot-per-dimension-observe-first-no-context": {
+        "per_dimension": True, "observe_first": True, "use_context": False, "workers": PER_DIMENSION_WORKERS,
+    },
 }
+#: Every zero-shot setup by name: what the eval script scores and what the runner, submit and final_run can build.
+#: One table, so a variant that wins on the holdout can write its dev file and Saturday's file the same day.
+VARIANTS: dict[str, dict[str, Any]] = {
+    "zero-shot": {},  # EXP-0002
+    "zero-shot-no-context": {"use_context": False},  # EXP-0009
+    "zero-shot-image-first": {"image_first": True},  # EXP-0014
+    **PRESETS,
+}
+#: Which entry of ``VARIANTS`` :func:`from_preset` builds, for the runner, submit and final_run.
+PRESET_ENV = "ZERO_SHOT_PRESET"
+#: #43, quantized Apertus: the same variants on our own vLLM endpoint instead of the gateway, so one prompt is scored in
+#: bf16 and in FP8 (``bench/hf_job_lora_start.sh serve`` with ``QUANT=fp8``). Unset, the gateway is used, as before.
+BACKEND_ENV = "ZERO_SHOT_BACKEND"          # api (default) | vllm
+BASE_URL_ENV = "ZERO_SHOT_BASE_URL"        # e.g. the HF Job's URL for port 8000, ending in /v1
+SERVED_MODEL_ENV = "ZERO_SHOT_SERVED_MODEL"  # the name vLLM serves, e.g. apertus-8b-fp8
+API_KEY_ENV = "ZERO_SHOT_API_KEY"          # a bearer token for an authenticating proxy (HF Jobs); never logged
+
+
+def default_backend(environment: Mapping[str, str] | None = None) -> Any:
+    """The backend a predictor built without one uses: the gateway, or the vLLM endpoint ``$ZERO_SHOT_BACKEND`` names.
+
+    Raises:
+        RuntimeError: for ``vllm`` without ``$ZERO_SHOT_BASE_URL``.
+        ValueError: for a backend name that is neither ``api`` nor ``vllm``.
+    """
+    from galaxus.model.apertus import backend as make_backend
+
+    environment = os.environ if environment is None else environment
+    name = environment.get(BACKEND_ENV, "").strip() or "api"
+    if name == "api":
+        return make_backend("api", retries=GATEWAY_RETRIES, extra_body={"logprobs": True})
+    if name != "vllm":
+        raise ValueError(f"${BACKEND_ENV}={name!r}: choose api (the gateway) or vllm (our own endpoint)")
+    base_url = environment.get(BASE_URL_ENV, "").strip()
+    if not base_url:
+        raise RuntimeError(f"${BACKEND_ENV}=vllm needs ${BASE_URL_ENV}, e.g. the serving job's URL ending in /v1")
+    options: dict[str, Any] = {"base_url": base_url, "api_key": environment.get(API_KEY_ENV) or None,
+                               "retries": GATEWAY_RETRIES, "extra_body": {"logprobs": True}}
+    if environment.get(SERVED_MODEL_ENV, "").strip():
+        options["model"] = environment[SERVED_MODEL_ENV].strip()
+    return make_backend("vllm", **options)
 
 
 def read_guideline() -> str:
@@ -116,19 +191,32 @@ def answer_schema(
     return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
 
 
+#: #237 (Q-0003): retrieval hints (galaxus.model.hints). The image's hint line ends the user message, framed like
+#: EXP-0014's context line: a hint, not the answer. Apertus decides.
+HINTS = (
+    "The user message ends with how similar catalog images were labelled. It is a hint, not the answer: decide every "
+    "dimension from what you see in this image, and when the image and the hint disagree, trust the image."
+)
+#: The hints file (``python -m galaxus.model.hints write --part <part>``) the ``zero-shot-hints`` variant reads.
+HINTS_ENV = "ZERO_SHOT_HINTS"
+
+
 def system_prompt(
     guideline: str,
     dimensions: Sequence[str],
     image_first: bool = False,
     macro_aware: bool = False,
     observe_first: bool = False,
+    type_first: bool = False,
+    hints: bool = False,
 ) -> str:
-    """The instruction, the extra lines the variant asks for (#106), then the guideline.
+    """The instruction, the extra lines the variant asks for (#106, #133), then the guideline.
 
     With no extra line the text is exactly what EXP-0002 and EXP-0009 sent, so their prompt hashes still hold.
     """
     instruction = INSTRUCTION.format(dimensions=", ".join(dimensions))
-    for wanted, line in ((image_first, IMAGE_FIRST), (macro_aware, MACRO_AWARE), (observe_first, OBSERVE_FIRST)):
+    for wanted, line in ((image_first, IMAGE_FIRST), (macro_aware, MACRO_AWARE), (observe_first, OBSERVE_FIRST),
+                         (type_first, TYPE_FIRST), (hints, HINTS)):
         if wanted:
             instruction += "\n" + line
     return instruction + "\n\n" + guideline.strip()
@@ -244,6 +332,9 @@ class ZeroShotPredictor:
         image_first: bool = False,
         macro_aware: bool = False,
         observe_first: bool = False,
+        type_first: bool = False,
+        per_dimension: bool = False,
+        hints: bool | Mapping[str, str] = False,
         image: str = "plain",
         drop_context: Sequence[str] = (),
         defaults: Mapping[str, str] | None = None,
@@ -254,9 +345,7 @@ class ZeroShotPredictor:
         workers: int = WORKERS,
     ) -> None:
         if backend is None:
-            from galaxus.model.apertus import backend as make_backend
-
-            backend = make_backend("api", retries=GATEWAY_RETRIES, extra_body={"logprobs": True})
+            backend = default_backend()
         if dimensions is None or allowed is None:
             from galaxus.data.classes import allowed_classes
             from galaxus.data.classes import dimensions as read_dimensions
@@ -275,6 +364,11 @@ class ZeroShotPredictor:
         self.image_first = image_first
         self.macro_aware = macro_aware
         self.observe_first = observe_first
+        self.type_first = type_first
+        self.per_dimension = per_dimension
+        #: #237: ``{image_id: hint line}``; ``True`` reads the file named by ``$ZERO_SHOT_HINTS``.
+        self.hint_lines = load_hints() if hints is True else (dict(hints) if hints else None)
+        self.hints_file = os.environ.get(HINTS_ENV) if hints is True else None
         self.image = image
         self.drop_context = tuple(drop_context)
         self.max_tokens = OBSERVE_MAX_TOKENS if observe_first else MAX_TOKENS
@@ -286,14 +380,16 @@ class ZeroShotPredictor:
             raise ValueError(f"the defaults must be allowed classes, not for {bad}")
         self.image_size = image_size
         self.workers = workers
+        guideline = guideline if guideline is not None else read_guideline()
+        lines = {"image_first": image_first, "macro_aware": macro_aware, "observe_first": observe_first,
+                 "type_first": type_first, "hints": self.hint_lines is not None}
         self.schema = answer_schema(self.dimensions, self.allowed, observe_first=observe_first)
-        self.system = system_prompt(
-            guideline if guideline is not None else read_guideline(),
-            self.dimensions,
-            image_first=image_first,
-            macro_aware=macro_aware,
-            observe_first=observe_first,
-        )
+        self.system = system_prompt(guideline, self.dimensions, **lines)
+        #: #156: per dimension, the system prompt that names only it and the schema with only its classes.
+        self.questions = {
+            d: (system_prompt(guideline, (d,), **lines), answer_schema((d,), self.allowed, observe_first=observe_first))
+            for d in self.dimensions
+        } if per_dimension else {}
         self._lock = threading.Lock()
         self.stats = {
             "images": 0,
@@ -312,20 +408,49 @@ class ZeroShotPredictor:
         return cached_jpeg(item.image_id, item.path, image_size=self.image_size)
 
     def _context(self, item: ImageItem) -> Mapping[str, str] | None:
-        """The item's context, without the fields this variant drops (EXP-0018); None when nothing is left."""
+        """The item's context, without the fields this variant drops (EXP-0018); None when nothing is left.
+
+        With ``type_first`` (#133) the product type comes first; the other fields keep their order.
+        """
         if not self.use_context or not item.context:
             return None
-        return {name: value for name, value in item.context.items() if name not in self.drop_context} or None
+        context = {name: value for name, value in item.context.items() if name not in self.drop_context}
+        if self.type_first and TYPE_FIELD in context:
+            context = {TYPE_FIELD: context[TYPE_FIELD], **{k: v for k, v in context.items() if k != TYPE_FIELD}}
+        return context or None
 
-    def _ask(self, messages: list[dict[str, str]], image: bytes) -> dict[str, tuple[str, float | None]]:
-        """``{dimension: (class, confidence or None)}`` for the dimensions the answer names validly."""
+    def _user(self, item: ImageItem) -> str:
+        """The user message: the context (or the context-free line), then the image's hint line (#237).
+
+        Raises:
+            KeyError: with hints on, for an image the hints file has no line for: a hint missing for some images
+                would score a mix of two methods.
+        """
+        text = user_prompt(self._context(item))
+        if self.hint_lines is None:
+            return text
+        hint = self.hint_lines.get(str(item.image_id))
+        if hint is None:
+            raise KeyError(f"no hint for {item.image_id} in ${HINTS_ENV} ({self.hints_file}): write the hints for "
+                           "this part first (`python -m galaxus.model.hints write --part <part>`)")
+        return f"{text}\n\n{hint}"
+
+    def _ask(
+        self, messages: list[dict[str, str]], image: bytes, schema: Mapping[str, Any] | None = None,
+        dimensions: Sequence[str] | None = None,
+    ) -> dict[str, tuple[str, float | None]]:
+        """``{dimension: (class, confidence or None)}`` for the dimensions the answer names validly.
+
+        ``schema`` and ``dimensions`` default to all six; one question per dimension (#156) passes one.
+        """
+        dimensions = self.dimensions if dimensions is None else dimensions
         generation = self.backend.generate(
-            messages, [image], self.schema, max_tokens=self.max_tokens, temperature=0.0
+            messages, [image], self.schema if schema is None else schema, max_tokens=self.max_tokens, temperature=0.0
         )
         with self._lock:
             self.stats["prompt_tokens"] += generation.prompt_tokens or 0
             self.stats["completion_tokens"] += generation.completion_tokens or 0
-        labels = parse_answer(generation.text, self.dimensions, self.allowed)
+        labels = parse_answer(generation.text, dimensions, self.allowed)
         confidence = value_confidence(generation.logprobs, labels)
         return {dimension: (label, confidence.get(dimension)) for dimension, label in labels.items()}
 
@@ -333,17 +458,44 @@ class ZeroShotPredictor:
         image = self._image(item)
         messages = [
             {"role": "system", "content": self.system},
-            {"role": "user", "content": user_prompt(self._context(item))},
+            {"role": "user", "content": self._user(item)},
         ]
         answers = self._ask(messages, image)
         retried = len(answers) < len(self.dimensions)
         if retried:
             answers = {**self._ask(messages, image), **answers}
+        return self._prediction(item, answers, int(retried))
+
+    def _ask_dimension(self, item: ImageItem, image: bytes, dimension: str) -> tuple[dict[str, Any], int]:
+        """#156: one dimension's question, asked once more if its answer is unusable; returns (answers, retries)."""
+        system, schema = self.questions[dimension]
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": self._user(item)}]
+        answer = self._ask(messages, image, schema, (dimension,))
+        if answer:
+            return answer, 0
+        return self._ask(messages, image, schema, (dimension,)), 1
+
+    def _predict_per_dimension(self, batch: Sequence[ImageItem]) -> list[Prediction]:
+        """#156: one request per image and dimension, up to ``workers`` in flight; each image's answers are joined."""
+        pairs = [(index, dimension) for index in range(len(batch)) for dimension in self.dimensions]
+        with ThreadPoolExecutor(max_workers=max(1, self.workers), thread_name_prefix="zero-shot") as pool:
+            images = list(pool.map(self._image, batch))
+            asked = list(pool.map(lambda pair: self._ask_dimension(batch[pair[0]], images[pair[0]], pair[1]), pairs))
+        size = len(self.dimensions)
+        predictions = []
+        for index, item in enumerate(batch):
+            mine = asked[index * size:(index + 1) * size]
+            answers = {dimension: value for answer, _ in mine for dimension, value in answer.items()}
+            predictions.append(self._prediction(item, answers, sum(retries for _, retries in mine)))
+        return predictions
+
+    def _prediction(self, item: ImageItem, answers: Mapping[str, tuple[str, float | None]], retries: int) -> Prediction:
+        """The answers as a ``Prediction``: missing dimensions get their default, and the counts go into ``stats``."""
         missing = [dimension for dimension in self.dimensions if dimension not in answers]
         confidence = {dimension: value for dimension, (_, value) in answers.items() if value is not None}
         with self._lock:
             self.stats["images"] += 1
-            self.stats["retries"] += retried
+            self.stats["retries"] += retries
             self.stats["defaulted_cells"] += len(missing)
             self.stats["no_confidence_cells"] += len(answers) - len(confidence)
         labels = {dimension: label for dimension, (label, _) in answers.items()}
@@ -354,6 +506,8 @@ class ZeroShotPredictor:
 
     def predict(self, batch: Sequence[ImageItem]) -> list[Prediction]:
         """One prediction per item, in order. Up to ``workers`` requests are in flight at once."""
+        if self.per_dimension:
+            return self._predict_per_dimension(batch)
         if self.workers <= 1 or len(batch) <= 1:
             return [self._predict_one(item) for item in batch]
         with ThreadPoolExecutor(max_workers=self.workers, thread_name_prefix="zero-shot") as pool:
@@ -362,6 +516,8 @@ class ZeroShotPredictor:
     def prompt_sha256(self) -> str:
         """A short hash of the system prompt and the schema: equal hashes, equal prompts."""
         text = self.system + json.dumps(self.schema, sort_keys=True)
+        for system, schema in self.questions.values():  # #156; empty otherwise, so the earlier hashes hold
+            text += system + json.dumps(schema, sort_keys=True)
         return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
     def config(self) -> dict[str, Any]:
@@ -375,6 +531,10 @@ class ZeroShotPredictor:
             "image_first": self.image_first,
             "macro_aware": self.macro_aware,
             "observe_first": self.observe_first,
+            "type_first": self.type_first,
+            "per_dimension": self.per_dimension,
+            "hints": self.hint_lines is not None,
+            "hints_lines": None if self.hint_lines is None else len(self.hint_lines),
             "image": self.image,
             "drop_context": list(self.drop_context),
             "temperature": 0.0,
@@ -385,6 +545,22 @@ class ZeroShotPredictor:
         }
 
 
+def load_hints(environment: Mapping[str, str] | None = None) -> dict[str, str]:
+    """``{image_id: hint line}`` from the file ``$ZERO_SHOT_HINTS`` names (#237).
+
+    Raises:
+        RuntimeError: when the variable is unset or the file is missing.
+    """
+    from galaxus.model.hints import read_jsonl
+
+    environment = os.environ if environment is None else environment
+    path = environment.get(HINTS_ENV, "").strip()
+    if not path or not os.path.isfile(path):
+        raise RuntimeError(f"zero-shot-hints needs ${HINTS_ENV}: the hints file of this part, written by "
+                           f"`python -m galaxus.model.hints write --part <part>` (got {path!r})")
+    return read_jsonl(path)
+
+
 def no_context() -> ZeroShotPredictor:
     """For the serve runner: ``--predictor galaxus.model.zero_shot:no_context``."""
     return ZeroShotPredictor(use_context=False)
@@ -393,3 +569,35 @@ def no_context() -> ZeroShotPredictor:
 def image_first() -> ZeroShotPredictor:
     """For the serve runner: ``--predictor galaxus.model.zero_shot:image_first`` (EXP-0014, #106)."""
     return ZeroShotPredictor(image_first=True)
+
+
+def preset_name(environment: Mapping[str, str] | None = None) -> str:
+    """The variant ``$ZERO_SHOT_PRESET`` names, ``zero-shot`` when unset.
+
+    Raises:
+        ValueError: for a name that is not in ``VARIANTS``, listing the ones that are.
+    """
+    environment = os.environ if environment is None else environment
+    name = environment.get(PRESET_ENV, "").strip() or "zero-shot"
+    if name not in VARIANTS:
+        raise ValueError(f"${PRESET_ENV}={name!r} is not a zero-shot variant; choose one of {', '.join(VARIANTS)}")
+    return name
+
+
+def mirror_tta_can_wrap(name: str) -> bool:
+    """Whether mirror TTA (#48) can wrap this variant.
+
+    Not a crop variant: its mirror would be cut from the 512 px cached mirror, not from the original as the crop is.
+    """
+    return VARIANTS[name].get("image", "plain") != "crop" and not VARIANTS[name].get("hints")  # #237: a mirror has no hint line
+
+
+def from_preset() -> ZeroShotPredictor:
+    """Any zero-shot variant for the runner, submit and final_run (#106), chosen by ``$ZERO_SHOT_PRESET``.
+
+        ZERO_SHOT_PRESET=zero-shot-crop python -m galaxus.serve.submit --exp EXP-0016 --part dev \\
+            --run galaxus.model.zero_shot:from_preset
+
+    The model is the gateway's ``$LLM_NAME``, so ``LLM_NAME=<70B name>`` runs the same variant on the 70B.
+    """
+    return ZeroShotPredictor(**VARIANTS[preset_name()])

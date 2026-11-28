@@ -17,7 +17,6 @@ from galaxus.model import apertus
 from galaxus.model import eval as model_eval
 from galaxus.model import zero_shot as zero_shot_module
 from galaxus.model.apertus.backend import BackendError, Generation
-from galaxus.model.contract import ImageItem
 from galaxus.model.zero_shot import (
     IMAGE_FIRST,
     INSTRUCTION,
@@ -34,6 +33,7 @@ from galaxus.model.zero_shot import (
     system_prompt,
     value_confidence,
 )
+from galaxus.types import ImageItem
 
 ALLOWED = {dimension: frozenset(names) for dimension, names in FAKE_CLASSES.items()}
 DEFAULTS = {dimension: names[0] for dimension, names in FAKE_CLASSES.items()}
@@ -271,15 +271,21 @@ def test_every_preset_runs_through_the_eval_script_and_records_its_options(tmp_p
     train = train_table()
     train["image_file"] = [str(image_file(data_dir, image_id)) for image_id in train["image_id"]]
     data = fake_data_lane(train, tmp_path / "out", FakeMetric())
+    if options.get("hints"):  # #237: the hints file this variant reads, one line per image
+        hints = tmp_path / "hints.jsonl"
+        hints.write_text("".join(json.dumps({"image_id": i, "hint": "Similar catalog images were labelled: x"}) + "\n"
+                                 for i in train["image_id"]), encoding="utf-8")
+        monkeypatch.setenv("ZERO_SHOT_HINTS", str(hints))
     row = model_eval.run_eval(name, data, results_path=tmp_path / "results" / "metrics.json", exp_id="EXP-0016")
     config = row["config"]
     assert row["predictor"] == name
     assert config["image"] == options.get("image", "plain")
     assert config["image_size"] == options.get("image_size", 512)
     assert config["drop_context"] == list(options.get("drop_context", ()))
-    for flag in ("image_first", "macro_aware", "observe_first"):
+    for flag in ("image_first", "macro_aware", "observe_first", "per_dimension"):
         assert config[flag] is options.get(flag, False)
-    assert config["images"] == row["holdout"]["images"] == len(backend.calls)
+    calls_per_image = len(DIMENSIONS) if options.get("per_dimension") else 1  # #156: one request per dimension
+    assert config["images"] == row["holdout"]["images"] == len(backend.calls) // calls_per_image
 
 
 def test_a_bad_answer_is_asked_once_more(data_dir):

@@ -10,7 +10,7 @@ from collections.abc import Callable, Mapping, Sequence
 
 import pandas as pd
 
-from galaxus.model.contract import ImageItem, Prediction
+from galaxus.types import ImageItem, Prediction
 
 #: ``scored_mask(rows, dimension)``: which cells count. The data lane's ``galaxus.data.split.scored_mask`` (#5).
 ScoredMask = Callable[[pd.DataFrame, str], pd.Series]

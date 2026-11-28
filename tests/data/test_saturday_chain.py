@@ -13,6 +13,7 @@ stand-in ``metric.py`` with the semantics the real one is documented to have. No
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -196,3 +197,137 @@ def test_the_label_error_csv_lands_outside_every_git_work_tree(saturday_data, ca
     assert "never commit it" in printed
     for image_id in train["image_id"]:
         assert image_id not in printed
+
+
+def test_the_bonus_csv_can_be_made_without_the_gateway(saturday_data, capsys):
+    """The 14:30 deliverable has a second source: neighbour votes (#112 part A), so no gateway and no GPU.
+
+    Every other test of the label-error finder feeds it a ``holdout.jsonl`` written by hand or by the model lane,
+    which is the path that needs a gateway run with logprobs. This walks the other one end to end with the real
+    commands - embeddings in the cache, ``neighbours label-errors``, then ``label_errors`` over its output - so
+    the fallback stays verified rather than being something that worked once.
+
+    The table has three clusters of four images, one per class, and one planted mislabel: an image sitting in the
+    second cluster while carrying the first cluster's label. That is the row the csv must name.
+    """
+    import numpy as np
+
+    from galaxus.data.neighbours import DEFAULT_ENCODER, EMBEDDING_DTYPE, embedding_dir
+    from galaxus.data.neighbours import main as neighbours_main
+
+    dimension = DIMENSIONS[0]
+    classes = FAKE_CLASSES[dimension]
+    # One cluster per class, however many the fixture's dimension has, so this does not assume a class count.
+    per_cluster = 12 // len(classes)
+    planted = "t_07"
+
+    rows, vectors = [], {}
+    for position in range(12):
+        image_id = f"t_{position:02d}"
+        cluster = position // per_cluster
+        label = classes[0] if image_id == planted else classes[cluster]
+        row = {"image_id": image_id, "product_id": f"p_{position:02d}", dimension: label}
+        row[f"{dimension}_source"] = "human"
+        row[f"{dimension}_relevant"] = "true"
+        rows.append(row)
+        vector = np.zeros(8, dtype=np.float32)
+        vector[cluster] = 1.0
+        vector[2 + (position % 6)] = 0.05  # a little spread inside the cluster, so neighbours have an order
+        vectors[image_id] = vector
+    pd.DataFrame(rows).to_csv(saturday_data / "train.csv", index=False)
+
+    folder = embedding_dir(DEFAULT_ENCODER)
+    folder.mkdir(parents=True, exist_ok=True)
+    for image_id, vector in vectors.items():
+        np.save(folder / f"{image_id}.npy", vector.astype(EMBEDDING_DTYPE))
+
+    assert neighbours_main(["label-errors", "--k", "3", "--min-similarity", "0.5", "--dimensions", dimension]) == 0
+    votes = saturday_data / "out" / "neighbour_votes.jsonl"
+    assert votes.is_file()
+
+    # 0.75 rather than the default 0.9: a vote's confidence is the neighbours' agreement, which at k=3 is 1.0,
+    # 0.67 or 0.33, so the default would keep only a unanimous three. The two flags interact and the chain is
+    # where that is visible.
+    assert label_errors_main(["--predictions", str(votes), "--dimensions", dimension, "--threshold", "0.75"]) == 0
+
+    written = saturday_data / "out" / "label_errors.csv"
+    reported = pd.read_csv(written).to_dict(orient="records")
+    assert {
+        "image_id": planted,
+        "dimension": dimension,
+        "label": classes[0],
+        "suggested_label": classes[1],
+    } in reported, reported
+
+    # Same two rules as the other path: outside every work tree, and no id on stdout.
+    for folder_up in (written.resolve(), *written.resolve().parents):
+        assert not (folder_up / ".git").exists()
+    printed = capsys.readouterr().out
+    assert planted not in printed
+
+
+# ---------------------------------------------------------------- the columns the 13:00 members read (#180 task 2)
+
+#: The product-context fields the heads write into their prompt (``galaxus.model.heads.CONTEXT_FIELDS``). Named
+#: here rather than imported so a data-lane test does not depend on the model lane, and asserted below to be what
+#: ``read_final`` hands on: if the final part carries them, the members must receive them.
+CONTEXT_FIELDS = ("product_title", "product_type", "brand", "category", "subcategory")
+
+
+def _write_final_part(root, columns: dict[str, list[str]]):
+    """A decrypted final part nested the way an archive lands, with whatever columns the caller wants."""
+    release = root / "final" / "release" / "part"
+    (release / "images").mkdir(parents=True)
+    for image_id in FINAL_IDS:
+        write_image(release / "images" / f"{image_id}.png", "RGBA", (40, 30), color=(20, 90, 140, 255))
+    frame = pd.DataFrame(
+        {"image_id": FINAL_IDS, "image_path": [f"images/{i}.png" for i in FINAL_IDS], **columns}
+    )
+    frame.to_csv(release / "final.csv", index=False)
+    return release
+
+
+def test_the_final_part_keeps_product_id_and_the_context_fields_the_members_read(galaxus_data):
+    """Both members of the final method read product context; losing it at 13:00 would be a silent downgrade.
+
+    The heads were trained with these fields in the prompt, so a final run without them is a train/test mismatch
+    that produces a complete, well-formed, worse file - nothing downstream would notice. This pins that
+    ``read_final`` hands on every column the part carries.
+    """
+    _write_final_part(
+        galaxus_data,
+        {
+            "product_id": [f"p_{index}" for index in range(len(FINAL_IDS))],
+            **{field: [f"{field}-{index}" for index in range(len(FINAL_IDS))] for field in CONTEXT_FIELDS},
+        },
+    )
+    final = read_final()
+
+    assert final["image_id"].tolist() == FINAL_IDS
+    assert "product_id" in final.columns, "the holdout split and product-level decoding both need product_id"
+    for field in CONTEXT_FIELDS:
+        assert field in final.columns, f"{field} is written into the heads' prompt and must survive the read"
+    assert final["product_title"].tolist() == [f"product_title-{index}" for index in range(len(FINAL_IDS))]
+
+
+def test_image_file_is_absolute_and_resolved_against_the_csvs_own_folder(galaxus_data):
+    """``image_path`` is relative and the archive decides how deep final.csv lands, so the join must use its parent.
+
+    Resolving against ``$GALAXUS_DATA`` or the working directory instead would miss every image at 13:00.
+    """
+    release = _write_final_part(galaxus_data, {})
+    final = read_final()
+
+    for image_id, image_file in zip(final["image_id"], final["image_file"], strict=True):
+        assert Path(image_file) == release / "images" / f"{image_id}.png"
+        assert Path(image_file).is_file()
+
+
+def test_a_final_part_with_only_the_two_required_columns_still_reads(galaxus_data):
+    """The hosts promise an id and a path; everything else is a bonus we must not require."""
+    _write_final_part(galaxus_data, {})
+    final = read_final()
+
+    assert final["image_id"].tolist() == FINAL_IDS
+    assert final["image_file"].notna().all()
+    assert "product_id" not in final.columns

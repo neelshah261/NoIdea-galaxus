@@ -1,0 +1,135 @@
+{
+  "dimensions": [
+    "subject",
+    "background",
+    "perspective",
+    "individuals",
+    "text_classification",
+    "text_language"
+  ],
+  "routing": {
+    "subject": "hinted",
+    "background": "hinted",
+    "perspective": "vote",
+    "individuals": "hinted",
+    "text_classification": "vote",
+    "text_language": "70b"
+  },
+  "weights": {
+    "subject": {
+      "hinted": 0.5710268241822087,
+      "70b": 0.25265791509532154
+    },
+    "background": {
+      "hinted": 0.7391933599177868,
+      "70b": 0.4826905238295836
+    },
+    "perspective": {
+      "hinted": 0.4564770358466016,
+      "70b": 0.26830629276227025
+    },
+    "individuals": {
+      "hinted": 0.8561422800181674,
+      "70b": 0.720578972868217
+    },
+    "text_classification": {
+      "hinted": 0.6109192112999665,
+      "70b": 0.38938838829059197
+    },
+    "text_language": {
+      "hinted": 0.5436470892939833,
+      "70b": 0.6545903927223033
+    }
+  },
+  "scores": {
+    "subject": {
+      "hinted": 0.571,
+      "70b": 0.2527,
+      "vote": 0.5703
+    },
+    "background": {
+      "hinted": 0.7392,
+      "70b": 0.4827,
+      "vote": 0.7349
+    },
+    "perspective": {
+      "hinted": 0.4565,
+      "70b": 0.2683,
+      "vote": 0.459
+    },
+    "individuals": {
+      "hinted": 0.8561,
+      "70b": 0.7206,
+      "vote": 0.8488
+    },
+    "text_classification": {
+      "hinted": 0.6109,
+      "70b": 0.3894,
+      "vote": 0.6152
+    },
+    "text_language": {
+      "hinted": 0.5436,
+      "70b": 0.6546,
+      "vote": 0.6475
+    }
+  },
+  "images": 2444,
+  "rule": "agree",
+  "base": "hinted",
+  "candidates": {
+    "subject": "hinted",
+    "background": "hinted",
+    "perspective": "vote",
+    "individuals": "hinted",
+    "text_classification": "vote",
+    "text_language": "70b"
+  },
+  "beats_base_on_folds": {
+    "subject": [
+      false,
+      false
+    ],
+    "background": [
+      false,
+      false
+    ],
+    "perspective": [
+      true,
+      true
+    ],
+    "individuals": [
+      false,
+      false
+    ],
+    "text_classification": [
+      true,
+      true
+    ],
+    "text_language": [
+      true,
+      true
+    ]
+  },
+  "routing_on_folds": [
+    {
+      "subject": "hinted",
+      "background": "vote",
+      "perspective": "vote",
+      "individuals": "hinted",
+      "text_classification": "vote",
+      "text_language": "70b"
+    },
+    {
+      "subject": "hinted",
+      "background": "hinted",
+      "perspective": "vote",
+      "individuals": "hinted",
+      "text_classification": "vote",
+      "text_language": "vote"
+    }
+  ],
+  "member_exps": {
+    "hinted": "EXP-0098",
+    "70b": "EXP-0049"
+  }
+}
