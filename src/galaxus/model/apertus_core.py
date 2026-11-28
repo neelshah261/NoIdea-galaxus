@@ -64,6 +64,12 @@ def per_layer_unit(vector: np.ndarray, layers: int) -> np.ndarray:
     return np.concatenate([helper.unit_length(block) for block in blocks])
 
 
+class UnreadableImage(OSError):
+    """An image the feature job could not read (``heads.FeatureStore.unreadable``). An ``OSError``, so the runner treats
+    it as one broken file and keeps its constant row (#216, ``runner.is_image_error``). An image that was simply never
+    extracted raises ``KeyError`` instead, so a forgotten extraction or untar still stops the run."""
+
+
 class ApertusFeatures:
     """The Apertus hidden states in ``heads``' feature store, loaded once and reloaded when an image is missing (the
     final part's features arrive after the predictor is built)."""
@@ -79,11 +85,16 @@ class ApertusFeatures:
             if any(str(i) not in self._vectors for i in ids):
                 self._vectors = self.store.load()
             missing = [str(i) for i in ids if str(i) not in self._vectors]
-            if missing:
+            skipped = self.store.unreadable() if missing else set()
+            never_extracted = [i for i in missing if i not in skipped]
+            if never_extracted:
                 raise KeyError(
-                    f"{len(missing)} image(s) have no Apertus features in {self.store.root}: extract their part on a "
-                    "GPU first (train/hf_job_apertus_features_start.sh, or `python -m galaxus.model.heads extract "
+                    f"{len(never_extracted)} image(s) have no Apertus features in {self.store.root}: extract their part "
+                    "on a GPU first (train/hf_job_apertus_features_start.sh, or `python -m galaxus.model.heads extract "
                     "--part <part> --layers=<layers> --pool <pool>`) and untar the features under the cache")
+            if missing:
+                raise UnreadableImage(f"{len(missing)} image(s) could not be read by the feature job; their rows keep "
+                                      "the constant answer")
             return {str(i): per_layer_unit(self._vectors[str(i)], len(self.layer_ids)) for i in ids}
 
 
@@ -201,6 +212,13 @@ def factory(
     def build(rows: Any, data: Any, seed: int) -> helper.HelperPredictor:
         env = os.environ if environ is None else environ
         features = apertus or features_from_env(env)
+        skipped = features.store.unreadable()
+        if skipped:  # a training image the job could not read has no features: leave it out of the fit, counted
+            keep = ~rows["image_id"].astype(str).isin(skipped)
+            if not keep.all():
+                print(f"[apertus-core] {int((~keep).sum())} training image(s) the feature job could not read are "
+                      "left out of the fit")
+                rows = rows[keep]
         extra = scores if scores is not None else base_scores_from_env(env)
         if base is FROM_ENV:
             embed, names, choice = base_from_env(env)

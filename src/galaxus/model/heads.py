@@ -45,6 +45,9 @@ PROMPT = (
 CONTEXT_FIELDS = ("product_title", "product_type", "brand", "category", "subcategory")
 IMAGE_SIZE = 512  # Swarup's condition: always 512 px of area
 SHARD_SIZE = 256
+#: Per part, the ids ``extract`` could not read, one per line (never printed). ``apertus_core`` treats exactly these as
+#: unreadable images (#219), so a forgotten extraction still stops a run instead of falling back.
+UNREADABLE_FILE = "unreadable.txt"
 DEFAULT_LAYERS = (-1,)
 DEFAULT_POOL = "last"
 EPOCHS = 300
@@ -88,6 +91,20 @@ class FeatureStore:
 
     def ids(self, part: str) -> set[str]:
         return set(self.load(part))
+
+    def unreadable(self, part: str | None = None) -> set[str]:
+        """The ids ``extract`` skipped as unreadable, in one part or in every part."""
+        files = [self.root / part / UNREADABLE_FILE] if part else sorted(self.root.glob(f"*/{UNREADABLE_FILE}"))
+        return {line.strip() for file in files if file.is_file() for line in file.read_text().splitlines() if line.strip()}
+
+    def mark_unreadable(self, part: str, ids: Sequence[str]) -> Path:
+        """Add ``ids`` to the part's unreadable list, through a temporary name (crash-safe like the shards)."""
+        target = self.part_dir(part) / UNREADABLE_FILE
+        merged = sorted(self.unreadable(part) | {str(i) for i in ids})
+        partial = target.with_name(target.name + ".part")
+        partial.write_text("".join(f"{image_id}\n" for image_id in merged))
+        os.replace(partial, target)
+        return target
 
     def load(self, part: str | None = None) -> dict[str, np.ndarray]:
         """``{image_id: features}`` of one part, or of every part when ``part`` is None."""
@@ -137,12 +154,12 @@ def extract(
     ids: list[str] = []
     rows: list[np.ndarray] = []
     computed = 0
-    unreadable = 0
+    unreadable: list[str] = []
     for item in todo:
         try:
             image = image_bytes(item)
         except (OSError, ValueError):
-            unreadable += 1
+            unreadable.append(str(item.image_id))
             continue
         vector = forward([image], prompt_for(item.context))[0]
         ids.append(str(item.image_id))
@@ -157,9 +174,11 @@ def extract(
     if ids:
         store.append(part, ids, np.stack(rows))
         computed += len(ids)
-    if log and unreadable:
-        log(f"[heads] {part}: {unreadable} image(s) could not be read and were skipped; their rows keep the "
-            "constant answer")
+    if unreadable:
+        store.mark_unreadable(part, unreadable)  # in the store, so it travels with the features; never in a log
+        if log:
+            log(f"[heads] {part}: {len(unreadable)} image(s) could not be read and were skipped; their rows keep the "
+                "constant answer")
     return computed
 
 
