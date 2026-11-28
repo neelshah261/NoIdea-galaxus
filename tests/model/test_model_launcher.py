@@ -63,3 +63,17 @@ def test_no_array_is_expanded_bare_for_bash_3_2():
     text = re.sub(r"(?m)#.*$", "", START.read_text())
     assert not re.search(r'(?<!\+)"\$\{[A-Za-z_]+\[@\]\}"', text)
     assert "${#DRY[@]}" not in text
+
+
+def test_the_apertus_switches_and_a_shard_reach_the_job_by_name(tmp_path):
+    """#214: LAYERS, POOL and SHARD go to the job as variables; each shard's job gets its own name."""
+    code, argv, err = launch(tmp_path, "features", extra_env={"LAYERS": "-1,-9,-17", "POOL": "fields", "SHARD": "1/3"})
+    assert code == 0, err
+    for value in ("LAYERS=-1,-9,-17", "POOL=fields", "SHARD=1/3"):
+        assert argv[argv.index(value) - 1] == "-e"
+    assert argv[argv.index("--name") + 1] == "noidea-apertus-features-shard1of3"
+    code, argv, err = launch(tmp_path, "features")
+    assert code == 0, err
+    assert argv[argv.index("--name") + 1] == "noidea-apertus-features"
+    variables = [argv[index + 1] for index, value in enumerate(argv) if value == "-e"]
+    assert not any(value.startswith(("SHARD=", "POOL=", "LAYERS=")) for value in variables)

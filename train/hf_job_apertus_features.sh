@@ -28,7 +28,8 @@ STAGE="${STAGE:-features}"
 REF="${REF:-main}"
 MODEL="${MODEL:-swiss-ai/Apertus-v1.5-8B}"
 LAYERS="${LAYERS:--1,-9}"          # always passed as --layers=..., because argparse reads "-1,-9" as an option
-POOL="${POOL:-last}"
+POOL="${POOL:-last}"                # last | mean | fields (a cue per dimension, #214)
+SHARD="${SHARD:-}"                  # i/n: this job's share of every part, for n parallel jobs (#214)
 CHECK="${CHECK:-300}"              # more than one shard of 256, so heads.extract logs the measured img/s
 FINAL_IMAGES="${FINAL_IMAGES:-5292}"
 COMPETITION="hackapertus-galaxus"
@@ -50,7 +51,7 @@ SERVE="$WORK/serve"
 log() { echo "[job $(date -u +%H:%M:%S)] $*"; }
 
 mkdir -p "$WORK" "$GALAXUS_DATA" "$SERVE"
-log "stage=$STAGE ref=$REF model=$MODEL layers=$LAYERS pool=$POOL parts=${PARTS[*]}"
+log "stage=$STAGE ref=$REF model=$MODEL layers=$LAYERS pool=$POOL shard=${SHARD:-all} parts=${PARTS[*]}"
 command -v nvidia-smi >/dev/null && nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || log "no GPU"
 
 log "1/6 clone and install"
@@ -106,6 +107,7 @@ done
 
 extract() {  # extract <part> [limit]: Apertus hidden states into the heads' feature store, resumable
   local options=(--part "$1" --model "$MODEL" "--layers=$LAYERS" --pool "$POOL")
+  [[ -n "$SHARD" ]] && options+=(--shard "$SHARD")
   [[ -n "${2:-}" ]] && options+=(--limit "$2")
   uv run --quiet "${WITH[@]}" python -m galaxus.model.heads extract "${options[@]}"
 }

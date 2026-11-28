@@ -46,9 +46,10 @@ if not urls:
 for url in urls:
     base = url.rstrip("/")
     print("# Apertus features (not in the encoders mode):")
-    print(f'curl -fL -H "Authorization: Bearer $HF_TOKEN" "{base}/features.tar" -o "$GALAXUS_DATA/out/features.tar"')
-    print('mkdir -p "$GALAXUS_DATA/cache/features" && tar -C "$GALAXUS_DATA/cache/features" '
-          '-xf "$GALAXUS_DATA/out/features.tar"')
+    # One file per job, so the tars of parallel shard jobs (SHARD=i/n) never overwrite each other.
+    tar = f"$GALAXUS_DATA/out/features-{job_id}.tar"
+    print(f'curl -fL -H "Authorization: Bearer $HF_TOKEN" "{base}/features.tar" -o "{tar}"')
+    print(f'mkdir -p "$GALAXUS_DATA/cache/features" && tar -C "$GALAXUS_DATA/cache/features" -xf "{tar}"')
     print("# SigLIP 2 so400m embeddings (only in the encoders mode or with SO400M=1):")
     print(f'curl -fL -H "Authorization: Bearer $HF_TOKEN" "{base}/embeddings.tar" -o "$GALAXUS_DATA/out/embeddings.tar"')
     print('mkdir -p "$GALAXUS_DATA/cache/embeddings" && tar -C "$GALAXUS_DATA/cache/embeddings" '
@@ -92,6 +93,12 @@ ENV=(-e STAGE="$MODE" -e REF="$REF")
 [[ "${SO400M:-}" == "1" ]] && ENV+=(-e SO400M=1)
 [[ -n "${HELPER_SO400M_REVISION:-}" ]] && ENV+=(-e HELPER_SO400M_REVISION="$HELPER_SO400M_REVISION")
 [[ -n "${HELPER_SO400M:-}" ]] && ENV+=(-e HELPER_SO400M="$HELPER_SO400M")
+# The Apertus feature switches (#214): which layers and pool, and this job's shard i/n of every part, so n jobs
+# started with SHARD=0/n ... SHARD=n-1/n split the images and their feature files untar into one store.
+[[ -n "${LAYERS:-}" ]] && ENV+=(-e LAYERS="$LAYERS")
+[[ -n "${POOL:-}" ]] && ENV+=(-e POOL="$POOL")
+[[ -n "${SHARD:-}" ]] && ENV+=(-e SHARD="$SHARD")
+NAME="noidea-apertus-$MODE${SHARD:+-shard${SHARD%%/*}of${SHARD##*/}}"
 
 case "$MODE" in
   features) TIMEOUT="${TIMEOUT:-150m}" ;;   # 2.5 h x $1.80 = $4.50 at most on l40sx1; cancel after the download
@@ -111,6 +118,6 @@ esac
 echo "job: $MODE on $FLAVOR, timeout $TIMEOUT, ref $REF; the features are served on port 8000 behind the HF jobs proxy"
 # The script goes with Unix line endings: a Windows checkout adds \r, which bash in the job rejects (#76).
 exec ${HF[@]+"${HF[@]}"} jobs run ${DRY[@]+"${DRY[@]}"} --detach --flavor "$FLAVOR" --timeout "$TIMEOUT" \
-  --name "noidea-apertus-$MODE" --expose 8000 ${SECRETS[@]+"${SECRETS[@]}"} ${ENV[@]+"${ENV[@]}"} \
+  --name "$NAME" --expose 8000 ${SECRETS[@]+"${SECRETS[@]}"} ${ENV[@]+"${ENV[@]}"} \
   ghcr.io/astral-sh/uv:python3.12-bookworm \
   bash -c "$(tr -d '\r' < train/hf_job_apertus_features.sh)"

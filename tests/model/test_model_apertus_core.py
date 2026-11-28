@@ -169,3 +169,15 @@ def test_training_leaves_out_the_images_the_job_could_not_read(tmp_path, capsys)
         rows, data, 0)
     assert "1 training image(s) the feature job could not read are left out" in capsys.readouterr().out
     assert predictor.predict([ImageItem(image_id="i0", path="u")])[0].labels["kind"] == rows.loc[0, "kind"]
+
+
+def test_the_fields_pool_puts_every_block_of_every_layer_at_unit_length(tmp_path, monkeypatch):
+    """#214: ``fields`` stores 2 + dimensions blocks per layer; each is normalised on its own."""
+    from galaxus.data import classes
+
+    monkeypatch.setattr(classes, "dimensions", lambda: ("shape",))
+    blocks = 2 * heads.blocks_per_layer("fields")  # two layers x (last, mean, one cue)
+    vector = np.concatenate([np.full(HIDDEN, float(k + 1)) for k in range(blocks)])
+    features = apertus_core.ApertusFeatures(store_with(tmp_path, {"img_0": vector}), (-1, -9), pool="fields")
+    got = features.get(["img_0"])["img_0"].reshape(blocks, HIDDEN)
+    assert np.allclose(np.linalg.norm(got, axis=1), 1.0)
