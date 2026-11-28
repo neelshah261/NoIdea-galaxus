@@ -182,20 +182,26 @@ class ContextFeatures:
         return [tokens(context, present) for context in rows[present].to_dict("records")]
 
     def _fit_text_model(self, rows: pd.DataFrame, data: Any, seed: int) -> TextModel:
-        """A text model on ``rows``: the idf of these rows and one head per dimension on their scored human labels."""
+        """A text model on ``rows``: the idf of these rows and one head per dimension on their scored human labels.
+
+        Written to hold as few copies of the hashed matrix as it can. On the real training rows it is 9,432 by 4,097
+        float32, 155 MB, and ``fit_head`` makes several temporaries of that size of its own; the masking is in place
+        and the rows of one dimension are taken by position, so this adds one copy rather than three.
+        """
         token_lists = self.row_tokens(rows)
         idf = document_frequency(token_lists, self.columns)
         x = hashed_matrix(token_lists, idf, self.columns)
         keep = x.std(axis=0) > 0  # see TextModel.keep: a column these rows never varied on would saturate the head
-        x = x * keep
-        by_id = dict(zip(rows[ID_COLUMN].astype(str), x, strict=True))
+        x *= keep
+        position = {image_id: k for k, image_id in enumerate(rows[ID_COLUMN].astype(str))}
         fitted: dict[str, heads.Head] = {}
         for dimension in data.dimensions():
             scored = rows[data.scored_mask(rows, dimension)]
             if scored.empty:
                 continue  # a fold without one scored row for this dimension: its classes stay at the floor
+            take = [position[image_id] for image_id in scored[ID_COLUMN].astype(str)]
             fitted[dimension] = heads.fit_head(
-                heads._matrix(by_id, scored[ID_COLUMN].astype(str)),
+                x[take],
                 scored[dimension].astype(str).tolist(),
                 epochs=self.epochs,
                 seed=seed,
