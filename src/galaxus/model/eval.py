@@ -164,6 +164,31 @@ def _helper_fused_mirror(rows: pd.DataFrame, data: DataLane, seed: int) -> Predi
     return helper.fused_factory(mirror=True)(rows, data, seed)
 
 
+def _teacher_setup():
+    """D (#211): the teacher and self-training switches; one of them must be on for a teacher row."""
+    from galaxus.model import teacher
+
+    setup = teacher.from_environ()
+    if setup is None:
+        raise RuntimeError(f"set ${teacher.TEACHER_ENV} to the teacher's dev.jsonl (EXP-0080) and/or "
+                           f"${teacher.SELF_TRAIN_ENV}=1")
+    return setup
+
+
+def _helper_teacher(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """D (#211): ``helper-siglip`` trained on the human rows plus the teacher's (and agreeing) dev rows."""
+    from galaxus.model import helper
+
+    return helper.factory(teacher=_teacher_setup())(rows, data, seed)
+
+
+def _helper_fused_teacher(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
+    """D (#211): ``helper-fused`` trained on the human rows plus the teacher's (and agreeing) dev rows."""
+    from galaxus.model import helper
+
+    return helper.fused_factory(teacher=_teacher_setup())(rows, data, seed)
+
+
 def _helper_so400m(rows: pd.DataFrame, data: DataLane, seed: int) -> Predictor:
     """#220: heads on SigLIP 2 so400m (``$HELPER_SO400M``, pinned by ``$HELPER_SO400M_REVISION``) alone."""
     from galaxus.model import encoders
@@ -235,6 +260,8 @@ PREDICTORS: dict[str, PredictorFactory] = {
     "helper-siglip-mirror": _helper_mirror,  # the same, perspective trained on mirrored copies and averaged with the mirror
     "helper-fused": _helper_fused,  # EXP-0059: SigLIP base + DINOv2 base + SigLIP 2 base, unit length, concatenated
     "helper-fused-mirror": _helper_fused_mirror,  # helper-fused with the mirror-aware perspective head
+    "helper-siglip-teacher": _helper_teacher,  # D (#211): + teacher dev rows ($HELPER_TEACHER, $HELPER_SELF_TRAIN)
+    "helper-fused-teacher": _helper_fused_teacher,  # D (#211): helper-fused + teacher dev rows
     "apertus-core": _apertus_core,  # #219: Apertus hidden states + the frozen encoders (+ optional base scores)
     "helper-so400m": _helper_so400m,  # #220: SigLIP 2 so400m heads, pinned by $HELPER_SO400M_REVISION
     "helper-fused-so400m": _helper_fused_so400m,  # #220: EXP-0059's three encoders + so400m
