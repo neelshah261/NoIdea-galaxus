@@ -206,12 +206,24 @@ def embed_part(
 ) -> int:
     """Embed ``pairs`` in chunks, resumably, logging counts and speed only (never an image id). Returns how many."""
     started = time.perf_counter()
+    unreadable = 0
     for start in range(0, len(pairs), chunk):
-        so400m_embeddings(pairs[start : start + chunk], environ=environ, loader=loader)
+        batch = pairs[start : start + chunk]
+        try:
+            so400m_embeddings(batch, environ=environ, loader=loader)
+        except (OSError, ValueError):  # one unreadable image (PIL errors are OSErrors): find it, keep the rest
+            for pair in batch:
+                try:
+                    so400m_embeddings([pair], environ=environ, loader=loader)
+                except (OSError, ValueError):
+                    unreadable += 1
         done = min(start + chunk, len(pairs))
         log(f"[so400m] {part}: {done}/{len(pairs)} ({done / (time.perf_counter() - started):.1f} img/s, cache "
             "hits included)")
-    return len(pairs)
+    if unreadable:
+        log(f"[so400m] {part}: {unreadable} image(s) could not be read and were skipped; their rows keep the "
+            "constant answer")
+    return len(pairs) - unreadable
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -220,7 +232,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     pin = sub.add_parser("pin", help="print the export lines with the Hub's current revision (needs the Hub)")
     pin.add_argument("--name", choices=CHOICES, default=None)
     fill = sub.add_parser("embed", help="fill the so400m embedding cache for one part (resumable)")
-    fill.add_argument("--part", required=True, choices=("train", "dev", "final"))
+    source = fill.add_mutually_exclusive_group(required=True)
+    source.add_argument("--part", choices=("train", "dev", "final"))
+    source.add_argument("--csv", help="any new batch: a table with image_id and image_path (relative to it)")
     fill.add_argument("--limit", type=int, default=None, help="only the first N rows, e.g. to time a sample")
     fill.add_argument("--chunk", type=int, default=256)
     arguments = parser.parse_args(argv)
@@ -232,11 +246,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"export {REVISION_ENV}={model_info(name).sha}")
         return 0
     so400m_revision()  # refuse a malformed override before reading or downloading anything
-    from galaxus.data import load
+    from galaxus.model.heads import extract_source
 
-    frame = {"train": load.read_train, "dev": load.read_dev, "final": load.read_final}[arguments.part]()
+    frame, part = extract_source(arguments.part, arguments.csv)
     pairs = list(zip(frame[helper.ID_COLUMN].astype(str), frame[helper.FILE_COLUMN].astype(str), strict=True))
-    embed_part(pairs[: arguments.limit] if arguments.limit else pairs, arguments.part, arguments.chunk)
+    embed_part(pairs[: arguments.limit] if arguments.limit else pairs, part, arguments.chunk)
     return 0
 
 

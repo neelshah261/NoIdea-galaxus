@@ -124,6 +124,10 @@ def extract(
 
     ``forward(images, prompt) -> (images, layers, hidden)`` is ``LocalBackend.forward`` with the layers and pool
     bound; ``image_bytes(item)`` gives the 512 px prepared JPEG (data lane cache).
+
+    An image that cannot be read or prepared (``OSError``, which covers PIL's unidentified and truncated files, or
+    ``ValueError``) is skipped and counted, never named, so one bad file in a new batch cannot stop the run (#214); the
+    reference notebook keeps the constant answer for such an image. Errors of ``forward`` itself still stop it.
     """
     done = store.ids(part)
     todo = [item for item in items if str(item.image_id) not in done]
@@ -133,8 +137,14 @@ def extract(
     ids: list[str] = []
     rows: list[np.ndarray] = []
     computed = 0
+    unreadable = 0
     for item in todo:
-        vector = forward([image_bytes(item)], prompt_for(item.context))[0]
+        try:
+            image = image_bytes(item)
+        except (OSError, ValueError):
+            unreadable += 1
+            continue
+        vector = forward([image], prompt_for(item.context))[0]
         ids.append(str(item.image_id))
         rows.append(np.asarray(vector, dtype=np.float32).reshape(-1))
         if len(ids) == shard_size:
@@ -147,6 +157,9 @@ def extract(
     if ids:
         store.append(part, ids, np.stack(rows))
         computed += len(ids)
+    if log and unreadable:
+        log(f"[heads] {part}: {unreadable} image(s) could not be read and were skipped; their rows keep the "
+            "constant answer")
     return computed
 
 
@@ -453,12 +466,25 @@ def predictor_from_env() -> HeadsPredictor:
     return HeadsPredictor(model, store.load(), compute)
 
 
+def extract_source(part: str | None, csv: str | None) -> tuple[pd.DataFrame, str]:
+    """The rows to extract and the store part they go to: a competition part, or ``csv-<file stem>`` for a new batch."""
+    from galaxus.data import load
+
+    if csv:
+        return load.read_part(csv), f"csv-{Path(csv).stem}"
+    reader = {"train": load.read_train, "dev": load.read_dev, "final": load.read_final}[part or ""]
+    return reader(), str(part)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """``python -m galaxus.model.heads extract|fit|label-errors``."""
     parser = argparse.ArgumentParser(prog="python -m galaxus.model.heads", description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
-    extract_cmd = sub.add_parser("extract", help="Apertus hidden states for one part (GPU)")
-    extract_cmd.add_argument("--part", required=True, choices=("train", "dev", "final"))
+    extract_cmd = sub.add_parser("extract", help="Apertus hidden states for one part, or any table of images (GPU)")
+    source = extract_cmd.add_mutually_exclusive_group(required=True)
+    source.add_argument("--part", choices=("train", "dev", "final"))
+    source.add_argument("--csv", help="any new batch: a table with image_id and image_path (relative to it) and, "
+                        "optionally, the catalog columns, read as dev.csv is (#214)")
     extract_cmd.add_argument("--limit", type=int, default=None)
     fit_cmd = sub.add_parser("fit", help="fit + calibrate heads on CPU, score the holdout, write the EXP row")
     fit_cmd.add_argument("--exp-id", default=None)
@@ -480,11 +506,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     from galaxus.serve.items import items_from_frame
 
     if arguments.command == "extract":
-        reader = {"train": load.read_train, "dev": load.read_dev, "final": load.read_final}[arguments.part]
-        items = items_from_frame(reader(), arguments.limit)
+        frame, part = extract_source(arguments.part, arguments.csv)
+        items = items_from_frame(frame, arguments.limit)
         forward = _backend_forward(arguments.model, layers, arguments.pool)
-        computed = extract(forward, items, store, arguments.part, _cached_image)
-        print(f"[heads] {arguments.part}: computed {computed}; store {store.root}")
+        computed = extract(forward, items, store, part, _cached_image)
+        print(f"[heads] {part}: computed {computed}; store {store.root}")
         return 0
 
     from galaxus.data import split
