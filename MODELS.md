@@ -23,6 +23,21 @@ EasyOCR and Lingua were measured as a development experiment (#108) and are not 
 majority baseline (EXP-0001) is a count, and the product-type prior and the per-dimension routing are rules learned
 from train, not models.
 
+## The models in the final submission
+
+The four models the submitted file ran through, and nothing else (AGENTS.md product rule 4; the rows above give
+each one's revision and role). TODO(design): the final EXP id (EXP-0101 or EXP-0106, #243) once it is named.
+
+| Model | Id | How it runs in the final |
+| --- | --- | --- |
+| Apertus v1.5 70B | `apertus-v1-5-70b` | the Hack Apertus gateway, or self-hosted with vLLM in FP8 on one H200 |
+| SigLIP base | `google/siglip-base-patch16-224` | CPU, pooled embeddings into our class-balanced heads |
+| DINOv2 base | `facebook/dinov2-base` | CPU, second of the three fused encoders |
+| SigLIP 2 base | `google/siglip2-base-patch16-224` | CPU, third of the three fused encoders |
+
+Apertus v1.5 performs the classification; the three encoders are open-weights image helpers, which is what the
+model rules allow at runtime (challenge_description.md "Models"). No closed model and no OCR runs at runtime.
+
 ## Serving and tooling around the runtime model
 
 | Component | Version | Role | Source |
