@@ -89,7 +89,7 @@ kill and resume halfway (#79).
 | Tiny random Llama, generated in a test | random weights | CPU smoke test of the LoRA training path | development |
 | Claude Code (Anthropic), one session per lane | Swarup's serve-lane session: Claude Opus 5.5 (`claude-opus-5-5`); the others: TODO(owner), as declared on #116 | coding assistant: code, tests, docs, reviews; never classifies an image | development |
 
-- **Which dimensions the helpers decide:** TODO(neelshah261): the per-dimension routing in `routing-EXP-0106.json`.
+- **Which dimensions the helpers decide** (`design/final_submission/routing-EXP-0106.json`): the fused helper answers perspective and the SigLIP helper answers individuals; subject, background, text_classification and text_language are a weighted vote of the four members (the hinted 70B, the plain 70B and both helpers).
 - **How it is used:** inference (zero-shot with and without hints), heads on hidden states, a LoRA fine-tune
   (EXP-0004), evaluation.
 - **Where it runs:** the Hack Apertus gateway and vLLM FP8 on one H200 for the 70B; the encoders and heads on a
@@ -173,17 +173,17 @@ python -m galaxus.serve.submit --exp EXP-0106 --part dev --part final
 
 - **Kaggle:** team NoIdea; public score: TODO(owner) after the upload. The private score is Kaggle's.
 
-- **Per dimension** (EXP-0101, official holdout of 2444 images, metric.py; `results/metrics.json`):
+- **Per dimension** (EXP-0106, official holdout of 2444 images, metric.py; `results/metrics.json`):
 
 | Dimension | Macro F1 | Weighted F1 |
 | --- | --- | --- |
-| subject | 0.571 | 0.778 |
-| background | 0.732 | 0.893 |
-| perspective | 0.457 | 0.520 |
-| individuals | 0.856 | 0.969 |
-| text_classification | 0.611 | 0.885 |
-| text_language | 0.607 | 0.765 |
-| **mean** | **0.639** | **0.817** |
+| subject | 0.741 | 0.860 |
+| background | 0.880 | 0.955 |
+| perspective | 0.647 | 0.714 |
+| individuals | 0.973 | 0.993 |
+| text_classification | 0.716 | 0.922 |
+| text_language | 0.749 | 0.836 |
+| **mean** | **0.784** | **0.891** |
 
   The bar to beat is the hosts' baselines: [challenge_description.md, Baselines](challenge_description.md#baselines).
 
@@ -232,12 +232,14 @@ python -m galaxus.serve.submit --exp EXP-0106 --part dev --part final
 | EXP-0102 | ensemble-agree | 0.631 | 0.571 | 0.739 | 0.456 | 0.856 | 0.617 | 0.544 | TODO(model): not measured | TODO(model): not measured | #237: ensemble-agree hinted=EXP-0098 70b=EXP-0049 core=EXP-0092 fields=EXP-0097, four Apertus members |
 | EXP-0103 | apertus-core | 0.450 | 0.379 | 0.634 | 0.302 | 0.711 | 0.382 | 0.290 | 24711.9 | TODO(model): not measured | #237: heads on Apertus 8B mean-pooled features (Swarup's note), layers -1,-9, no base |
 | EXP-0104 | ensemble-agree | 0.630 | 0.571 | 0.739 | 0.456 | 0.856 | 0.611 | 0.544 | TODO(model): not measured | TODO(model): not measured | #237: ensemble-agree hinted=EXP-0098 + 70b=EXP-0049 + mean=EXP-0103 (mean-pooled 8B heads) |
+| EXP-0105 | ensemble-agree | 0.726 | 0.702 | 0.878 | 0.498 | 0.977 | 0.645 | 0.659 | 0.6 | TODO(model): not measured | Neel 14:05: Apertus 70B hinted as the base, SigLIP/DINOv2 helpers per dimension: hinted=EXP-0098 siglip=EXP-0055 70b=EXP-0049 |
+| EXP-0106 | ensemble-agree | 0.784 | 0.741 | 0.880 | 0.647 | 0.973 | 0.716 | 0.749 | TODO(model): not measured | TODO(model): not measured | Neel 14:05: Apertus 70B hinted as the base, SigLIP/DINOv2 helpers per dimension: hinted=EXP-0098 siglip=EXP-0055 fused=EXP-0059 70b=EXP-0049 |
 
   What did not work: TODO(model): one line per EXP that did not help, and why.
 
-- **Models** (the final method EXP-0101 and the rows it is built from: EXP-0098, EXP-0049):
+- **Models** (the final method EXP-0106 and the rows it is built from: EXP-0098, EXP-0055, EXP-0049):
 
-  - Runtime: apertus-v1-5-70b; no helper models
+  - Runtime: apertus-v1-5-70b, apertus-v1-5-70b, google/siglip-base-patch16-224, google/siglip-base-patch16-224; helpers: google/siglip-base-patch16-224
   - Development only, never at runtime (source `MODELS.md`): tiny random Llama, generated in the test; Claude Code (Anthropic), design session (Neel); Claude Code (Anthropic), data lane session (Vernika); Claude Code (Anthropic), model lane sessions (Parth); Claude Code (Anthropic), serve lane session (Swarup); SigLIP base, `google/siglip-base-patch16-224` (apache-2.0, 0.2B), revision `7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed`; `gpt-6.2-astra` (closed); EasyOCR (Latin model) and Lingua (`lingua-language-detector`), versions TODO(swarupgaikwad1801-ux)
 
 - **Resources** (source `$GALAXUS_DATA/out/bench/`, `galaxus.serve.bench`):
@@ -246,7 +248,7 @@ python -m galaxus.serve.submit --exp EXP-0106 --part dev --part final
   - Batch size 16, workers 1: **3.09 images/s**
   - 100,000 images a day: 9.00 GPU hours, **$TODO(model): not measured** at $TODO(model): not measured/h
 
-- **Commit and weights:** commit `3f340bf2e397`; weights: TODO(owner): Hugging Face repository and revision, published by 14:30.
+- **Commit and weights:** commit `7823aaff353a`; weights: TODO(owner): Hugging Face repository and revision, published by 14:30.
 
 - **Optional:** label errors: TODO(data): not generated yet (`python -m galaxus.model.heads label-errors`).
 <!-- section7:end -->
