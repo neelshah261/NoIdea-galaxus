@@ -28,6 +28,8 @@ import pandas as pd
 
 #: Recipe values from the reference notebook (and slide 18 of the deep dive, #17).
 RARE_CLASS_TARGET = 200
+#: #132 distillation: a teacher label replaces a masked prelabel only at this confidence or above.
+TEACHER_MIN_CONFIDENCE = 0.8
 MAX_REPEATS = 3
 IMAGE_SIZE = 512
 #: Apertus' vision tokenizer turns 16 x 16 pixels into one token (Q-0002 measures it; this is the plan's number).
@@ -163,14 +165,39 @@ def build_training_set(
     mirrored: pd.DataFrame | None = None,
     rare_target: int = RARE_CLASS_TARGET,
     max_repeats: int = MAX_REPEATS,
+    teacher: Mapping[str, Mapping[str, Any]] | None = None,
+    teacher_min_confidence: float = TEACHER_MIN_CONFIDENCE,
 ) -> TrainingSet:
     """Examples for one epoch: every row once, rows of rare human classes repeated, plus the mirrored rows.
 
     ``rows`` is train minus the official holdout; ``mirrored`` is the data lane's ``mirrored_rows(rows)``.
+
+    ``teacher`` (#132, distillation): ``{image_id: {"labels": ..., "confidence": ...}}``, a bigger model's answers on
+    these rows (``galaxus.model.distill``, the same records as ``eval.write_predictions``). A cell that is a model
+    prelabel, masked otherwise, takes the teacher's label when its confidence is at least ``teacher_min_confidence``
+    and enters the loss. Human cells never change; rare-class repeats still count human cells only; the mirrored rows
+    keep their own labels (the teacher saw the original image).
     """
     records = rows.to_dict(orient="records")
     human = [tuple(d for d in dimensions if r.get(f"{d}_source") == "human") for r in records]
     counts = Counter((d, r[d]) for r, dims in zip(records, human) for d in dims)
+    taught: dict[str, int] = dict.fromkeys(dimensions, 0)
+
+    def with_teacher(record: Mapping[str, Any], dims: tuple[str, ...]) -> tuple[dict[str, str], tuple[str, ...]]:
+        target = {d: str(record[d]) for d in dimensions}
+        answer = (teacher or {}).get(str(record["image_id"]))
+        if not answer:
+            return target, dims
+        labels, confidence = answer.get("labels") or {}, answer.get("confidence") or {}
+        added = []
+        for d in dimensions:
+            value = confidence.get(d)
+            if d in dims or d not in labels or value is None or float(value) < teacher_min_confidence:
+                continue
+            target[d] = str(labels[d])
+            added.append(d)
+            taught[d] += 1
+        return target, tuple(d for d in dimensions if d in dims or d in added)
 
     def repeats(record: Mapping[str, Any], dims: Sequence[str]) -> int:
         rarest = min((counts[(d, record[d])] for d in dims), default=rare_target)
@@ -178,13 +205,14 @@ def build_training_set(
 
     examples: list[Example] = []
     for record, dims in zip(records, human):
+        target, trained = with_teacher(record, dims)
         example = Example(
             image_id=str(record["image_id"]),
             image_file=str(record.get("image_file", "")),
             mirrored=False,
             context=_context(record),
-            target={d: str(record[d]) for d in dimensions},
-            trained_dimensions=dims,
+            target=target,
+            trained_dimensions=trained,
         )
         examples.extend([example] * repeats(record, dims))
     added_mirrors = 0
@@ -202,7 +230,8 @@ def build_training_set(
         "mirrored_added": added_mirrors,
         "examples_per_epoch": len(examples),
         "human_labels_in_loss": {d: sum(d in dims for dims in human) for d in dimensions},
-        "prelabels_masked": {d: sum(d not in dims for dims in human) for d in dimensions},
+        "prelabels_masked": {d: sum(d not in dims for dims in human) - taught[d] for d in dimensions},
+        "teacher_cells": taught,
     }
     return TrainingSet(examples, stats)
 

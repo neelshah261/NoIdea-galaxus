@@ -49,6 +49,7 @@ from galaxus.model.lora import (
     IMAGE_SIZE,
     MAX_REPEATS,
     RARE_CLASS_TARGET,
+    TEACHER_MIN_CONFIDENCE,
     Example,
     LossOptions,
     Plan,
@@ -78,18 +79,27 @@ TARGET_MODULES = r".*(?<!vision_tokenizer)\.(q_proj|k_proj|v_proj|o_proj|up_proj
 REFERENCE_TOKENS_PER_SECOND_L40S = 14_000 * 700 * 3 / (73 * 60) / 2.5
 
 
-def training_set():
-    """Train minus the official holdout, with the data lane's mirrored rows (#29)."""
+def training_set(teacher_path: str | None = None, teacher_min_confidence: float = TEACHER_MIN_CONFIDENCE):
+    """Train minus the official holdout, with the data lane's mirrored rows (#29) and, with ``teacher_path``, a teacher's
+    labels on the masked prelabel cells (#132)."""
     from galaxus.data import classes, load, mirror, split
+    from galaxus.model.ensemble import load_records
 
     dimensions = tuple(classes.dimensions())
-    rows, _holdout = split.split_holdout(load.read_train())
+    rows, holdout = split.split_holdout(load.read_train())
     mirrored = mirror.mirrored_rows(rows)
-    return dimensions, build_training_set(rows, dimensions, mirrored), classes.allowed_classes()
+    teacher = None
+    if teacher_path:
+        teacher = load_records(teacher_path)
+        leaked = set(teacher) & set(holdout["image_id"].astype(str))
+        if leaked:
+            raise ValueError(f"the teacher file has {len(leaked)} holdout images: it must cover train minus the holdout")
+    data = build_training_set(rows, dimensions, mirrored, teacher=teacher, teacher_min_confidence=teacher_min_confidence)
+    return dimensions, data, classes.allowed_classes()
 
 
 def plan(arguments) -> int:
-    _, data, _ = training_set()
+    _, data, _ = training_set(arguments.teacher, arguments.teacher_min_confidence)
     p = Plan(data.stats["examples_per_epoch"], arguments.epochs, BATCH, ACCUMULATION, tokens_per_example(),
              REFERENCE_TOKENS_PER_SECOND_L40S, arguments.dollars_per_hour or 1.8)
     print(json.dumps(data.stats, indent=2))
@@ -292,7 +302,7 @@ def train(arguments) -> int:
     import transformers
     from transformers import Trainer, TrainingArguments
 
-    _dimensions, data, classes = training_set()
+    _dimensions, data, classes = training_set(arguments.teacher, arguments.teacher_min_confidence)
     options = loss_options(data.examples, arguments.class_weighting, arguments.focal_gamma)
     out = Path(arguments.output or _out_dir() / f"lora-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}")
     print(f"[lora] {data.stats['examples_per_epoch']} examples per epoch; output {out}; transformers "
@@ -332,6 +342,8 @@ def train(arguments) -> int:
     processor.save_pretrained(out / "adapter")
     (out / "run.json").write_text(json.dumps({"model": arguments.model, "epochs": arguments.epochs,
                                               "stats": data.stats, "transformers": transformers.__version__,
+                                              "teacher": arguments.teacher,
+                                              "teacher_min_confidence": arguments.teacher_min_confidence,
                                               "loss": {"class_weighting": arguments.class_weighting,
                                                        "focal_gamma": arguments.focal_gamma,
                                                        "class_weights": options.class_weights}}, indent=2))
@@ -472,6 +484,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help="#135: 'tempered' weights each class-value token by (n / (k * count)) ** 0.5 (default none)")
     parser.add_argument("--focal-gamma", type=float, default=0.0,
                         help="#135: focal loss on the class-value tokens, e.g. 2 (default 0 = off)")
+    parser.add_argument("--teacher", default=None,
+                        help="#132: a teacher's answers on train (galaxus.model.distill's train.jsonl); masked "
+                             "prelabels take its confident labels")
+    parser.add_argument("--teacher-min-confidence", type=float, default=TEACHER_MIN_CONFIDENCE,
+                        help=f"#132: the teacher's confidence a label needs (default {TEACHER_MIN_CONFIDENCE})")
     return parser
 
 
